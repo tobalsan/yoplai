@@ -262,7 +262,10 @@ describe("Mattermost account linking", () => {
     await links!.redeem(new URL(link).pathname.split("/").at(-1)!, { id: "gateway-alice", email: "alice@example.test" });
     await handleMattermostPost(inbound("hello", { id: "next-post" }), route, deps, "hello");
     expect(ctx.runs).toHaveLength(1);
-    expect(ctx.runs[0]).toMatchObject({ userId: "gateway-alice", requesterId: "mattermost:alice0000000000000000000001", sessionOwnerId: null });
+    expect(ctx.runs[0]).toMatchObject({
+      userId: "gateway-alice", requesterId: "mattermost:alice0000000000000000000001", sessionOwnerId: null,
+      origin: { sink: "mattermost", destination: { channel: `${CHANNEL}:next-post` } },
+    });
     for (const flag of ["from_bot", "from_webhook", "from_plugin"]) {
       const item = inbound("@yoplai !pair", { id: flag, props: { [flag]: true } });
       const botRoute = { ...route, allowBots: true };

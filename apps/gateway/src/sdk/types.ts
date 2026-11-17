@@ -5,6 +5,7 @@ import type {
   AgentContext,
   ContainerDeliveryContext,
   FileAttachment,
+  RunOrigin,
   HistoryEvent,
   RequiredModelConfig,
 } from "@yoplai/shared";
@@ -32,6 +33,7 @@ export type SdkRunParams = {
   actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
+  origin?: RunOrigin;
   sessionId: string;
   sessionKey?: string;
   message: string;

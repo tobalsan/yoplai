@@ -114,6 +114,14 @@ If the board creates the account but the gateway cannot save the token, the toke
 
 A poller starts only for agents that have `extensions.threadit` in `agent.yaml`. An agent with only the root `baseUrl` has the tools but no poller until the gateway restarts.
 
+## Reply delivery
+
+The extension registers the `threadit` delivery sink. Its `destination.channel`
+is `THREAD_ID[:PARENT_MESSAGE_ID]`; replies use the agent's current Threadit
+credentials and throw on board, network, or timeout failures. Transport runs
+carry this destination as `origin`, so extensions can post recaps and resumed
+answers under the message that started the run.
+
 ## Differences from DAR
 
 - Yoplai has no question event, so there is no `elicitation` activity and no `needs_input` state set by this extension.

@@ -291,7 +291,7 @@ export class ThreaditApi {
   /** Post a reply. Never retried: a lost response must not post twice. */
   async reply(
     threadId: number,
-    parentId: number,
+    parentId: number | null,
     body: string
   ): Promise<ApiResult<null>> {
     const result = await this.request("POST", `/api/threads/${threadId}/messages`, {

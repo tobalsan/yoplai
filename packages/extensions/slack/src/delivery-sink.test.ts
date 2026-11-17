@@ -126,6 +126,23 @@ describe("slack delivery sink", () => {
     });
   });
 
+  it("sends recap delivery into the destination's Slack thread", async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ts: "2.2" });
+    registerMockBot("alpha", { chat: { postMessage } as never });
+
+    await createSlackDeliverySink(ctx())({
+      agent: agent("alpha"),
+      destination: { channel: "C0123456789:1700000000.123456" },
+      text: "Interview answers received",
+    });
+
+    expect(postMessage.mock.calls[0][0]).toMatchObject({
+      channel: "C0123456789",
+      thread_ts: "1700000000.123456",
+      text: "Interview answers received",
+    });
+  });
+
   it("sends to the user ID via the channel param for a user destination", async () => {
     const postMessage = vi.fn().mockResolvedValue({ ts: "2.2" });
     registerMockBot("alpha", { chat: { postMessage } as never });

@@ -267,11 +267,12 @@ for a complete scheduled handoff.
 
 This extension registers a delivery sink under id `"slack"` for the scheduler's
 `deliver` feature (see the [scheduler README](../scheduler/README.md)). A job's
-`deliver` entry maps `channel` to a Slack channel ID and `user` to a Slack user
+`deliver` entry maps `channel` to `CHANNEL_ID[:THREAD_TS]` and `user` to a Slack user
 ID (passed as the `channel` param on `chat.postMessage`, which is how Slack
 DMs). The sink shares `slack.send_message`'s send path (chunking, mrkdwn
 conversion, and the proactive-DM note), so a delivered cron result behaves the
-same as a manual send for these purposes.
+same as a manual send for these purposes. Transport runs expose this destination
+to extension tools as `origin`, preserving the reply thread for later delivery.
 
 ```json
 "deliver": [{ "target": "slack", "channel": "C0123456789" }]

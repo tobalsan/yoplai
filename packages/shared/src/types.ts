@@ -1416,6 +1416,8 @@ export type RunAgentParams = {
   sessionOwnerId?: string | null;
   /** Trusted transport identity, including senders without a paired user. */
   requesterId?: string;
+  /** Trusted reply destination supplied by the transport. */
+  origin?: RunOrigin;
   message: string;
   attachments?: FileAttachment[];
   sessionId?: string;
@@ -1473,6 +1475,8 @@ export type HistoryMessage = SimpleHistoryMessage | FullHistoryMessage;
 
 /** Normalized destination a delivery sink resolves onto its own send path. */
 export type DeliveryDestination = { channel?: string; user?: string };
+
+export type RunOrigin = { sink: string; destination: DeliveryDestination };
 
 /**
  * Runtime push of a text result into a comm channel. Registered by comm
@@ -1584,6 +1588,11 @@ export interface ActiveWorkItem {
 }
 
 export interface ExtensionContext {
+  /** Host support for browser pages and captured sandboxed frame views. */
+  pageRoutePrefix?: string;
+  supportsFrameViews?: boolean;
+  /** Re-check current account eligibility and agent authorization for a page token. */
+  canUserAccessAgent?(userId: string, agentId: string): Promise<boolean>;
   /**
    * Replace the list of running work this extension owns. Call whenever a
    * child starts or exits; pass an empty list when nothing runs.
@@ -1730,6 +1739,7 @@ export type ExtensionAgentToolContext = {
   actorKind?: "user" | "service" | "local" | "eval";
   sessionOwnerId?: string | null;
   requesterId?: string;
+  origin?: RunOrigin;
   signal?: AbortSignal;
   /** Host-owned writable folder for this requester and conversation. */
   conversationFiles?: { hostPath: string; runtimePath: string };
@@ -1912,6 +1922,10 @@ export interface Extension {
   oauthProviders?: import("./oauth/types.js").OAuthProviderDescriptor[];
   validateConfig(raw: unknown): ValidationResult;
   registerRoutes(app: Hono): void;
+  /** Browser routes mounted by the host at /x/<extension id>. */
+  registerPageRoutes?(app: Hono): void;
+  /** POST patterns relative to the page prefix; extension-issued tokens replace cookies. */
+  tokenAuthenticatedRoutes?: Array<{ method: "POST"; path: string }>;
   start(ctx: ExtensionContext): Promise<void>;
   stop(): Promise<void>;
   /** Called after each config reload, for every loaded extension. */
@@ -2006,6 +2020,8 @@ export const ExtensionDefinitionSchema = z.object({
     .args(z.unknown())
     .returns(z.object({ valid: z.boolean(), errors: z.array(z.string()) })),
   registerRoutes: z.function().args(z.unknown()).returns(z.void()),
+  registerPageRoutes: z.function().args(z.unknown()).returns(z.void()).optional(),
+  tokenAuthenticatedRoutes: z.array(z.object({ method: z.literal("POST"), path: z.string().startsWith("/") })).optional(),
   start: z.function().args(z.unknown()).returns(z.promise(z.void())),
   stop: z.function().args().returns(z.promise(z.void())),
   capabilities: z.function().args().returns(z.array(z.string())),
@@ -2291,6 +2307,23 @@ export const McpAppViewSchema = z.object({
   tool: z.string(),
   resourceUri: z.string(),
 });
+export const ExtensionFrameViewSchema = z.object({
+  url: z.string().max(2048),
+  title: z.string().min(1).max(200),
+  key: z.string().min(1).max(200),
+});
+export type ExtensionFrameView = z.infer<typeof ExtensionFrameViewSchema>;
+/** Extension frames may navigate only within that extension's host-owned pages. */
+export function isExtensionPageUrl(value: string, extensionId: string): boolean {
+  const prefix = `/x/${encodeURIComponent(extensionId)}`;
+  if ((!value.startsWith(`${prefix}/`) && value !== prefix) || /\\|%2f|%5c/i.test(value)) return false;
+  try {
+    const url = new URL(value, "https://extension.invalid");
+    return url.origin === "https://extension.invalid" && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`));
+  } catch {
+    return false;
+  }
+}
 export type McpAppView = z.infer<typeof McpAppViewSchema>;
 export const McpAppFileSchema = z.object({
   fileId: z.string(),

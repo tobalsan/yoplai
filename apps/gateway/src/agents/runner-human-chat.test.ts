@@ -149,6 +149,12 @@ beforeEach(async () => {
 });
 
 describe("extension reply review in runAgent", () => {
+  it("preserves the transport reply destination when dispatching the agent turn", async () => {
+    const run = scriptedAdapter([says(SHORT)]);
+    await turn({ source: "threadit", origin: { sink: "threadit", destination: { channel: "12:34" } } });
+    expect(run.mock.calls[0][0].origin).toEqual({ sink: "threadit", destination: { channel: "12:34" } });
+  });
+
   it("off: streams deltas as before and adds no nudge", async () => {
     getAgent.mockImplementation(() => agent());
     const seen: number[] = [];

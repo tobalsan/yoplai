@@ -40,7 +40,7 @@ import type {
 import { refreshToolLabels } from "../../lib/tool-labels";
 import { registerViewedChat } from "../../lib/chat-notifications";
 import { classifyFile, type PendingFile } from "../../lib/attachments";
-import { fullMessagesToSimpleView, type SimpleViewMessage, type ChatContentBlock } from "./chat-history";
+import { fullMessagesToSimpleView, isExtensionFrameView, type SimpleViewMessage, type ChatContentBlock } from "./chat-history";
 
 export type StreamingBlock =
   | {
@@ -695,6 +695,7 @@ export function createChatSession(input: ChatSessionInput) {
     parentToolCallId?: string,
     view?: McpAppViewReference
   ) => {
+    if (isExtensionFrameView(view)) resolveAppSession();
     const result: FullToolResultMessage = {
       role: "toolResult",
       toolCallId: id,
@@ -714,7 +715,7 @@ export function createChatSession(input: ChatSessionInput) {
     const status = isError ? "error" : "done";
     setStreamingBlocks((blocks) =>
       blocks.map((b) =>
-        b.type === "toolCall" && b.id === id ? { ...b, status, result } : b
+        b.type === "toolCall" && b.id === id ? { ...b, status, result, view: b.view ?? (isExtensionFrameView(view) ? view : undefined) } : b
       )
     );
     setStreamingToolCalls((prev) =>
@@ -723,7 +724,7 @@ export function createChatSession(input: ChatSessionInput) {
   };
 
   function notifyLiveView(view?: McpAppViewReference) {
-    if (view?.server === "yoplai" && (view.resourceUri === "ui://yoplai/dashboard" || (view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))))) input.onLiveView?.(view);
+    if (view?.server === "yoplai" && (view.resourceUri === "ui://yoplai/dashboard" || isExtensionFrameView(view) || (view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))))) input.onLiveView?.(view);
   }
 
   const appendStreamingFileBlock = (

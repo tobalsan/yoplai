@@ -11,7 +11,7 @@ export async function getExtensionAgentTools(
   config: GatewayConfig = loadConfig(),
   runtime: ExtensionRuntime = getExtensionRuntime(),
   userId?: string,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind"> & ExtensionRunInfo
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "origin" | "actorUserId" | "actorKind"> & ExtensionRunInfo
 ): Promise<LoadedExtensionAgentTool[]> {
   const tools = await runtime.getTools(agent, config, userId, identity);
   return tools.flatMap((tool) => {
@@ -49,7 +49,7 @@ export async function executeExtensionAgentTool(
   userId?: string,
   emitProgress?: ExtensionAgentToolContext["emitProgress"],
   signal?: AbortSignal,
-  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "actorUserId" | "actorKind" | "conversationFiles" | "toolCallId">
+  identity?: Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "origin" | "actorUserId" | "actorKind" | "conversationFiles" | "toolCallId">
 ): Promise<{ found: boolean; result?: unknown }> {
   return runtime.executeTool(
     agent,

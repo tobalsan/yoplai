@@ -405,6 +405,7 @@ describe("Discord bot integration", () => {
             agentId: "test-agent",
             message: "Hello bot!",
             source: "discord",
+            origin: { sink: "discord", destination: { channel: "channel-1" } },
           })
         );
 
@@ -770,6 +771,7 @@ describe("Discord bot integration", () => {
             agentId: "test-agent",
             message: expect.stringContaining("reacted with"),
             source: "discord",
+            origin: { sink: "discord", destination: { channel: "channel-1" } },
             context: expect.objectContaining({
               kind: "discord",
               blocks: expect.arrayContaining([
@@ -2007,6 +2009,7 @@ describe("Discord component bot", () => {
           agentId: "alpha",
           message: "Forum starter",
           sessionKey: "discord:forum:thread-1:alpha",
+          origin: { sink: "discord", destination: { channel: "thread-1" } },
           source: "discord",
         })
       );
@@ -2015,6 +2018,7 @@ describe("Discord component bot", () => {
           agentId: "beta",
           message: "Forum starter",
           sessionKey: "discord:forum:thread-1:beta",
+          origin: { sink: "discord", destination: { channel: "thread-1" } },
           source: "discord",
         })
       );
@@ -2105,6 +2109,7 @@ describe("Discord component bot", () => {
           message: "Follow-up",
           sessionId: "session-alpha",
           sessionKey: "discord:forum:thread-1:alpha",
+          origin: { sink: "discord", destination: { channel: "thread-1" } },
           source: "discord",
         })
       );

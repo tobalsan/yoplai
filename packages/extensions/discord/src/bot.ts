@@ -369,6 +369,7 @@ async function handleDiscordMessage(
       attachments: attachmentResult.attachments,
       sessionKey,
       source: "discord",
+      origin: { sink: "discord", destination: { channel: data.channel_id } },
       context,
       ...(data.author.bot
         ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }
@@ -506,6 +507,7 @@ async function handleDiscordReaction(
       message,
       sessionKey: `discord:${data.channel_id}`,
       source: "discord",
+      origin: { sink: "discord", destination: { channel: data.channel_id } },
       context,
     });
   } catch (err) {
@@ -657,6 +659,7 @@ async function handleForumThreadOpening(
       attachments: attachmentResult.attachments,
       sessionKey,
       source: "discord",
+      origin: { sink: "discord", destination: { channel: threadId } },
       context,
       ...(data.author.bot
         ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }
@@ -844,6 +847,7 @@ async function handleForumThreadReply(
       sessionId,
       sessionKey,
       source: "discord",
+      origin: { sink: "discord", destination: { channel: threadId } },
       context,
       ...(data.author.bot
         ? { sender: { kind: "agent" as const, agentId: `discord:${data.author.id}` } }

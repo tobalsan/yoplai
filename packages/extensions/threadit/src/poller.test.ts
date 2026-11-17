@@ -313,6 +313,7 @@ describe("ThreaditPoller", () => {
       agentId: "main",
       sessionKey: "threadit:thread-40",
       source: "threadit",
+      origin: { sink: "threadit", destination: { channel: "40:3" } },
       sessionOwnerId: null,
     });
     expect(params.context).toBeUndefined();

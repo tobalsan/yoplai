@@ -15,6 +15,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Extension tools receive trusted messaging reply origins on Pi and container runs; Slack delivery supports thread destinations, and Threadit adds a reply delivery sink.
+
+- External extensions can serve authenticated browser pages and cookie-free token POSTs, re-check viewer access, and open their own pages as reusable sandboxed chat-panel frames.
 - Threadit and Mattermost `!pair` links connect human accounts to signed-in Yoplai users through ten-minute, single-use, email-matched links; Account connections lists and unlinks them.
 - Chat can update an agent's instructions (admins and superadmins) or existing shared Markdown system files (superadmins), with requester checks, conflict protection, and a visible diff; the single-user operator can use both tools.
 - Multi-user chat share links let any signed-in colleague read the latest saved conversation, with owner-only revocation, name-only files and inert app views.

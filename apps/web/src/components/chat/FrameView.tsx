@@ -3,17 +3,20 @@ import { Button } from "../ui/Button";
 import { loadMcpAppData } from "../../api/mcp-apps";
 import type { DashboardFrame } from "./appViews";
 import { DashboardAnnotationsContext } from "./dashboardAnnotations";
+import { ExtensionFrameViewSchema, isExtensionPageUrl, type ExtensionFrameView } from "@yoplai/shared/types";
 import frameViewStyles from "./FrameView.css?inline";
 
+type FrameTarget = DashboardFrame | (ExtensionFrameView & { kind: "extension"; extensionId: string });
+
 export function FrameView(props: {
-  target: DashboardFrame;
+  target: FrameTarget;
   mode: "inline" | "panel";
   onExpand?: () => void;
   onCollapse?: () => void;
 }) {
   let frame: HTMLIFrameElement | undefined;
-  const annotation = useContext(DashboardAnnotationsContext)?.frame(() => frame);
-  const url = () => `/d/${encodeURIComponent(props.target.id)}`;
+  const annotation = useContext(DashboardAnnotationsContext)?.frame(() => props.target.kind === "dashboard" ? frame : undefined);
+  const url = () => props.target.kind === "dashboard" ? `/d/${encodeURIComponent(props.target.id)}` : props.target.url;
   const title = () => props.target.title || "Dashboard";
   createEffect(
     on(
@@ -30,7 +33,7 @@ export function FrameView(props: {
       classList={{ "frame-view-panel": props.mode === "panel" }}
     >
       <header class="frame-view-header">
-        <i class="fa-solid fa-table-columns" aria-hidden="true" />
+        <i class={props.target.kind === "dashboard" ? "fa-solid fa-table-columns" : "fa-solid fa-window-maximize"} aria-hidden="true" />
         <strong>{title()}</strong>
         <Show when={annotation?.available()}>
           <Button
@@ -74,7 +77,7 @@ export function FrameView(props: {
       </header>
       <iframe
         ref={frame}
-        title={`${title()} dashboard`}
+        title={`${title()} ${props.target.kind === "dashboard" ? "dashboard" : "view"}`}
         src={url()}
         sandbox="allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox"
         referrerpolicy="no-referrer"
@@ -85,7 +88,7 @@ export function FrameView(props: {
 }
 
 export function CapturedFrameView(props: {
-  kind: DashboardFrame["kind"];
+  kind: FrameTarget["kind"];
   agentId: string;
   sessionId: string;
   callId: () => string;
@@ -95,7 +98,7 @@ export function CapturedFrameView(props: {
   startCallId?: string;
   onShown?: (callId: string) => void;
 }) {
-  const [target, setTarget] = createSignal<DashboardFrame>();
+  const [target, setTarget] = createSignal<FrameTarget>();
   // A moved host starts at the last shown call, then loads the latest, so a failed update keeps it.
   const [primed, setPrimed] = createSignal(!props.startCallId || props.startCallId === props.callId());
   const callId = createMemo(() => (primed() ? props.callId() : props.startCallId!));
@@ -121,10 +124,14 @@ export function CapturedFrameView(props: {
     )
       .then((data) => {
         if (controller.signal.aborted) return;
-        setTarget({
-          ...(data.result.structuredContent as Omit<DashboardFrame, "kind">),
-          kind: props.kind,
-        });
+        if (props.kind === "extension") {
+          const frame = ExtensionFrameViewSchema.parse(data.result.structuredContent);
+          const extensionId = (data.result.structuredContent as { extensionId?: unknown }).extensionId;
+          if (typeof extensionId !== "string" || !isExtensionPageUrl(frame.url, extensionId)) throw new Error("Invalid extension frame");
+          setTarget({ ...frame, kind: "extension", extensionId });
+        } else {
+          setTarget({ ...(data.result.structuredContent as Omit<DashboardFrame, "kind">), kind: "dashboard" });
+        }
         props.onShown?.(id);
         if (!primed()) setPrimed(true);
       })
@@ -145,14 +152,14 @@ export function CapturedFrameView(props: {
       when={target()}
       fallback={
         <p role="status">
-          {failed() ? "Dashboard unavailable" : "Loading dashboard…"}
+          {failed() ? `${props.kind === "dashboard" ? "Dashboard" : "View"} unavailable` : `Loading ${props.kind === "dashboard" ? "dashboard" : "view"}…`}
         </p>
       }
     >
       {(current) => (
         <>
           <Show when={failed()}>
-            <p role="status">Dashboard update unavailable</p>
+            <p role="status">{props.kind === "dashboard" ? "Dashboard" : "View"} update unavailable</p>
           </Show>
           <FrameView
             target={current()}

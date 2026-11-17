@@ -598,6 +598,7 @@ export async function handleMattermostPost(
       sessionOwnerId,
       background: Boolean(sessionId),
       source: "mattermost",
+      origin: { sink: "mattermost", destination: { channel: rootId ? `${p.channel_id}:${rootId}` : p.channel_id } },
       context,
       requesterId: `mattermost:${p.user_id}`,
       ...(isBotPost(p)

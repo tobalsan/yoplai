@@ -185,6 +185,7 @@ async function createPiExtensionTools(
           actorKind: params.actorKind,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
+          origin: params.origin,
           signal: signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal,
           conversationFiles,
           emitProgress: (event) =>
