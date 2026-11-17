@@ -27,10 +27,11 @@ function listening(server: http.Server): Promise<void> {
 
 type Seen = { method?: string; url?: string; headers: http.IncomingHttpHeaders };
 
-/** A raw request with a path that fetch would normalize. */
-function rawGet(port: number, target: string): Promise<{ status: number; body: string }> {
+/** A raw request with a path that fetch would normalize, or a Host that fetch would not send. */
+function rawGet(port: number, target: string, host?: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const request = http.request({ host: "127.0.0.1", port, path: target, method: "GET" }, (response) => {
+    const headers = host ? { host } : undefined;
+    const request = http.request({ host: "127.0.0.1", port, path: target, method: "GET", headers }, (response) => {
       let body = "";
       response.on("data", (chunk) => (body += chunk));
       response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
@@ -153,11 +154,42 @@ describe("UI listener", () => {
     }
   });
 
-  it("answers HEAD for a page with the headers of GET and no body", async () => {
-    const response = await fetch(`http://127.0.0.1:${uiPort}/chat/agent-1`, { method: "HEAD" });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-length")).toBe(String("<html>app shell</html>".length));
-    expect(await response.text()).toBe("");
+  it("answers HEAD for a real file with no body, and gives no app shell to HEAD of a page", async () => {
+    const file = await fetch(`http://127.0.0.1:${uiPort}/assets/app-abc.js`, { method: "HEAD" });
+    expect(file.status).toBe(200);
+    expect(file.headers.get("content-length")).toBe(String("console.log('app')".length));
+    expect(await file.text()).toBe("");
+    const page = await fetch(`http://127.0.0.1:${uiPort}/chat/agent-1`, { method: "HEAD" });
+    expect(page.status).toBe(404);
+  });
+
+  it("accepts every loopback Host name of the UI port", async () => {
+    for (const host of [`127.0.0.1:${uiPort}`, `localhost:${uiPort}`, `[::1]:${uiPort}`]) {
+      expect((await rawGet(uiPort, "/", host)).status, host).toBe(200);
+    }
+  });
+
+  it("refuses a foreign Host for pages and forwarded paths, and forwards nothing", async () => {
+    for (const host of [`evil.example:${uiPort}`, "localhost", `127.0.0.1:${uiPort + 1}`]) {
+      for (const target of ["/", "/api/agents"]) {
+        const response = await rawGet(uiPort, target, host);
+        expect(response.status, `${host} ${target}`).toBe(403);
+        expect(response.body).not.toContain("app shell");
+      }
+    }
+    expect(seen).toBeUndefined();
+  });
+
+  it("refuses a WebSocket upgrade with a foreign Host", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${uiPort}/ws`, { headers: { Host: `evil.example:${uiPort}` } });
+    const status = await new Promise<number | undefined>((resolve) => {
+      ws.once("unexpected-response", (_request, response) => resolve(response.statusCode));
+      ws.once("open", () => resolve(101));
+      ws.once("error", () => resolve(undefined));
+    });
+    ws.terminate();
+    expect(status).not.toBe(101);
+    expect(upgradeSeen).toBeUndefined();
   });
 
   it("does not serve the app shell to a non-GET request", async () => {

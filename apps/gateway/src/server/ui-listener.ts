@@ -193,11 +193,21 @@ function ownsPageFallback(pathname: string): boolean {
   return !path.posix.basename(normalized).includes(".");
 }
 
+/**
+ * True when the Host header names this listener on a loopback name, as the Vite dev server requires.
+ * A DNS rebinding page sends its own host name, so it cannot read the local API through this port.
+ */
+function isLoopbackHost(host: string | undefined, port: number): boolean {
+  if (!host) return false;
+  return ["127.0.0.1", "localhost", "[::1]"].some((name) => host.toLowerCase() === `${name}:${port}`);
+}
+
 async function serveStatic(request: IncomingMessage, response: ServerResponse, root: string): Promise<void> {
   if (request.method !== "GET" && request.method !== "HEAD") return notFound(response);
   const pathname = pathnameOf(request.url);
   let file = await resolveFile(root, pathname);
-  if (!file && ownsPageFallback(pathname)) file = await resolveFile(root, "/index.html");
+  // HEAD gets real files only. The app shell is for a GET of a page.
+  if (!file && request.method === "GET" && ownsPageFallback(pathname)) file = await resolveFile(root, "/index.html");
   if (!file) return notFound(response);
 
   const hashed = file.startsWith(`${root}${path.sep}assets${path.sep}`);
@@ -221,7 +231,13 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, r
  */
 export function startUiListener(options: UiListenerOptions): http.Server {
   const root = fs.realpathSync(path.resolve(options.webDist));
+  const boundPort = () => (server.address() as net.AddressInfo | null)?.port ?? options.port;
   const server = http.createServer((request, response) => {
+    if (!isLoopbackHost(request.headers.host, boundPort())) {
+      response.writeHead(403, { "Content-Type": "text/plain" });
+      response.end("Forbidden host");
+      return;
+    }
     if (isForwardedPath(pathnameOf(request.url))) return forwardRequest(request, response, options);
     serveStatic(request, response, root).catch(() => {
       if (!response.headersSent) response.writeHead(500, { "Content-Type": "text/plain" });
@@ -229,6 +245,10 @@ export function startUiListener(options: UiListenerOptions): http.Server {
     });
   });
   server.on("upgrade", (request, socket, head) => {
+    if (!isLoopbackHost(request.headers.host, boundPort())) {
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      return;
+    }
     if (!isForwardedPath(pathnameOf(request.url))) {
       socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
       return;
