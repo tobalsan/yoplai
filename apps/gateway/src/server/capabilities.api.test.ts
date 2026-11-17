@@ -59,6 +59,30 @@ describe("/capabilities API", () => {
       forkedAgents: false,
       enableCronMonitoring: false,
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
+      relayLink: { available: false },
     });
+  });
+
+  it("reports the browser link only while the relay is on and the listener accepts 127.0.0.1", async () => {
+    const { api } = await import("./api.core.js");
+    const state = await import("../relay/state.js");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const available = async () => ((await (await Promise.resolve(api.request("/capabilities"))).json()) as { relayLink: { available: boolean } }).relayLink.available;
+    try {
+      state.configureRelay("127.0.0.1", false);
+      state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
+      expect(await available()).toBe(true);
+      for (const address of ["127.0.0.2", "::1"]) {
+        state.setGatewayListener({ address, port: 4000 });
+        expect(await available()).toBe(false);
+      }
+      state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
+      state.configureRelay("127.0.0.1", true);
+      expect(await available()).toBe(false);
+    } finally {
+      state.setGatewayListener(undefined);
+      state.configureRelay("127.0.0.1", true);
+      vi.restoreAllMocks();
+    }
   });
 });

@@ -31,6 +31,8 @@ import { Dashboards } from "./pages/Dashboards";
 import { RemoteDashboard } from "./pages/RemoteDashboard";
 import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
+import { GatewayLink } from "./pages/GatewayLink";
+import { GatewayLinks } from "./pages/GatewayLinks";
 import { SessionArchive } from "./pages/SessionArchive";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import {
@@ -398,6 +400,22 @@ export default function App() {
         component={() => (
           <GuardedRoute>
             <AccountConnections />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/account/gateway-links"
+        component={() => (
+          <GuardedRoute>
+            <GatewayLinks />
+          </GuardedRoute>
+        )}
+      />
+      <Route
+        path="/gateway-link"
+        component={() => (
+          <GuardedRoute>
+            <GatewayLink />
           </GuardedRoute>
         )}
       />

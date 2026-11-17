@@ -38,8 +38,13 @@ describe("multi-user component", () => {
     const close = vi.spyOn(db, "close");
     const auth = { handler: vi.fn(), api: { getSession: vi.fn() } } as const;
 
+    const recover = vi.fn(() => 0);
     vi.doMock("./db.js", () => ({
       initializeMultiUserDatabase: vi.fn(() => db),
+      ensureManagedKeyPrefixIndex: vi.fn(),
+    }));
+    vi.doMock("./gateway-link.js", () => ({
+      createGatewayLinkService: vi.fn(() => ({ recover, isReady: () => recover.mock.calls.length > 0 })),
     }));
     vi.doMock("./auth.js", () => ({
       createMultiUserAuth: vi.fn(async () => auth),
@@ -133,11 +138,17 @@ describe("multi-user component", () => {
       },
     } satisfies ExtensionContext;
 
+    const { isGatewayLinkReady } = await import("./index.js");
+    expect(isGatewayLinkReady()).toBe(false);
     await multiUserExtension.start(ctx);
     expect(multiUserExtension.capabilities()).toEqual(["multi-user"]);
+    // Recovery ran before the runtime became visible, so link support is ready after start.
+    expect(recover).toHaveBeenCalledOnce();
+    expect(isGatewayLinkReady()).toBe(true);
 
     await multiUserExtension.stop();
     expect(multiUserExtension.capabilities()).toEqual([]);
+    expect(isGatewayLinkReady()).toBe(false);
     expect(close).toHaveBeenCalledOnce();
   });
 });

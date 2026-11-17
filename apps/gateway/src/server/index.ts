@@ -271,7 +271,9 @@ app.all("/api/*", async (c) => {
     forwardAuthContextToRequest(request, authContext);
   }
 
-  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified });
+  // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
+  const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
+  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
 });
 
 app.all("/hooks/*", async (c) => {

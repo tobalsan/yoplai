@@ -3,11 +3,14 @@ import {
   AgentConfigSchema,
   AgentYamlConfigSchema,
   AgentContextSchema,
+  CapabilitiesResponseSchema,
   ContainerFileOutputRequestSchema,
   ContainerInputSchema,
   ContainerOutputSchema,
   ContainerRunnerProtocolEventSchema,
   GatewayConfigSchema,
+  GatewayLinkRequestInputSchema,
+  GatewayLinkTokenInputSchema,
   HistoryEventSchema,
   MultiUserConfigSchema,
   ProjectsOrchestratorConfigSchema,
@@ -612,5 +615,40 @@ describe("container IPC schemas", () => {
         text: "hello",
       }).success
     ).toBe(false);
+  });
+});
+
+describe("gateway link contracts", () => {
+  const challenge = "A".repeat(43);
+  const state = "B".repeat(43);
+  const capabilities = { version: 2, extensions: {}, agents: [], multiUser: true };
+
+  it("accepts the optional gatewayLink capability and keeps it optional", () => {
+    expect(CapabilitiesResponseSchema.parse(capabilities).gatewayLink).toBeUndefined();
+    expect(
+      CapabilitiesResponseSchema.parse({ ...capabilities, gatewayLink: { version: 1, method: "loopback-pkce" } }).gatewayLink
+    ).toEqual({ version: 1, method: "loopback-pkce" });
+    expect(CapabilitiesResponseSchema.safeParse({ ...capabilities, gatewayLink: { version: 2, method: "loopback-pkce" } }).success).toBe(false);
+    expect(CapabilitiesResponseSchema.safeParse({ ...capabilities, gatewayLink: { version: 1, method: "device" } }).success).toBe(false);
+  });
+
+  it("accepts the optional relayLink capability and keeps it optional", () => {
+    expect(CapabilitiesResponseSchema.parse(capabilities).relayLink).toBeUndefined();
+    expect(CapabilitiesResponseSchema.parse({ ...capabilities, relayLink: { available: false } }).relayLink).toEqual({ available: false });
+    expect(CapabilitiesResponseSchema.safeParse({ ...capabilities, relayLink: { available: "yes" } }).success).toBe(false);
+  });
+
+  it("accepts a request with fixed-size challenge and state and rejects unknown fields", () => {
+    const base = { challenge, state, callbackUri: "http://127.0.0.1:4000/api/relay/link/callback", deviceLabel: "Laptop" };
+    expect(GatewayLinkRequestInputSchema.safeParse(base).success).toBe(true);
+    expect(GatewayLinkRequestInputSchema.safeParse({ ...base, challenge: "short" }).success).toBe(false);
+    expect(GatewayLinkRequestInputSchema.safeParse({ ...base, origin: "https://evil.test" }).success).toBe(false);
+  });
+
+  it("limits the verifier to the PKCE alphabet and length", () => {
+    const base = { code: "code", callbackUri: "http://127.0.0.1:4000/api/relay/link/callback" };
+    expect(GatewayLinkTokenInputSchema.safeParse({ ...base, verifier: "v".repeat(43) }).success).toBe(true);
+    expect(GatewayLinkTokenInputSchema.safeParse({ ...base, verifier: "v".repeat(42) }).success).toBe(false);
+    expect(GatewayLinkTokenInputSchema.safeParse({ ...base, verifier: `${"v".repeat(42)}!` }).success).toBe(false);
   });
 });

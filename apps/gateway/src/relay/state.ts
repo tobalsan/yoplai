@@ -3,6 +3,8 @@ import { removeGatewaySuffix } from "./agent-id.js";
 import { createFileRemoteGatewayStore, type RemoteGateway } from "./store.js";
 
 let enabled = false;
+/** The address that the gateway listener really bound. The link callback needs `127.0.0.1` on this listener. */
+let listener: { address: string; port: number } | undefined;
 let fileStore: ReturnType<typeof createFileRemoteGatewayStore> | undefined;
 
 const LOOPBACK_IPV4_RE = /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
@@ -90,6 +92,24 @@ export function configureRelay(
 
 export function isRelayEnabled(): boolean {
   return enabled;
+}
+
+/** Records the bound address of the gateway listener, or forgets it with `undefined`. */
+export function setGatewayListener(address: { address: string; port: number } | undefined): void {
+  listener = address;
+}
+
+export function getGatewayListener(): { address: string; port: number } | undefined {
+  return listener;
+}
+
+/**
+ * The port for the link callback `http://127.0.0.1:<port>/...`, or undefined. The callback uses the literal
+ * `127.0.0.1`, so it works only while the relay is on and the listener really accepts that address. A listener
+ * bound to `127.0.0.2` or `::1` still serves saved links, but it cannot receive the browser callback.
+ */
+export function getLinkCallbackPort(): number | undefined {
+  return enabled && listener?.address === "127.0.0.1" ? listener.port : undefined;
 }
 
 export function getRemoteGatewayStore() {

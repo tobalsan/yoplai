@@ -107,6 +107,7 @@ import { getAuditActor, listSettingsChanges, recordSettingsChange } from "../aud
 import { diffSettings } from "../audit/diff.js";
 import { modelQuotaStore } from "../model-quota/runtime.js";
 import { fiveHourState, pace } from "../model-quota/policy.js";
+import { getLinkCallbackPort } from "../relay/state.js";
 
 const api = new Hono();
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
@@ -144,6 +145,19 @@ function loadMultiUserApiDeps(): Promise<MultiUserApiDeps> {
     })
   );
   return multiUserApiDepsPromise;
+}
+
+/**
+ * True when the multi-user handlers and the key recovery service of the gateway link are ready. A module that cannot
+ * answer counts as not ready, so the capability never shows for a gateway that cannot serve it.
+ */
+async function isGatewayLinkReady(): Promise<boolean> {
+  if (!isExtensionLoaded("multiUser")) return false;
+  try {
+    return (await import("@yoplai/extension-multi-user")).isGatewayLinkReady() === true;
+  } catch {
+    return false;
+  }
 }
 
 async function getRequestAuthContext(c: Context) {
@@ -601,6 +615,8 @@ api.get("/capabilities", async (c) => {
           },
         }
       : {}),
+    ...((await isGatewayLinkReady()) ? { gatewayLink: { version: 1, method: "loopback-pkce" } } : {}),
+    relayLink: { available: getLinkCallbackPort() !== undefined },
     forkedAgents: config.forkedAgents ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
     dashboardEmbed: {

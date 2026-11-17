@@ -5,6 +5,7 @@ import type { AgentAssignmentStore } from "./assignments.js";
 import type { MultiUserAuth } from "./auth.js";
 import type { PoolCatalogResolver } from "./catalog.js";
 import type { ForkStore } from "./forks.js";
+import type { GatewayLinkService } from "./gateway-link.js";
 import type { MembershipStore } from "./membership.js";
 import type { OnboardingStore } from "./onboarding.js";
 import type { ConnectPromptStore } from "./connect-prompt.js";
@@ -23,6 +24,8 @@ export type MultiUserRuntime = {
   catalog: PoolCatalogResolver;
   /** Current pool agent ids (the catalog card keys), in config order. */
   getPoolAgentIds(): string[];
+  /** Set after crash recovery ran. Absent in a runtime that never started the link service. */
+  gatewayLinks?: GatewayLinkService;
   getAgent: ExtensionContext["getAgent"];
   notifyAgentListChanged: ExtensionContext["notifyAgentListChanged"];
   logger: ExtensionLogger;
@@ -37,6 +40,11 @@ export function getMultiUserRuntime(): MultiUserRuntime | null {
 
 export function setMultiUserRuntime(next: MultiUserRuntime | null): void {
   runtime = next;
+}
+
+/** True when the gateway link service finished recovery. The remote advertises link support only then. */
+export function isGatewayLinkReady(): boolean {
+  return runtime?.gatewayLinks?.isReady() === true;
 }
 
 /** Plain agents without a pool are Public; recorded forks keep their access rules. */

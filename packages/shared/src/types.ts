@@ -2100,6 +2100,10 @@ export const CapabilitiesResponseSchema = z.object({
       enabled: z.boolean(),
     })
     .optional(),
+  /** Present only on a multi-user gateway whose browser-link handlers and recovery service are ready. */
+  gatewayLink: z.object({ version: z.literal(1), method: z.literal("loopback-pkce") }).optional(),
+  /** Present on a local gateway. `available` is true only when the browser link can reach this gateway at `127.0.0.1`. */
+  relayLink: z.object({ available: z.boolean() }).optional(),
   home: z.string().optional(),
   user: CapabilitiesUserSchema.optional(),
   branding: z
@@ -2111,6 +2115,89 @@ export const CapabilitiesResponseSchema = z.object({
     .optional(),
 });
 export type CapabilitiesResponse = z.infer<typeof CapabilitiesResponseSchema>;
+
+// Gateway link (remote side): a local gateway links to a multi-user remote through a loopback redirect with PKCE.
+/** The one callback path that a link request may name. The host is always the literal `127.0.0.1`. */
+export const GATEWAY_LINK_CALLBACK_PATH = "/api/relay/link/callback";
+/** Lifetime of a link key, in seconds (90 days). */
+export const GATEWAY_LINK_KEY_TTL_SECONDS = 7_776_000;
+
+const base64UrlValue = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${length}}$`));
+
+export const GatewayLinkRequestInputSchema = z.object({
+  /** S256 code challenge: base64url of the SHA-256 digest of the verifier. */
+  challenge: base64UrlValue(43),
+  state: base64UrlValue(43),
+  callbackUri: z.string().min(1).max(100),
+  deviceLabel: z.string().min(1).max(64),
+  replaceLinkId: z.string().min(1).max(64).optional(),
+}).strict();
+export type GatewayLinkRequestInput = z.infer<typeof GatewayLinkRequestInputSchema>;
+
+export const GatewayLinkRequestCreatedSchema = z.object({
+  requestId: z.string(),
+  expiresAt: z.string(),
+});
+export type GatewayLinkRequestCreated = z.infer<typeof GatewayLinkRequestCreatedSchema>;
+
+export const GatewayLinkTokenInputSchema = z.object({
+  code: z.string().min(1).max(128),
+  verifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
+  callbackUri: z.string().min(1).max(100),
+}).strict();
+export type GatewayLinkTokenInput = z.infer<typeof GatewayLinkTokenInputSchema>;
+
+export const GatewayLinkStatusSchema = z.enum(["active", "expired", "revoked", "blocked", "issuing"]);
+export type GatewayLinkStatus = z.infer<typeof GatewayLinkStatusSchema>;
+
+export const GatewayLinkSummarySchema = z.object({
+  id: z.string(),
+  deviceLabel: z.string(),
+  status: GatewayLinkStatusSchema,
+  createdAt: z.string(),
+  expiresAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+});
+export type GatewayLinkSummary = z.infer<typeof GatewayLinkSummarySchema>;
+
+export const GatewayLinkTokenResponseSchema = z.object({
+  /** The plaintext key. The remote returns it once and never again. */
+  key: z.string(),
+  link: GatewayLinkSummarySchema.extend({ account: z.object({ email: z.string().nullable(), name: z.string().nullable() }) }),
+});
+export type GatewayLinkTokenResponse = z.infer<typeof GatewayLinkTokenResponseSchema>;
+
+export const GatewayLinkConsentViewSchema = z.object({
+  requestId: z.string(),
+  status: z.enum(["pending", "approved", "denied", "expired", "used"]),
+  deviceLabel: z.string(),
+  expiresAt: z.string(),
+  account: z.object({ email: z.string().nullable(), name: z.string().nullable() }),
+  /** The link that this approval replaces, when the request names one that the signed-in account owns. */
+  replaces: z.object({ id: z.string(), deviceLabel: z.string() }).nullable(),
+  /** True when the request names a link that another account owns, or that does not exist. Approval is not possible. */
+  replaceConflict: z.boolean(),
+  /**
+   * Other links of this account with the same device label that still work or are blocked. When a first exchange loses
+   * its answer, the account holds a key that nobody has. This list lets the page tell the user to revoke it first.
+   */
+  sameDeviceLinks: z.array(GatewayLinkSummarySchema),
+  /** A nonce bound to this request and the signed-in session. The page sends it back with approve or deny. */
+  nonce: z.string(),
+});
+export type GatewayLinkConsentView = z.infer<typeof GatewayLinkConsentViewSchema>;
+
+export const GatewayLinkConsentActionSchema = z.object({
+  requestId: z.string().min(1).max(64),
+  nonce: z.string().min(1).max(128),
+}).strict();
+export type GatewayLinkConsentAction = z.infer<typeof GatewayLinkConsentActionSchema>;
+
+export const GatewayLinkRedirectSchema = z.object({ redirectUrl: z.string() });
+export type GatewayLinkRedirect = z.infer<typeof GatewayLinkRedirectSchema>;
+
+export const GatewayLinkRevokeInputSchema = z.object({ linkId: z.string().min(1).max(64).optional() }).strict();
+export type GatewayLinkRevokeInput = z.infer<typeof GatewayLinkRevokeInputSchema>;
 
 // Projects API types
 export const ProjectStatusSchema = z
