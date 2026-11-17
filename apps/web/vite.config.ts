@@ -117,7 +117,9 @@ const tailscaleServe = !isDevMode && uiConfig.tailscale?.mode === "serve";
 
 // When using tailscale serve, bind to localhost so tailscale can proxy to it
 // Otherwise, use the configured bind mode
-const host = tailscaleServe ? "127.0.0.1" : resolveHost(uiConfig.bind);
+// YOPLAI_UI_HOST (set by the desktop shell) overrides both.
+const host =
+  readEnv("UI_HOST") ?? (tailscaleServe ? "127.0.0.1" : resolveHost(uiConfig.bind));
 
 // Get MagicDNS hostname for allowed hosts when using tailscale serve
 const tailnetHostname = tailscaleServe ? getTailnetHostname() : null;
@@ -134,7 +136,10 @@ const hmrHostOverride = readEnv("HMR_HOST");
 
 // Resolve gateway target for proxy
 // In dev mode, use YOPLAI_GATEWAY_PORT from orchestrator
-const gatewayBindHost = gatewayConfig.host ?? resolveHost(gatewayConfig.bind);
+const gatewayBindHost =
+  readEnv("GATEWAY_HOST") ??
+  gatewayConfig.host ??
+  resolveHost(gatewayConfig.bind);
 // The proxy connects (not listens), so 0.0.0.0 isn't a valid destination on
 // macOS — rewrite to loopback. The gateway still listens on all interfaces.
 const gatewayHost =
