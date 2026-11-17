@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -51,12 +52,16 @@ export function resolveHome(parentEnv: NodeJS.ProcessEnv, appSupportDir: string)
   return override ? expandHomePath(override) : path.join(appSupportDir, "Yoplai", "home");
 }
 
-/** The first-run config: no agents and loopback bind. Slice 6 adds the real setup. */
+/**
+ * The first-run config: no agents and loopback bind. Slice 6 adds the real setup.
+ * OAuth tokens need an encryption key, and an app user cannot set one, so the seed makes one in `.env`.
+ */
 export const SEED_CONFIG = {
   version: 3,
   agents: [],
   gateway: { bind: "loopback" },
   ui: { bind: "loopback" },
+  oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
 } as const;
 
 const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
@@ -65,6 +70,9 @@ const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
 export function seedHome(home: string): boolean {
   fs.mkdirSync(home, { recursive: true });
   if (CONFIG_NAMES.some((name) => fs.existsSync(path.join(home, name)))) return false;
+  // The gateway loads `$YOPLAI_HOME/.env`. Append, so a `.env` that exists keeps its other values.
+  const key = randomBytes(32).toString("base64url");
+  fs.appendFileSync(path.join(home, ".env"), `OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(home, "yoplai.json"), `${JSON.stringify(SEED_CONFIG, null, 2)}\n`, { flag: "wx" });
   return true;
 }
