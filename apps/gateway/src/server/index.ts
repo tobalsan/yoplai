@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import path from "node:path";
 import { Hono } from "hono";
 import { startAppsListener } from "../mcp-apps/views.js";
+import { startUiListener } from "./ui-listener.js";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
@@ -396,6 +397,28 @@ export function startServer(
 
   const stopApps = startAppsListener(config, resolvedHost);
   server.once("close", stopApps);
+
+  // The packaged app has no Vite. With a built UI directory, a second loopback listener serves it on the UI port.
+  const webDist = readEnv("WEB_DIST");
+  if (webDist) {
+    const uiPort = config.ui?.port ?? 3000;
+    const uiServer = startUiListener({
+      webDist,
+      host: "127.0.0.1",
+      port: uiPort,
+      gatewayHost: ["0.0.0.0", "::"].includes(resolvedHost) ? "127.0.0.1" : resolvedHost,
+      gatewayPort: resolvedPort,
+      onError: (error) => {
+        logError(`UI listener failed on 127.0.0.1:${uiPort}`, error);
+        process.exit(1);
+      },
+    });
+    console.log(`Serving web UI from ${webDist} on 127.0.0.1:${uiPort}`);
+    server.once("close", () => {
+      uiServer.close();
+      uiServer.closeAllConnections();
+    });
+  }
 
   // Loaded by the first upgrade of a multi-user socket, so the sync check below finds it for every socket with a context.
   let loadedMultiUserModule: MultiUserMiddlewareModule | undefined;
