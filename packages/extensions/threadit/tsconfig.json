@@ -1,1 +1,1 @@
-{"extends":"../../../tsconfig.json","compilerOptions":{"rootDir":"src","outDir":"dist","composite":true},"include":["src"],"references":[{"path":"../../shared"}]}
+{"extends":"../../../tsconfig.json","compilerOptions":{"rootDir":"src","outDir":"dist","composite":true},"include":["src"],"references":[{"path":"../../shared"},{"path":"../multi-user"}]}

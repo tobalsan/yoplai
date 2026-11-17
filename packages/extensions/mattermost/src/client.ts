@@ -34,6 +34,7 @@ export type MattermostFileInfo = {
 
 export type MattermostUser = {
   id: string;
+  email?: string;
   username: string;
   first_name?: string;
   last_name?: string;

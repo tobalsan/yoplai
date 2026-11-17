@@ -9,7 +9,7 @@ export type FetchFn = (
   init?: RequestInit
 ) => Promise<Response>;
 
-export type BoardAccount = { id: number; username: string; account_type: string };
+export type BoardAccount = { id: number; username: string; account_type: string; email?: string };
 export type BoardAttachment = { filename: string };
 export type BoardSession = {
   agent: { id: number };
@@ -105,6 +105,7 @@ function toAccount(value: unknown): BoardAccount {
     id: num(v.id),
     username: str(v.username),
     account_type: str(v.account_type),
+    ...(typeof v.email === "string" ? { email: v.email } : {}),
   };
 }
 
@@ -235,6 +236,10 @@ export class ThreaditApi {
 
   me(): Promise<ApiResult<BoardAccount>> {
     return this.get("/api/me", toAccount);
+  }
+
+  users(): Promise<ApiResult<BoardAccount[]>> {
+    return this.get("/api/users", (value) => list(obj(value).users).map(toAccount));
   }
 
   /** One page of attention items, oldest first. */

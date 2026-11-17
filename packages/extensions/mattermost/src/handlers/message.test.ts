@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
-import type { MattermostPost } from "../client.js";
-import { ALICE, BOT, CHANNEL } from "../test-fakes.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { GatewayConfigSchema, registerSurfaceLinkService } from "@yoplai/shared";
+import { createSurfaceLinkService, initializeMultiUserDatabase } from "@yoplai/extension-multi-user";
+import { MattermostRestClient, type MattermostPost } from "../client.js";
+import { setMattermostContext, clearMattermostContext } from "../context.js";
+import { createMattermostBot, type MattermostBot } from "../bot.js";
+import { ALICE, BOT, CHANNEL, DM_CHANNEL, FakeMattermost, FakeSocketFactory, TOKEN, buildFakeContext, flush } from "../test-fakes.js";
 import {
+  handleMattermostPost,
   isBotPost,
   isResetCommand,
   mentionsBot,
@@ -200,5 +208,125 @@ describe("thread and session helpers", () => {
     expect(isResetCommand("!reset now")).toBe(true);
     expect(isResetCommand("/new")).toBe(false);
     expect(isBotPost({ ...post, props: { from_bot: true } })).toBe(true);
+  });
+});
+
+
+describe("Mattermost account linking", () => {
+  let dataDir: string;
+  let db: ReturnType<typeof initializeMultiUserDatabase> | undefined;
+  let unregister: (() => void) | undefined;
+  let bot: MattermostBot | null = null;
+
+  beforeEach(async () => { dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "mm-linking-")); });
+  afterEach(async () => {
+    await bot?.stop();
+    bot = null;
+    clearMattermostContext();
+    unregister?.();
+    db?.close();
+    db = undefined;
+    unregister = undefined;
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  function setup(withLinks = true) {
+    const config = GatewayConfigSchema.parse({ version: 2, agents: [{ id: "support", name: "Support", workspace: "~/support", model: { provider: "anthropic", model: "claude" } }] });
+    const ctx = buildFakeContext({ config, dataDir });
+    setMattermostContext(ctx);
+    const server = new FakeMattermost();
+    const alice = { ...ALICE, email: "alice@example.test" };
+    server.users.set(ALICE.id, alice);
+    const rest = new MattermostRestClient("https://chat.example.test", TOKEN, server.fetch);
+    let links: ReturnType<typeof createSurfaceLinkService> | undefined;
+    if (withLinks) {
+      db = initializeMultiUserDatabase(dataDir);
+      db.exec("CREATE TABLE user (id TEXT PRIMARY KEY); INSERT INTO user VALUES ('gateway-alice')");
+      links = createSurfaceLinkService(db, "https://gateway.example.test");
+      unregister = registerSurfaceLinkService(links);
+    }
+    return { ctx, server, rest, links, config, deps: { rest, bot: BOT, userNames: new Map<string, string>() } };
+  }
+
+  it("passes a linked human identity into the run and unregisters the server on stop", async () => {
+    const { ctx, server, config, links, deps } = setup();
+    const sockets = new FakeSocketFactory();
+    bot = createMattermostBot(config.agents, { enabled: true, url: "https://chat.example.test", token: TOKEN, channels: { [CHANNEL]: { agent: "support" } } }, { fetch: server.fetch, createSocket: sockets.create });
+    const started = bot!.start();
+    await flush();
+    sockets.last().open();
+    sockets.last().hello("pairing-connection");
+    await started;
+    await handleMattermostPost(inbound("@yoplai !pair"), route, deps, "!pair");
+    const link = server.created()[0].message.match(/https:\/\/gateway\.example\.test\/api\/surface-links\/pair\/[A-Za-z0-9_-]+/)![0];
+    await links!.redeem(new URL(link).pathname.split("/").at(-1)!, { id: "gateway-alice", email: "alice@example.test" });
+    await handleMattermostPost(inbound("hello", { id: "next-post" }), route, deps, "hello");
+    expect(ctx.runs).toHaveLength(1);
+    expect(ctx.runs[0]).toMatchObject({ userId: "gateway-alice", requesterId: "mattermost:alice0000000000000000000001", sessionOwnerId: null });
+    for (const flag of ["from_bot", "from_webhook", "from_plugin"]) {
+      const item = inbound("@yoplai !pair", { id: flag, props: { [flag]: true } });
+      const botRoute = { ...route, allowBots: true };
+      const gate = processPost(item, botRoute, BOT);
+      expect(gate.shouldReply).toBe(true);
+      await handleMattermostPost(item, botRoute, deps, gate.text);
+      const run = ctx.runs.at(-1)!;
+      expect(run.userId).toBeUndefined();
+      expect(run.sender).toEqual({ kind: "agent", agentId: "mattermost:alice0000000000000000000001" });
+      expect(run.message).toBe("!pair");
+    }
+    links!.unlink("gateway-alice", links!.list("gateway-alice")[0].id);
+    await handleMattermostPost(inbound("after unlink", { id: "after-unlink" }), route, deps, "after unlink");
+    expect(ctx.runs.at(-1)!.userId).toBeUndefined();
+    const retry = await links!.issue({ surface: "mattermost", scope: "https://chat.example.test", externalId: ALICE.id, username: "alice" });
+    await bot!.stop();
+    await expect(links!.redeem(new URL(retry).pathname.split("/").at(-1)!, { id: "gateway-alice", email: "alice@example.test" })).rejects.toThrow("unavailable");
+  });
+
+  it("sends a pairing link privately and confirms its delivery in the channel thread", async () => {
+    const { ctx, server, deps, links } = setup();
+    const item = inbound("@yoplai !pair");
+    await handleMattermostPost(item, route, deps, "!pair");
+    expect(ctx.runs).toHaveLength(0);
+    const sent = server.created();
+    expect(sent).toHaveLength(2);
+    expect(sent[0].channel_id).toBe(DM_CHANNEL);
+    expect(sent[0].root_id).toBeUndefined();
+    const link = sent[0].message.match(/https:\/\/gateway\.example\.test\/api\/surface-links\/pair\/[A-Za-z0-9_-]+/)![0];
+    expect(links!.inspect(new URL(link).pathname.split("/").at(-1)!)).toMatchObject({ surface: "mattermost", scope: "https://chat.example.test", externalId: ALICE.id, username: "alice" });
+    expect(sent[1]).toEqual({ channel_id: CHANNEL, root_id: item.post.id, message: "I sent you a link by DM." });
+    expect(JSON.stringify(sent)).not.toContain("alice@example.test");
+  });
+
+  it("replies with a pairing link in the existing direct-message thread", async () => {
+    const { ctx, server, deps } = setup();
+    const item = inbound("!pair", { channel_id: DM_CHANNEL, root_id: "dm-root" }, { channelType: "D" });
+    await handleMattermostPost(item, { ...route, isDm: true }, deps, "!pair");
+    expect(ctx.runs).toHaveLength(0);
+    expect(server.created()).toHaveLength(1);
+    expect(server.created()[0]).toMatchObject({ channel_id: DM_CHANNEL, root_id: "dm-root" });
+    expect(server.created()[0].message).toContain("https://gateway.example.test/api/surface-links/pair/");
+    expect(server.requests.some((request) => request.path === "/channels/direct")).toBe(false);
+  });
+
+  it("explains when the server does not expose the human's email", async () => {
+    const { ctx, server, deps } = setup();
+    server.users.set(ALICE.id, ALICE);
+    const item = inbound("@yoplai !pair");
+    await handleMattermostPost(item, route, deps, "!pair");
+    expect(ctx.runs).toHaveLength(0);
+    expect(server.created()).toEqual([{ channel_id: CHANNEL, root_id: item.post.id, message: "Mattermost email is unavailable. Ask your administrator." }]);
+    expect(server.requests.some((request) => request.path === "/channels/direct")).toBe(false);
+  });
+
+  it("explains that linking needs sign-in while ordinary unlinked messages still run", async () => {
+    const { ctx, server, deps } = setup(false);
+    const item = inbound("@yoplai !pair");
+    await handleMattermostPost(item, route, deps, "!pair");
+    expect(ctx.runs).toHaveLength(0);
+    expect(server.created()).toEqual([{ channel_id: CHANNEL, root_id: item.post.id, message: "Account linking needs multi-user sign-in." }]);
+    await handleMattermostPost(inbound("hello", { id: "ordinary-post" }), route, deps, "hello");
+    expect(ctx.runs).toHaveLength(1);
+    expect(ctx.runs[0].userId).toBeUndefined();
+    expect(ctx.runs[0].requesterId).toBe("mattermost:alice0000000000000000000001");
   });
 });

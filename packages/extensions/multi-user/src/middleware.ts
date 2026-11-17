@@ -226,6 +226,7 @@ function shouldSkipAuth(path: string, method: string): boolean {
   if (method === "GET" && path === "/api/mcp/oauth/client-metadata.json") return true;
   if (method === "POST" && path === "/api/skills/import") return true;
   if (method === "GET" && /^\/api\/slack\/(?:pair|connect)\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
+  if (method === "GET" && /^\/api\/surface-links\/pair\/[A-Za-z0-9_-]{43}$/.test(path)) return true;
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return true;
   if (path === "/api/capabilities") return true;
   if (path === "/api/branding/logo") return true;

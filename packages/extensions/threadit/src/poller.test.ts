@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { registerSurfaceLinkService } from "@yoplai/shared";
+import { createSurfaceLinkService, initializeMultiUserDatabase } from "@yoplai/extension-multi-user";
 import type {
   ExtensionContext,
   RunAgentParams,
@@ -32,7 +34,8 @@ function session(extra: Record<string, unknown> = {}) {
 }
 
 type Board = {
-  me: Response | (() => Response);
+  me: Response | (() => Response | Promise<Response>);
+  users: unknown[];
   unacknowledged: unknown[];
   processing: unknown[];
   getMessage: (id: number) => unknown;
@@ -51,6 +54,7 @@ function makeBoard(overrides: Partial<Board> = {}): Board {
   let replies = 0;
   const board: Board = {
     me: () => Response.json(ME),
+    users: [{ id: 1, username: "ann", account_type: "human", email: "ann@example.test" }],
     unacknowledged: [],
     processing: [],
     getMessage: (id) => message(id),
@@ -79,6 +83,7 @@ function fetchFor(board: Board) {
     });
     const p = parsed.pathname;
     if (p === "/api/me") return typeof board.me === "function" ? board.me() : board.me;
+    if (p === "/api/users") return Response.json({ users: board.users });
     if (p === "/api/attention") {
       const status = parsed.searchParams.get("status");
       const custom = board.onAttention?.(status ?? "", Number(parsed.searchParams.get("offset")));
@@ -126,6 +131,17 @@ const okResult = (text: string, meta: Partial<RunAgentResult["meta"]> = {}): Run
 
 let dataDir: string;
 let pollers: ThreaditPoller[] = [];
+let unregisterLinks: (() => void) | undefined;
+
+let linkDb: ReturnType<typeof initializeMultiUserDatabase> | undefined;
+
+function linkService() {
+  linkDb = initializeMultiUserDatabase(dataDir);
+  linkDb.exec("CREATE TABLE user (id TEXT PRIMARY KEY); INSERT INTO user VALUES ('gateway-ann')");
+  const service = createSurfaceLinkService(linkDb, "https://gateway.example.test");
+  unregisterLinks = registerSurfaceLinkService(service);
+  return service;
+}
 
 beforeEach(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "threadit-"));
@@ -133,6 +149,10 @@ beforeEach(async () => {
 afterEach(async () => {
   await Promise.all(pollers.map((p) => p.stop()));
   pollers = [];
+  unregisterLinks?.();
+  unregisterLinks = undefined;
+  linkDb?.close();
+  linkDb = undefined;
   vi.restoreAllMocks();
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -194,6 +214,80 @@ function abortable(params: RunAgentParams, aborted: RunAgentResult["meta"] = { d
 }
 
 describe("ThreaditPoller", () => {
+  it("replies to a human pairing command with a link without running the agent", async () => {
+    const service = linkService();
+    const { board, runAgent, poller } = setup({
+      unacknowledged: [message(3, { body: "  @bot @helper !pair  " })],
+    }, async () => okResult("must not run"));
+    poller.start();
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+    expect(runAgent).not.toHaveBeenCalled();
+    const link = String(replies(board)[0]?.body).match(/https:\/\/gateway\.example\.test\/api\/surface-links\/pair\/[A-Za-z0-9_-]+/)?.[0];
+    expect(link).toBeDefined();
+    expect(service.inspect(new URL(link!).pathname.split("/").at(-1)!)).toMatchObject({ surface: "threadit", scope: "http://board", externalId: "1", username: "ann" });
+    expect(String(replies(board)[0]?.body)).not.toContain("ann@example.test");
+  });
+  it("links a human and keeps two people in one thread as separate requesters", async () => {
+    const service = linkService();
+    const { board, runAgent, poller } = setup({
+      unacknowledged: [message(3, { body: "@bot !pair" })],
+    }, async () => okResult("hello"));
+    poller.start();
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+    const link = String(replies(board)[0]?.body).match(/https:\/\/gateway\.example\.test\/api\/surface-links\/pair\/[A-Za-z0-9_-]+/)![0];
+    await service.redeem(new URL(link).pathname.split("/").at(-1)!, { id: "gateway-ann", email: "ann@example.test" });
+    board.unacknowledged = [
+      message(4),
+      message(5, { author: { id: 2, username: "ben", account_type: "human" } }),
+    ];
+    await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
+    const first = runAgent.mock.calls[0]![0] as RunAgentParams;
+    const second = runAgent.mock.calls[1]![0] as RunAgentParams;
+    expect(first).toMatchObject({ userId: "gateway-ann", requesterId: "threadit:http://board:1", sessionOwnerId: null, sessionKey: "threadit:thread-40" });
+    expect(second.requesterId).toBe("threadit:http://board:2");
+    expect(second.userId).toBeUndefined();
+    expect(second.sessionKey).toBe("threadit:thread-40");
+    service.unlink("gateway-ann", service.list("gateway-ann")[0].id);
+    board.unacknowledged = [message(6)];
+    await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(3));
+    expect((runAgent.mock.calls[2]![0] as RunAgentParams).userId).toBeUndefined();
+  });
+
+  it("does not leave an identity provider when stopped during account lookup", async () => {
+    const service = linkService();
+    let finishMe!: (response: Response) => void;
+    const me = new Promise<Response>((resolve) => { finishMe = resolve; });
+    const { board, poller } = setup({ me: () => me }, async () => okResult("unused"));
+    poller.start();
+    await waitFor(() => expect(board.calls.some((call) => call.path === "/api/me")).toBe(true));
+    const stopping = poller.stop();
+    finishMe(Response.json(ME));
+    await stopping;
+    const link = await service.issue({ surface: "threadit", scope: "http://board", externalId: "1", username: "ann" });
+    await expect(service.redeem(new URL(link).pathname.split("/").at(-1)!, { id: "gateway-ann", email: "ann@example.test" })).rejects.toThrow("unavailable");
+  });
+
+  it("asks a human without an email to set it before pairing", async () => {
+    const service = linkService();
+    const { board, runAgent, poller } = setup({
+      users: [{ id: 1, username: "ann", account_type: "human", email: "  " }],
+      unacknowledged: [message(3, { body: "@bot !pair" })],
+    }, async () => okResult("unused"));
+    poller.start();
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+    expect(replies(board)).toEqual([{ body: "Set your email in Threadit first (click your name at the bottom left), then send `!pair` again.", parent_id: 3 }]);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(service.list("gateway-ann")).toEqual([]);
+  });
+
+  it("explains that pairing needs sign-in when multi-user is disabled", async () => {
+    const { board, runAgent, poller } = setup({ unacknowledged: [message(3, { body: "@bot !pair" })] }, async () => okResult("unused"));
+    poller.start();
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
+    expect(replies(board)).toEqual([{ body: "Account linking needs multi-user sign-in.", parent_id: 3 }]);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it("answers, maps tools to activities, replies and adds the done reaction", async () => {
     const { board, runAgent, poller } = setup({ unacknowledged: [message(3)] }, async (params) => {
       const call = (name: string): StreamEvent => ({ type: "tool_call", id: name, name, arguments: { secret: "x" } });
@@ -229,7 +323,8 @@ describe("ThreaditPoller", () => {
   });
 
   it("passes an agent sender for agent-authored items", async () => {
-    const item = message(3, { author: { id: 2, username: "other", account_type: "agent" } });
+    const service = linkService();
+    const item = message(3, { body: "@bot !pair", author: { id: 2, username: "other", account_type: "agent" } });
     const { board, runAgent, poller } = setup({ unacknowledged: [item] }, async () => okResult("ok"));
     poller.start();
     await waitFor(() => expect(reactions(board)).toEqual(["👀", "✅"]));
@@ -237,6 +332,9 @@ describe("ThreaditPoller", () => {
       kind: "agent",
       agentId: "threadit:other",
     });
+    expect((runAgent.mock.calls[0]![0] as RunAgentParams).userId).toBeUndefined();
+    expect(service.list("gateway-ann")).toEqual([]);
+    expect(replies(board)).toEqual([{ body: "ok", parent_id: 3 }]);
   });
 
   it("joins payload texts and splits long replies", async () => {

@@ -513,6 +513,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      '@yoplai/extension-multi-user':
+        specifier: workspace:*
+        version: link:../multi-user
 
   packages/extensions/multi-user:
     dependencies:
@@ -685,6 +688,10 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+    devDependencies:
+      '@yoplai/extension-multi-user':
+        specifier: workspace:*
+        version: link:../multi-user
 
   packages/extensions/webhooks:
     dependencies:

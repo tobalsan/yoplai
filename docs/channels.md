@@ -100,6 +100,8 @@ Server setup, as a system admin:
 
 Behind a reverse proxy, `/api/v4/websocket` must pass WebSocket upgrades (the Mattermost web app needs this too). Mentions, threads, `!new`, reactions, files, reconnection, tools, and delivery are in the [Mattermost README](../packages/extensions/mattermost/README.md).
 
+Human senders can use `!pair` to link their Yoplai identity through a ten-minute, single-use link sent by DM. Multi-user sign-in and a matching email visible to the bot are required. Linked runs use that user's personal credentials and agent access; thread storage ownership stays unchanged. Manage links in **Account connections**; see [Account linking](../packages/extensions/mattermost/README.md#account-linking).
+
 ## IRC
 
 IRC supports TLS/plain connections, channel and DM routing, mention/reply-all policies, batching, context, and safe reply formatting. See [IRC README](../packages/extensions/irc/README.md).
@@ -107,6 +109,8 @@ IRC supports TLS/plain connections, channel and DM routing, mention/reply-all po
 ## Threadit
 
 Threadit is a polling channel: an agent with a Threadit agent-account token answers messages that mention it or reply to it. Configure `extensions.threadit.token` (`$env:THREADIT_TOKEN`) in `agent.yaml` and `baseUrl` in the agent or root `extensions.threadit`. Replies, 👀/✅ reactions, activities, stop requests, and restart recovery are described in the [Threadit README](../packages/extensions/threadit/README.md).
+
+Human senders can use `!pair` to receive a ten-minute, single-use linking URL in the thread. Set an email in the Threadit profile first; it must match the signed-in Yoplai email. Linked runs use that user's personal credentials and agent access, with a distinct requester per human and shared thread storage. Manage links in **Account connections**; see [Account linking](../packages/extensions/threadit/README.md#account-linking).
 
 ## Channel context
 

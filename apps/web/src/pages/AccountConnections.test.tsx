@@ -3,14 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
-const { useSessionMock, fetchPairingsMock, unpairMock } = vi.hoisted(() => ({
+const { useSessionMock, fetchPairingsMock, unpairMock, fetchMock } = vi.hoisted(() => ({
   useSessionMock: vi.fn(),
   fetchPairingsMock: vi.fn(),
   unpairMock: vi.fn(),
+  fetchMock: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
 }));
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 vi.mock("../components/LeftNavShell", () => ({ LeftNavShell: (props: { children: unknown }) => props.children }));
-vi.mock("../api/connections", () => ({
+vi.mock("../api/connections", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../api/connections")>(),
   fetchSlackPairings: fetchPairingsMock,
   unpairSlackAccount: unpairMock,
 }));
@@ -25,15 +27,160 @@ const pairing = { workspaceId: "T1", slackUserId: "U1", pairedAt: 1000 };
 beforeEach(() => {
   fetchPairingsMock.mockReset();
   unpairMock.mockReset();
+  fetchMock.mockReset().mockImplementation(async () => Response.json({ links: [] }));
+  vi.stubGlobal("fetch", fetchMock);
   root = document.createElement("div");
   document.body.appendChild(root);
 });
 afterEach(() => {
   dispose?.();
   root.remove();
+  vi.unstubAllGlobals();
 });
 
 describe("AccountConnections", () => {
+  it("lists linked Threadit and Mattermost accounts and explains how to connect", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    fetchMock.mockResolvedValueOnce(Response.json({ links: [
+      { id: "link-threadit", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 },
+      { id: "link-mattermost", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 },
+    ] }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    expect(fetchMock).toHaveBeenCalledWith("/api/surface-links", expect.objectContaining({ credentials: "include" }));
+    expect(root.textContent).toContain("Threadit @river");
+    expect(root.textContent).toContain("Mattermost @ember");
+    expect(root.textContent).toContain("https://board.example.test");
+    expect(root.textContent).toContain("Linked");
+    expect(root.textContent).toContain("Send !pair to an agent on Threadit or Mattermost to link an account.");
+  });
+
+  it("unlinks an account and refreshes the displayed links", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ links: [{ id: "link-threadit", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }))
+      .mockResolvedValueOnce(Response.json({ ok: true }))
+      .mockResolvedValueOnce(Response.json({ links: [] }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    expect(root.textContent).toContain("Threadit @river");
+    root.querySelector<HTMLButtonElement>("button")!.click();
+    await tick();
+    expect(fetchMock).toHaveBeenCalledWith("/api/surface-links/link-threadit", expect.objectContaining({ method: "DELETE", credentials: "include" }));
+    expect(root.textContent).not.toContain("Threadit @river");
+    expect(root.textContent).toContain("No Threadit or Mattermost accounts are linked.");
+  });
+
+  it("keeps pending unlink state scoped to the account that started it", async () => {
+    const [session, setSession] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    let finishAlice!: (response: Response) => void;
+    let finishBob!: (response: Response) => void;
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ links: [{ id: "alice-link", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishAlice = resolve; }))
+      .mockResolvedValueOnce(Response.json({ links: [{ id: "bob-link", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 }] }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishBob = resolve; }))
+      .mockResolvedValueOnce(Response.json({ links: [] }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    root.querySelector<HTMLButtonElement>("button")!.click();
+    expect(root.textContent).toContain("Removing…");
+    setSession({ data: { user: { id: "bob" } } });
+    await tick();
+    expect(root.textContent).not.toContain("@river");
+    const bobButton = root.querySelector<HTMLButtonElement>("button")!;
+    expect(bobButton.disabled).toBe(false);
+    bobButton.click();
+    finishAlice(Response.json({ ok: true }));
+    await tick();
+    expect(root.textContent).toContain("Mattermost @ember");
+    expect(bobButton.disabled).toBe(true);
+    expect(bobButton.textContent).toBe("Removing…");
+    finishBob(Response.json({ ok: true }));
+    await tick();
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "DELETE").map((call) => call[0])).toEqual([
+      "/api/surface-links/alice-link", "/api/surface-links/bob-link",
+    ]);
+    expect(root.textContent).toContain("No Threadit or Mattermost accounts are linked.");
+  });
+
+  it("ignores a late linked-account response after the signed-in account changes", async () => {
+    const [session, setSession] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    let finishAlice!: (response: Response) => void;
+    fetchMock
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finishAlice = resolve; }))
+      .mockResolvedValueOnce(Response.json({ links: [{ id: "bob-link", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 }] }));
+    dispose = render(() => <AccountConnections />, root);
+    setSession({ data: { user: { id: "bob" } } });
+    await tick();
+    expect(root.textContent).toContain("Mattermost @ember");
+    finishAlice(Response.json({ links: [{ id: "alice-link", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }));
+    await tick();
+    expect(root.textContent).toContain("Mattermost @ember");
+    expect(root.textContent).not.toContain("@river");
+  });
+
+  it("keeps Slack usable while a hung linked-account request reaches its actual timeout", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValueOnce([pairing]).mockResolvedValueOnce([]);
+    unpairMock.mockResolvedValue(undefined);
+    let signal: AbortSignal | undefined;
+    fetchMock.mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
+      signal = init?.signal ?? undefined;
+      signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+    }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    expect(root.textContent).toContain("Loading linked accounts…");
+    expect(root.textContent).toContain("Slack user U1");
+    root.querySelector<HTMLButtonElement>("button")!.click();
+    await tick();
+    expect(unpairMock).toHaveBeenCalledWith(pairing);
+    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).toContain("Loading linked accounts…");
+    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')).not.toBeNull(), { timeout: 10_000 });
+    expect(signal?.aborted).toBe(true);
+    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).not.toContain("Loading linked accounts…");
+  }, 15_000);
+
+  it("shows a failed linked-account response without hiding Slack pairings", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([pairing]);
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Failed to load linked accounts");
+    expect(root.textContent).toContain("Slack user U1");
+  });
+
+  it("keeps a linked account visible and usable when unlinking fails", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ links: [{ id: "alice-link", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }))
+      .mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
+    dispose = render(() => <AccountConnections />, root);
+    await tick();
+    root.querySelector<HTMLButtonElement>("button")!.click();
+    await tick();
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Failed to unlink account");
+    expect(root.textContent).toContain("Threadit @river");
+    expect(root.querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("loads and removes the signed-in user's Slack pairing", async () => {
     const [session] = createSignal({ data: { user: { id: "alice" } } });
     useSessionMock.mockReturnValue(session);

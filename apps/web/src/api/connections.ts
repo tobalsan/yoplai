@@ -101,3 +101,27 @@ export async function unpairSlackAccount(pairing: SlackPairing): Promise<void> {
   );
   if (!response.ok) throw new Error("Failed to remove Slack pairing");
 }
+
+export type SurfaceLink = {
+  id: string;
+  surface: "threadit" | "mattermost";
+  scope: string;
+  externalId: string;
+  username: string;
+  linkedAt: number;
+};
+
+export async function fetchSurfaceLinks(): Promise<SurfaceLink[]> {
+  const response = await fetch(`${API_BASE}/surface-links`, { signal: AbortSignal.timeout(8_000) });
+  if (!response.ok) throw new Error("Failed to load linked accounts");
+  const data = (await response.json()) as { links: SurfaceLink[] };
+  return data.links;
+}
+
+export async function unlinkSurfaceAccount(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/surface-links/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw new Error("Failed to unlink account");
+}

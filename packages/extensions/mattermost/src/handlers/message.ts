@@ -1,5 +1,6 @@
 import {
   DEFAULT_MAIN_KEY,
+  getSurfaceLinkService,
   buildMattermostContext,
   classifyRunFailure,
   runFailureMessage,
@@ -421,6 +422,51 @@ export async function handleMattermostPost(
   const agent = route.agent;
   const language = agent.language ?? "en";
 
+  if (!isBotPost(p) && text.trim() === "!pair") {
+    const rootId = replyRootId(p, route.isDm);
+    const links = getSurfaceLinkService();
+    if (!links) {
+      await post(
+        deps, p.channel_id, rootId, "Account linking needs multi-user sign-in."
+      );
+      return;
+    }
+    let user;
+    try {
+      user = await deps.rest.getUser(p.user_id, AbortSignal.timeout(5_000));
+    } catch {
+      await post(
+        deps, p.channel_id, rootId,
+        "Mattermost email is unavailable. Ask your administrator."
+      );
+      return;
+    }
+    if (!user.email?.trim() || user.is_bot) {
+      await post(
+        deps, p.channel_id, rootId,
+        "Mattermost email is unavailable. Ask your administrator."
+      );
+      return;
+    }
+    const link = await links.issue({
+      surface: "mattermost",
+      scope: deps.rest.baseUrl,
+      externalId: p.user_id,
+      username: user.username,
+    });
+    const dm = route.isDm
+      ? p.channel_id
+      : (await deps.rest.createDirectChannel(deps.bot.id, p.user_id)).id;
+    await post(
+      deps, dm, route.isDm ? rootId : undefined,
+      `Connect your Mattermost account: ${link} (expires in 10 minutes).`
+    );
+    if (!route.isDm) {
+      await post(deps, p.channel_id, rootId, "I sent you a link by DM.");
+    }
+    return;
+  }
+
   if (isResetCommand(text) && (p.file_ids?.length ?? 0) === 0) {
     await handleReset(inbound, route, deps);
     return;
@@ -561,7 +607,11 @@ export async function handleMattermostPost(
               agentId: `mattermost:${p.user_id}`,
             },
           }
-        : {}),
+        : {
+            userId: getSurfaceLinkService()?.resolve(
+              "mattermost", deps.rest.baseUrl, p.user_id
+            ),
+          }),
       onEvent: (event) => {
         if (event.type === "file_output") uploadFile(event);
         if (event.type === "error")
