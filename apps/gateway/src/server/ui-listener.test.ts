@@ -71,6 +71,17 @@ describe("UI listener", () => {
         response.end('{"error":"not found"}');
         return;
       }
+      if (request.url?.startsWith("/api/truncate")) {
+        response.writeHead(200, { "Content-Length": "100" });
+        response.write("partial");
+        setTimeout(() => response.destroy(), 20);
+        return;
+      }
+      if (request.url?.startsWith("/api/hop")) {
+        response.writeHead(200, { Connection: "x-private-response, close", "X-Private-Response": "secret", "Keep-Alive": "timeout=5", "X-Kept": "yes" });
+        response.end("ok");
+        return;
+      }
       let body = "";
       request.on("data", (chunk) => (body += chunk));
       request.on("end", () => {
@@ -134,6 +145,21 @@ describe("UI listener", () => {
     expect(await response.text()).not.toContain("app shell");
   });
 
+  it("returns 404 for a missing asset in any spelling and for a missing file extension", async () => {
+    for (const target of ["/assets/missing%2ejs", "/assets/missing", "/assets/", "/%61ssets/missing", "/missing.css", "/chat/a%2eb"]) {
+      const response = await rawGet(uiPort, target);
+      expect(response.status, target).toBe(404);
+      expect(response.body, target).not.toContain("app shell");
+    }
+  });
+
+  it("answers HEAD for a page with the headers of GET and no body", async () => {
+    const response = await fetch(`http://127.0.0.1:${uiPort}/chat/agent-1`, { method: "HEAD" });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe(String("<html>app shell</html>".length));
+    expect(await response.text()).toBe("");
+  });
+
   it("does not serve the app shell to a non-GET request", async () => {
     const response = await fetch(`http://127.0.0.1:${uiPort}/chat/agent-1`, { method: "POST", body: "{}" });
     expect(response.status).toBe(404);
@@ -179,6 +205,42 @@ describe("UI listener", () => {
     expect(seen?.headers.host).toBe(`127.0.0.1:${gatewayPort}`);
     expect(seen?.headers.origin).toBe(origin);
     expect(seen?.headers["x-forwarded-for"]).toMatch(/127\.0\.0\.1/);
+  });
+
+  it("destroys the response when the upstream closes in the middle of the body", async () => {
+    const outcome = await new Promise<string>((resolve) => {
+      const request = http.get({ host: "127.0.0.1", port: uiPort, path: "/api/truncate" }, (response) => {
+        response.on("data", () => {});
+        response.on("error", () => resolve("closed"));
+        response.on("close", () => resolve(response.complete ? "complete" : "closed"));
+      });
+      request.on("error", () => resolve("closed"));
+      setTimeout(() => resolve("still open"), 3000).unref();
+    });
+    expect(outcome).toBe("closed");
+  });
+
+  it("removes hop-by-hop headers and the headers that Connection names, in both directions", async () => {
+    const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const request = http.get(
+        {
+          host: "127.0.0.1",
+          port: uiPort,
+          path: "/api/hop",
+          headers: { Connection: "x-private-request, close", "X-Private-Request": "secret", TE: "trailers", "Proxy-Authorization": "Basic abc", "X-Kept": "yes" },
+        },
+        resolve
+      );
+      request.on("error", reject);
+    });
+    response.resume();
+    expect(response.headers["x-private-response"]).toBeUndefined();
+    expect(response.headers["keep-alive"]).toBeUndefined();
+    expect(response.headers["x-kept"]).toBe("yes");
+    expect(seen?.headers["x-private-request"]).toBeUndefined();
+    expect(seen?.headers.te).toBeUndefined();
+    expect(seen?.headers["proxy-authorization"]).toBeUndefined();
+    expect(seen?.headers["x-kept"]).toBe("yes");
   });
 
   it("forwards /hooks, /d/, and /d-assets/", async () => {
