@@ -375,6 +375,9 @@ export function getContainerAdapter(): SdkAdapter {
           userId: params.userId,
           actorUserId: params.actorUserId,
           actorKind: params.actorKind,
+          source: params.source,
+          sender: params.sender,
+          background: params.background,
           sessionOwnerId: params.sessionOwnerId === undefined ? params.userId ?? null : params.sessionOwnerId,
           requesterId: params.requesterId,
           registerFileOutput: (event, signal) =>

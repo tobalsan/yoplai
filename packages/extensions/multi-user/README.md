@@ -110,6 +110,13 @@ unless `autoApprove: false` is set, in which case they land with
 their requests are rejected with `403 forbidden` (but the session is created
 so the UI can render an "awaiting approval" state).
 
+Human chat requesters may ask a Pi agent to update its own `AGENTS.md` through
+`agent_update_instructions` when their eligible account is `admin` or `superadmin`.
+`shared_update_system_file` requires `superadmin`. These gateway checks use the
+run's requester, refuse automation and missing account identities, and treat the
+single-user operator as superadmin. Admins may update instructions for any agent
+they can chat with. See [chat instruction updates](../../../docs/configuration.md#updating-instructions-from-chat).
+
 ### Agent visibility and team membership
 
 Public agents are available to every approved user, including users without a team.

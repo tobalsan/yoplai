@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Threadit and Mattermost `!pair` links connect human accounts to signed-in Yoplai users through ten-minute, single-use, email-matched links; Account connections lists and unlinks them.
+- Chat can update an agent's instructions (admins and superadmins) or existing shared Markdown system files (superadmins), with requester checks, conflict protection, and a visible diff; the single-user operator can use both tools.
 - Multi-user chat share links let any signed-in colleague read the latest saved conversation, with owner-only revocation, name-only files and inert app views.
 - Threadit `edit_message` tool can replace or remove a message's attachments via `attachment_ids` (full set; `[]` removes all); `body` is now optional.
 
