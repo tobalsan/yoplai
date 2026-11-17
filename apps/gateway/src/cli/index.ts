@@ -425,6 +425,8 @@ export async function startWebUI(
   gatewayPort: number
 ): Promise<ChildProcess | null> {
   if (readEnv("SKIP_WEB")) return null;
+  // With a built UI directory, the gateway serves the UI itself on the UI port.
+  if (readEnv("WEB_DIST")) return null;
 
   const port = uiConfig.port ?? 3000;
   const useTailscaleServe = uiConfig.tailscale?.mode === "serve";
