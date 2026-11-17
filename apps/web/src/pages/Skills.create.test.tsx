@@ -9,8 +9,6 @@ import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capab
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let mainAgentId: string | null;
-let includeOpenClaw: boolean;
-let onlyOpenClaw: boolean;
 const frames: Array<Record<string, unknown>> = [];
 const agent = { id: "sage", name: "Sage", model: { provider: "openai", model: "gpt-4o-mini" }, sdk: "pi" };
 
@@ -23,7 +21,7 @@ class Socket {
   close() { this.readyState = 3; }
 }
 beforeEach(() => {
-  mainAgentId = "sage"; includeOpenClaw = false; onlyOpenClaw = false; frames.length = 0;
+  mainAgentId = "sage"; frames.length = 0;
   localStorage.clear(); setCapabilitiesForTests({ multiUser: false });
   history.replaceState({}, "", "/skills"); root = document.createElement("div"); document.body.appendChild(root);
   vi.stubGlobal("WebSocket", Socket); vi.stubGlobal("scrollTo", vi.fn());
@@ -31,7 +29,7 @@ beforeEach(() => {
     const path = String(input);
     if (path === "/api/skills") return Response.json({ mine: [], sharedWithMe: [], agent: [] });
     if (path === "/api/me/main-agent") return Response.json({ mainAgentId, accessible: !!mainAgentId, pickerDismissedAt: null });
-    if (path === "/api/agents") return Response.json(includeOpenClaw ? [{ ...agent, id: "claw", name: "Claw", sdk: "openclaw" }, ...(onlyOpenClaw ? [] : [agent])] : [agent]);
+    if (path === "/api/agents") return Response.json([agent]);
     if (path === "/api/agents/sage") return Response.json(agent);
     if (path === "/api/agents/sage/suggestions") return Response.json([]);
     if (path === "/api/agents/sessions") return Response.json({ items: [] });
@@ -65,22 +63,6 @@ describe("Create skill", () => {
     expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0); click("Sage");
     await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
     expect(location.pathname).toBe("/chat/sage");
-    expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0);
-  });
-  it("offers skill-capable agents when the main agent is OpenClaw", async () => {
-    mainAgentId = "claw"; includeOpenClaw = true;
-    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={ChatView} /></Router>, root);
-    await vi.waitFor(() => expect(root.textContent).toContain("No skills yet.")); click("Add skill"); click("Create skill");
-    await vi.waitFor(() => expect(document.body.textContent).toContain("Create skill: choose an agent"));
-    expect(Array.from(document.body.querySelectorAll("button")).some((button) => button.textContent === "Claw")).toBe(false);
-    click("Sage"); await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
-    expect(location.pathname).toBe("/chat/sage");
-  });
-  it("explains the alternatives when no agent supports skills", async () => {
-    mainAgentId = "claw"; includeOpenClaw = true; onlyOpenClaw = true;
-    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={ChatView} /></Router>, root);
-    await vi.waitFor(() => expect(root.textContent).toContain("No skills yet.")); click("Add skill"); click("Create skill");
-    await vi.waitFor(() => expect(document.body.textContent).toContain("Ask your operator for an agent that supports skills, or upload or import a skill instead."));
     expect(frames.filter((frame) => frame.type === "send")).toHaveLength(0);
   });
 });

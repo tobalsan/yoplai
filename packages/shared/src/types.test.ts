@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AgentConfigSchema,
+  AgentYamlConfigSchema,
   AgentContextSchema,
   ContainerFileOutputRequestSchema,
   ContainerInputSchema,
@@ -161,7 +162,45 @@ describe("ScheduleSchema", () => {
   });
 });
 
-describe("AgentConfigSchema openclaw model handling", () => {
+describe.each([AgentConfigSchema, AgentYamlConfigSchema])("agent SDK validation", (schema) => {
+  it.each(["openclaw", "claude"])("rejects the removed %s SDK with migration guidance", (sdk) => {
+    const result = schema.safeParse({
+      id: "stale",
+      name: "Stale",
+      workspace: "~/agents/stale",
+      model: { provider: "anthropic", model: "claude-sonnet-4" },
+      sdk,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({
+        path: ["sdk"],
+        message: `${sdk} SDK was removed, use pi`,
+      }));
+    }
+  });
+
+  it.each([{}, null, { sessionMode: "fixed" }])("rejects a removed SDK block with migration guidance: %j", (openclaw) => {
+    const result = schema.safeParse({
+      id: "stale",
+      name: "Stale",
+      workspace: "~/agents/stale",
+      model: { provider: "anthropic", model: "claude-sonnet-4" },
+      openclaw,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({
+        path: ["openclaw"],
+        message: "openclaw SDK was removed, use pi",
+      }));
+    }
+  });
+});
+
+describe("AgentConfigSchema model handling", () => {
   it("accepts a complete fallback model and rejects incomplete identities", () => {
     expect(
       AgentConfigSchema.parse({
@@ -269,18 +308,7 @@ describe("AgentConfigSchema openclaw model handling", () => {
     ).toBe(false);
   });
 
-  it("allows openclaw agents to omit model", () => {
-    const result = AgentConfigSchema.safeParse({
-      id: "openclaw-agent",
-      name: "OpenClaw Agent",
-      workspace: "~/agents/openclaw",
-      sdk: "openclaw",
-    });
-
-    expect(result.success).toBe(true);
-  });
-
-  it("requires model for non-openclaw SDKs", () => {
+  it("requires model for Pi agents", () => {
     const result = AgentConfigSchema.safeParse({
       id: "pi-agent",
       name: "Pi Agent",
@@ -289,32 +317,6 @@ describe("AgentConfigSchema openclaw model handling", () => {
     });
 
     expect(result.success).toBe(false);
-  });
-
-  it("applies default model when openclaw model is omitted", () => {
-    const result = AgentConfigSchema.parse({
-      id: "openclaw-agent",
-      name: "OpenClaw Agent",
-      workspace: "~/agents/openclaw",
-      sdk: "openclaw",
-    });
-
-    expect(result.model).toEqual({ provider: "openclaw", model: "unknown" });
-  });
-
-  it("accepts openclaw sessionMode dedicated", () => {
-    const result = AgentConfigSchema.safeParse({
-      id: "openclaw-agent",
-      name: "OpenClaw Agent",
-      workspace: "~/agents/openclaw",
-      sdk: "openclaw",
-      openclaw: {
-        token: "token",
-        sessionMode: "dedicated",
-      },
-    });
-
-    expect(result.success).toBe(true);
   });
 
   it("accepts description and avatar fields", () => {
@@ -349,21 +351,6 @@ describe("AgentConfigSchema openclaw model handling", () => {
     expect(result.webhooks?.notion.langfuseTracing).toBe(true);
     expect(result.webhooks?.notion.prompt).toBe("./webhooks/notion.md");
     expect(result.webhooks?.notion.maxPayloadSize).toBe(1048576);
-  });
-
-  it("accepts openclaw sessionMode fixed", () => {
-    const result = AgentConfigSchema.safeParse({
-      id: "openclaw-agent",
-      name: "OpenClaw Agent",
-      workspace: "~/agents/openclaw",
-      sdk: "openclaw",
-      openclaw: {
-        token: "token",
-        sessionMode: "fixed",
-      },
-    });
-
-    expect(result.success).toBe(true);
   });
 });
 

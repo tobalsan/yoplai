@@ -221,17 +221,14 @@ export const DreamGatewayConfigSchema = z.object({
 export type DreamGatewayConfig = z.infer<typeof DreamGatewayConfigSchema>;
 
 // SDK types
-export const SdkIdSchema = z.enum(["pi", "claude", "openclaw"]);
-export type SdkId = z.infer<typeof SdkIdSchema>;
-
-// OpenClaw config
-export const OpenClawConfigSchema = z.object({
-  gatewayUrl: z.string().optional(),
-  token: z.string(),
-  sessionKey: z.string().optional(),
-  sessionMode: z.enum(["dedicated", "fixed"]).optional(),
+export const SdkIdSchema = z.enum(["pi"], {
+  errorMap: (_issue, ctx) => ({
+    message: ctx.data === "openclaw" || ctx.data === "claude"
+      ? `${ctx.data} SDK was removed, use pi`
+      : ctx.defaultError,
+  }),
 });
-export type OpenClawConfig = z.infer<typeof OpenClawConfigSchema>;
+export type SdkId = z.infer<typeof SdkIdSchema>;
 
 // Agent auth config
 export const AgentAuthConfigSchema = z.object({
@@ -333,7 +330,7 @@ const AgentConfigBaseSchema = z.object({
   sdk: SdkIdSchema.optional(), // default "pi"
   model: AgentModelConfigSchema.optional(),
   fallback_model: RequiredModelConfigSchema.optional(),
-  openclaw: OpenClawConfigSchema.optional(),
+  openclaw: z.never({ message: "openclaw SDK was removed, use pi" }).optional(),
   auth: AgentAuthConfigSchema.optional(), // OAuth/API key auth config
   discord: DiscordConfigSchema.optional(),
   slack: z.lazy(() => SlackAgentConfigSchema).optional(),
@@ -378,7 +375,7 @@ export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
     if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
     }
-    if (value.sdk !== "openclaw" && !value.model) {
+    if (!value.model) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "model is required",
@@ -391,9 +388,6 @@ export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
     model: AgentModelConfig;
     language?: "en" | "fr";
   } => {
-    if (value.sdk === "openclaw" && !value.model) {
-      return { ...value, model: { provider: "openclaw", model: "unknown" } };
-    }
     return value as Omit<typeof value, "model"> & { model: AgentModelConfig };
   }
 );
@@ -408,7 +402,7 @@ export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
     if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
     }
-    if (value.sdk !== "openclaw" && !value.model) {
+    if (!value.model) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "model is required",
@@ -418,9 +412,6 @@ export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
   }
 ).transform(
   (value): Omit<typeof value, "model"> & { model: AgentModelConfig } => {
-    if (value.sdk === "openclaw" && !value.model) {
-      return { ...value, model: { provider: "openclaw", model: "unknown" } };
-    }
     return value as Omit<typeof value, "model"> & { model: AgentModelConfig };
   }
 );

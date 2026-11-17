@@ -271,7 +271,7 @@ It is consumed only after the initial run succeeds without an abort; failures
 keep it for a later run. Updates arriving during that run survive consumption.
 Messages joining an active run do not inject or consume context. Thinking-level
 retries reuse the same snapshot, and reviewer rewrites do not receive a new
-context nudge. OpenClaw does not consume this context. Model SDK session files
+context nudge. Model SDK session files
 may retain the injected prompt, and the agent may quote it: consuming context
 does not make the model forget it.
 

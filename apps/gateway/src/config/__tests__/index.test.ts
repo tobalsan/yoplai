@@ -80,6 +80,30 @@ describe("config loading", () => {
     ]);
   });
 
+  it("skips a removed SDK agent while loading valid agents from the same glob", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-removed-sdk-"));
+    const staleDir = path.join(tmpDir, "agents", "stale");
+    await writeAgent(staleDir);
+    await fs.appendFile(path.join(staleDir, "agent.yaml"), "sdk: claude\n");
+    await writeAgent(path.join(tmpDir, "agents", "valid"));
+    await fs.writeFile(
+      path.join(tmpDir, "yoplai.json"),
+      JSON.stringify({ version: 3, agents: "./agents/*" })
+    );
+    process.env.YOPLAI_HOME = tmpDir;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(loadConfig().agents.map((agent) => agent.id)).toEqual(["valid"]);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(
+        `[config] invalid ${path.join(staleDir, "agent.yaml")}:`
+      ));
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("claude SDK was removed, use pi"));
+    } finally {
+      warning.mockRestore();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("resolves per-agent env with isolation and documented precedence", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-agent-env-"));
     const sallyDir = path.join(tmpDir, "agents", "sally");

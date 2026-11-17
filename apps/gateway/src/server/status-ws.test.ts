@@ -161,7 +161,7 @@ describe("gateway status websocket", () => {
   it("delivers the same completed web-run marker over status WS and the sessions API", async () => {
     const registry = await import("../sdk/registry.js");
     const sdk = vi.spyOn(registry, "getSdkAdapter").mockReturnValue({
-      id: "openclaw", displayName: "Test",
+      id: "pi", displayName: "Test",
       capabilities: { queueWhileStreaming: false, interrupt: false, toolEvents: true, fullHistory: true },
       resolveDisplayModel: () => ({}),
       run: async (params) => {

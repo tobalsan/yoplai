@@ -456,7 +456,7 @@ export async function runAgent(
     const context = await new ProjectContextResolver().resolve({
       agentId: params.agentId, sessionId, userId: params.userId,
       projectId: params.projectId, context: params.context,
-      sessionHistory: sdkId !== "openclaw" && loadConfig().sessionHistory?.enabled !== false,
+      sessionHistory: loadConfig().sessionHistory?.enabled !== false,
     });
 
     // Persist the user message before the adapter runs so a failure before
@@ -483,7 +483,7 @@ export async function runAgent(
     let actualThinkLevel = resolvedThinkLevel;
     let fallbackUsed = false;
 
-    const viewSnapshot = sdkId === "openclaw" ? undefined : viewContext.snapshot({ agentId: params.agentId, sessionId, ownerUserId: sessionOwnerId });
+    const viewSnapshot = viewContext.snapshot({ agentId: params.agentId, sessionId, ownerUserId: sessionOwnerId });
     const appContext = viewSnapshot?.map(({ viewKey, value }) => {
       const separator = viewKey.indexOf("\n");
       const attribute = (text: string) => text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");

@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Removed
+
+- **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
+
 ### Added
 
 - Threadit and Mattermost `!pair` links connect human accounts to signed-in Yoplai users through ten-minute, single-use, email-matched links; Account connections lists and unlinks them.

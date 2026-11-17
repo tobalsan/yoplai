@@ -13,7 +13,7 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 export type { HistoryEvent } from "@yoplai/shared";
 
 // SDK identifiers
-export type SdkId = "pi" | "openclaw";
+export type SdkId = "pi";
 
 // SDK capabilities
 export type SdkCapabilities = {

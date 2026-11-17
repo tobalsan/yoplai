@@ -46,10 +46,6 @@ describe("model routing configuration", () => {
     for (const schema of [AgentConfigSchema, AgentYamlConfigSchema]) {
       expect(schema.parse(agent).modelRouting).toEqual({ enabled: true, categories: ["customer_support_reply"] });
       expect(schema.parse({ ...agent, sdk: "pi" }).modelRouting?.enabled).toBe(true);
-      for (const sdk of ["claude", "openclaw"]) {
-        expect(schema.safeParse({ ...agent, sdk }).success).toBe(false);
-        expect(schema.safeParse({ ...agent, sdk, modelRouting: { enabled: false } }).success).toBe(true);
-      }
       expect(schema.safeParse({ ...agent, modelRouting: { enabled: true, categories: ["Bad-id"] } }).success).toBe(false);
     }
   });

@@ -5,7 +5,7 @@
       "id": "smoke",
       "name": "Smoke",
       "workspace": "agents/smoke",
-      "sdk": "claude",
+      "sdk": "pi",
       "model": { "provider": "requesty", "model": "anthropic/claude-sonnet-4-20250514" }
     }
   ],
