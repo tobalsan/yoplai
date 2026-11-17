@@ -7,6 +7,7 @@ Gateway starts Solid.js UI by default. UI discovers enabled features from `/api/
 - `/` — configured home capability (board when enabled, otherwise agent list)
 - `/agents` — agent catalog/list
 - `/chat/:agentId` — direct agent chat
+- `/shared/:token` — login-required, read-only shared chat (multi-user only)
 - `/projects` — project lifecycle when projects/board enabled
 - `/teams` and `/admin/users` — multi-user administration when enabled
 - `/admin/extensions` — the Admin page's superadmin **Top extensions** tab (beside **User management**): starred extensions/MCP servers sort first and are suggested in the chat **Connect <agent> to your tools** prompt (shown once per agent, never over a tour step; reopen via **Connect tools** in the sidebar)
@@ -32,7 +33,7 @@ Core chat supports:
 - WebSocket streaming and background subscriptions
 - simple and full structured history views
 - Copy reply after the last agent bubble's timestamp copies all text in a completed turn, excluding tools, thinking, files and failure notices. Rich paste preserves structure while using the destination's font and colors; plain paste removes markdown formatting. Incomplete turns from paginated history cannot be copied until their beginning is loaded.
-- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch, remain visible on narrow screens, and show Copied or Copy failed. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. These controls are limited to the main chat.
+- Copy code on each agent code block copies its raw text, including indentation and newlines. Both copy controls support keyboard/touch and remain visible on narrow screens. Clipboard access requires HTTPS or localhost; browsers without rich clipboard support fall back to plain text. Reply copying is limited to the main chat; code copying also works in shared read-only chats.
 - thinking/tool/file blocks where authorized
 - file picker and drag-and-drop uploads
 - stop/abort with partial response preservation
@@ -43,6 +44,21 @@ Core chat supports:
 - context usage warning and automatic compaction near limit
 
 Full tool/thinking/model view is restricted in multi-user mode. Canonical transcript lives in gateway history store; Pi runtime session files are not UI source of truth.
+
+The chat header's settings menu holds **Default agent…** (with a current marker),
+**Agent settings**, and, for saved multi-user chats, **Share link**. Agent settings
+keeps Back navigation to the current chat; project chats hide the default-agent
+picker. Sharing copies the link; the menu then offers **Copy link** and
+**Revoke link**. Revoking takes effect immediately, and sharing again creates a
+new link.
+
+Anyone logged in to the same deployment can read a shared link, including users
+without access to its agent. Logged-out visitors return to the link after login.
+The **Shared, read-only** page shows the full persisted conversation, tool calls
+and tool output; reload to see later turns. It has no composer or chat actions.
+Files and attachments show names only, without previews or downloads, and app
+views show a placeholder. Unknown, revoked or deleted chats show
+“This link is not available.” Sharing never changes the agent's context.
 
 Agent-sent PNG, JPEG, GIF and WebP files show lazy previews up to 400px high,
 above their original download cards, both live and after reload. Click a preview

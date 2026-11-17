@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, For, Index, onCleanup, Show, on, untrack, Switch, Match } from "solid-js";
+import { createSignal, createEffect, createMemo, createContext, useContext, For, Index, onCleanup, Show, on, untrack, Switch, Match } from "solid-js";
 import { toolLabel } from "@yoplai/shared/tool-labels";
 import { toolLabelTemplates } from "../../lib/tool-labels";
 import type { FullToolResultMessage, ContentBlock, FileBlock, ModelMeta, ActiveToolCall } from "../../api/types";
@@ -13,6 +13,8 @@ import { appsAvailable } from "../../lib/capabilities";
 import { groupActivityItems, lastFiveWords } from "../../lib/chat-activity";
 import type { AppViews } from "./appViews";
 import { ImageLightbox } from "./ImageLightbox";
+
+export const ChatReadOnlyContext = createContext(false);
 
 export function CompactionSummary(props: { text: string; timestamp: number }) {
   return (
@@ -159,6 +161,7 @@ function SimpleToolBlock(props: { name: string; arguments?: unknown }) {
 }
 
 export function McpAppToolRow(props: { agentId: string; sessionId?: string | null; toolCallId: string; name: string; arguments?: unknown; result?: FullToolResultMessage; appViews: AppViews; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
+  if (useContext(ChatReadOnlyContext)) return <div class="mcp-app-tool-row"><Show when={getToolResultText(props.result)}><pre class="tool-code">{getToolResultText(props.result)}</pre></Show><p>Interactive view not available in a shared chat</p></div>;
   const view = () => props.appViews.viewOf(props.toolCallId);
   const file = () => {
     const current = view();
@@ -537,6 +540,7 @@ export function ContentBlocks(props: {
 }
 
 export function FileAttachmentList(props: { files?: FileBlock[] }) {
+  const readOnly = useContext(ChatReadOnlyContext);
   return (
     <Show when={props.files && props.files.length > 0}>
       <div class="message-files">
@@ -547,7 +551,7 @@ export function FileAttachmentList(props: { files?: FileBlock[] }) {
               <span class="file-name" title={file.filename}>
                 {file.filename}
               </span>
-              <Show when={formatFileSize(file.size)}>
+              <Show when={!readOnly && formatFileSize(file.size)}>
                 {(size) => <span class="file-size">{size()}</span>}
               </Show>
             </div>
@@ -564,10 +568,12 @@ function isInlineImage(file: FileBlock): boolean {
 }
 
 export function TranscriptFileCard(props: { file: FileBlock; hidesFileCard?: (fileId: string) => boolean }) {
-  return <Show when={props.file.direction !== "outbound" || !props.hidesFileCard?.(props.file.fileId)}><FileCard file={props.file} /></Show>;
+  const readOnly = useContext(ChatReadOnlyContext);
+  return <Show when={readOnly || props.file.direction !== "outbound" || !props.hidesFileCard?.(props.file.fileId)}><FileCard file={props.file} /></Show>;
 }
 
 export function FileCard(props: { file: FileBlock }) {
+  if (useContext(ChatReadOnlyContext)) return <FileAttachmentList files={[props.file]} />;
   const href = () => `/api/media/download/${props.file.fileId}`;
   const [imageFailed, setImageFailed] = createSignal(false);
   const [lightboxOpen, setLightboxOpen] = createSignal(false);
@@ -651,5 +657,6 @@ export function ActiveToolIndicator(props: { tools: ActiveToolCall[] }) {
 
 
 export function AssistantText(props: { text: string; class: string; options?: Parameters<typeof renderMarkdown>[1] }) {
-  return <div class={props.class} innerHTML={renderMarkdown(props.text, props.options)} />;
+  const readOnly = useContext(ChatReadOnlyContext);
+  return <div class={props.class} innerHTML={renderMarkdown(props.text, { ...props.options, filesAsText: readOnly })} />;
 }

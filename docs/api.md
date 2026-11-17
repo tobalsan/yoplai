@@ -14,6 +14,8 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/api/agents/:id/history`  | Session history (`sessionKey`, `view`) |
 | GET    | `/api/agents/sessions` | Sidebar session summaries (`includeArchived=1` optional) |
 | GET    | `/api/agents/sessions/search?q=words` | Full-text search of the caller's interactive chats |
+| GET/PUT/DELETE | `/api/agents/:id/sessions/:sessionId/share` | Read/create/revoke an owner-only chat share link (multi-user only) |
+| GET    | `/api/shared-chats/:token` | Read a shared chat's persisted transcript (authenticated, multi-user only) |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
 | WS     | `/ws`                      | Send/subscribe streaming protocol      |
 
@@ -29,6 +31,22 @@ Project sessions, excluding archived and non-interactive sessions. Empty queries
 return no items. Title matches precede content matches, each newest first by
 `lastActivity`, capped at 50. Search scans canonical history without an index;
 unlike sidebar polling, search requests remain in the access log.
+
+Chat share GET returns `{ shared: boolean, token? }`; PUT is idempotent and
+returns `{ shared: true, token }`; DELETE returns `{ shared: false }` and kills
+the old token immediately. A later PUT creates a new token. Owner routes require
+agent access and an existing session in the caller's own history (otherwise
+404). Sharing is unavailable in single-user mode.
+
+The shared-chat endpoint grants any logged-in platform user read access through
+the token, without requiring agent access. It returns
+`{ agentId, agentName, title, messages }` with full canonical persisted history,
+including tool calls/results and compaction entries, with system `context`
+removed. It returns no owner identity, active-turn snapshot or context usage.
+Each request reads the latest persisted history, without paging or streaming.
+Unknown/revoked tokens and deleted sessions return 404. The share store is
+`$YOPLAI_HOME/chat-shares.json`; it never contributes to agent prompts.
+Media download permissions are unchanged: the shared UI renders filenames only.
 
 ## Extension route groups
 
