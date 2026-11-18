@@ -81,6 +81,8 @@ export type CompactStatus = {
 type HistoryLoaded = { scope: string; sessionId: string | undefined; empty: boolean; request: number; refresh: boolean };
 type SendRequest = {
   text: string;
+  turnId?: string;
+  onTaggedError?: () => void;
   // The composer captures this before restore/compaction; later selections belong to the next send.
   pendingFiles: readonly PendingFile[];
 };
@@ -1275,10 +1277,14 @@ export function createChatSession(input: ChatSessionInput) {
   const restoreArchived = () => restoreSession("Failed to restore session.");
 
   const performSend = async (
-    { text, pendingFiles }: SendRequest,
+    { text, pendingFiles, turnId, onTaggedError }: SendRequest,
     resolve: (result: SendResult) => void,
     beforeSubmit?: () => void,
   ): Promise<void> => {
+    if (turnId && (!explicitSessionId() || input.isArchived() || isStreaming() || loading())) {
+      resolve({ kind: "blocked" });
+      return;
+    }
     if (input.isArchived() && !(await restoreSession("Failed to restore session. Try again.")).ok) {
       resolve({ kind: "blocked" });
       return;
@@ -1290,7 +1296,7 @@ export function createChatSession(input: ChatSessionInput) {
       text === "/reset" ||
       text.startsWith("/reset ");
 
-    if (!isResetCommand && !isStreaming() && shouldAutoCompact()) {
+    if (!turnId && !isResetCommand && !isStreaming() && shouldAutoCompact()) {
       try {
         await compactCurrentSession();
       } catch {
@@ -1321,6 +1327,7 @@ export function createChatSession(input: ChatSessionInput) {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const streamOptions = {
+      ...(turnId ? { turnId } : {}),
       ...(input.projectId() ? { projectId: input.projectId() } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
@@ -1722,6 +1729,14 @@ export function createChatSession(input: ChatSessionInput) {
       },
       (error) => {
         if (!isCurrentDirectStream()) return;
+        if (turnId) {
+          onTaggedError?.();
+          resetStreamingState();
+          cleanup?.();
+          cleanup = null;
+          void loadHistory(viewMode());
+          return;
+        }
         const content = error;
         const notice: Message = {
           id: crypto.randomUUID(),
@@ -1743,6 +1758,13 @@ export function createChatSession(input: ChatSessionInput) {
         cleanup = null;
       },
       {
+        onTurnExists: () => {
+          if (!turnId || !isCurrentDirectStream()) return;
+          resetStreamingState();
+          cleanup?.();
+          cleanup = null;
+          void loadHistory(viewMode());
+        },
         onThinking: (chunk) => {
           if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);

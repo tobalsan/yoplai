@@ -3,13 +3,15 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import type { DesktopSetupState } from "@yoplai/shared/types";
 import { capabilities } from "../lib/capabilities";
 import { chatRouteSession, stripBase } from "../lib/path";
-import { readSetup, saveSetup } from "./api";
+import { readModels, readSetup, saveSetup, type Model } from "./api";
 
 const Setup = createContext<{
   state: () => DesktopSetupState | undefined;
-  save: (update: Partial<DesktopSetupState>) => Promise<void>;
+  models: () => Model[] | undefined;
+  save: (update: Partial<DesktopSetupState>, when?: () => boolean) => Promise<void>;
 }>();
-export const useSetup = () => useContext(Setup)!;
+export const useOptionalSetup = () => useContext(Setup);
+export const useSetup = () => useOptionalSetup()!;
 
 export function SetupGate(props: { children: JSX.Element }) {
   const location = useLocation();
@@ -30,10 +32,21 @@ export function SetupGate(props: { children: JSX.Element }) {
       navigate("/setup", { replace: true });
     }
   });
+  const exited = () => enabled() && !onSetup() && state()?.wizardExited === true;
+  const [models] = createResource(exited, () => readModels().catch(() => undefined));
+  let saving = Promise.resolve();
   const show = () => enabled()
     ? !state.loading && !!state() && (onSetup() || state()?.wizardExited === true || pendingChat())
     : !onSetup();
-  return <Setup.Provider value={{ state, async save(update) { mutate(await saveSetup(update)); } }}>
+  return <Setup.Provider value={{ state: () => enabled() ? state() : undefined, models: () => exited() ? models() : undefined,
+    save(update, when) {
+      const result = saving.then(async () => {
+        if (enabled() && (!when || when())) mutate(await saveSetup(update));
+      });
+      saving = result.catch(() => undefined);
+      return result;
+    },
+  }}>
     <Show when={enabled() && !state.loading && !state()}>
       <main><p role="alert">Yoplai could not read the setup state.</p>
         <button onClick={() => void refetch()}>Retry</button>

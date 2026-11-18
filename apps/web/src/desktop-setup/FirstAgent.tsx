@@ -13,7 +13,7 @@ const suggestions = [
 ];
 const rank = (source: string) => source === "owned" ? 0 : source === "environment" ? 2 : 1;
 
-type Draft = { requestId: string; name: string; purpose: string; avatar: number; model: { provider: string; model: string } };
+type Draft = { sessionId?: string; turnId?: string; requestId: string; name: string; purpose: string; avatar: number; model: { provider: string; model: string } };
 
 const draftKey = "yoplai:desktop-setup-draft";
 export const clearAgentDraft = () => sessionStorage.removeItem(draftKey);
@@ -26,7 +26,7 @@ export function readAgentDraft(): Draft | undefined {
   } catch { return undefined; }
 }
 
-export function FirstAgent(props: { models: Model[]; onCreated: (id: string) => Promise<void>; onBusy: (busy: boolean) => void }) {
+export function FirstAgent(props: { models: Model[]; onCreated: (id: string, sessionId: string, turnId: string) => Promise<void>; onBusy: (busy: boolean) => void }) {
   const saved = readAgentDraft();
   const [name, setName] = createSignal(saved?.name ?? randomName());
   const [purpose, setPurpose] = createSignal(saved?.purpose ?? "");
@@ -49,9 +49,12 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string) => 
     setCreating("Creating your agent…");
     timer = setTimeout(() => setCreating("Writing its instructions…"), 650);
     try {
+      const sessionId = draft.sessionId ?? crypto.randomUUID();
+      const turnId = draft.turnId ?? crypto.randomUUID();
+      draft = { ...draft, sessionId, turnId };
       sessionStorage.setItem(draftKey, JSON.stringify(draft));
-      const result = await request<{ id: string }>("agents", "POST", draft);
-      if (!disposed) await props.onCreated(result.id);
+      const result = await request<{ id: string }>("agents", "POST", { requestId: draft.requestId, name: draft.name, purpose: draft.purpose, avatar: draft.avatar, model: draft.model });
+      if (!disposed) await props.onCreated(result.id, sessionId, turnId);
     } catch (cause) {
       if (!disposed) { setError(errorText(cause)); setRetry(draft); }
     } finally {

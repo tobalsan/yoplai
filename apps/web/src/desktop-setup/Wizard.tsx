@@ -1,11 +1,13 @@
-import { For, Match, Show, Switch, createEffect, createResource, createSignal } from "solid-js";
-import { useNavigate } from "@solidjs/router";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal, onMount } from "solid-js";
+import { useLocation, useNavigate } from "@solidjs/router";
 import { GatewayLinkPanel, readPendingSetupLink } from "../pages/RemoteGateways";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { AgentMark, Wordmark } from "./Marks";
 import { ModelAccess } from "./ModelAccess";
 import { FirstAgent, clearAgentDraft, readAgentDraft } from "./FirstAgent";
 import { useSetup } from "./SetupGate";
+import { localReturn } from "./repair";
+import type { DesktopSetupState } from "@yoplai/shared/types";
 import { errorText, readModels, type Model } from "./api";
 import styles from "./wizard.css?inline";
 
@@ -15,7 +17,14 @@ const steps = ["welcome", "choice", "model", "agent"] as const;
 export default function Wizard() {
   const navigate = useNavigate();
   const setup = useSetup();
-  const savedStep = sessionStorage.getItem(checkpoint);
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const restart = query.get("restart") === "1";
+  const repairStep = query.get("step");
+  const returnPath = !restart && localReturn(query.get("return"));
+  const savedStep = restart ? "welcome" : repairStep === "model" || repairStep === "agent"
+    ? repairStep : sessionStorage.getItem(checkpoint);
+  const [resetting, setResetting] = createSignal(restart);
   const [index, setIndex] = createSignal(Math.max(0, steps.findIndex((step) => step === savedStep)));
   createEffect(() => sessionStorage.setItem(checkpoint, steps[index()]));
   const resume = savedStep === "choice" && !!readPendingSetupLink();
@@ -42,12 +51,24 @@ export default function Wizard() {
     } finally { setLeavingLink(false); }
   };
 
-  const exit = async (destination: string, skip = false) => {
+  const resetWizard = async () => {
+    setResetting(true);
+    setError("");
+    try {
+      await setup.save({ wizardExited: false });
+      clearAgentDraft();
+      navigate("/setup", { replace: true });
+      setResetting(false);
+    } catch (cause) { setError(errorText(cause)); }
+  };
+  onMount(() => { if (restart) void resetWizard(); });
+
+  const exit = async (destination: string, skip = false, update?: Partial<DesktopSetupState>) => {
     if (busy()) return;
     setBusy(true);
     setError("");
     try {
-      await setup.save({ wizardExited: true, exitedAt: new Date().toISOString(), ...(skip ? {
+      await setup.save({ wizardExited: true, exitedAt: new Date().toISOString(), ...update, ...(skip ? {
         skipped: [...new Set([...(setup.state()?.skipped ?? []), steps[index()]])],
       } : {}) });
       clearAgentDraft();
@@ -57,6 +78,10 @@ export default function Wizard() {
       setError(errorText(cause));
       throw cause;
     } finally { setBusy(false); }
+  };
+  const createFirstChat = (agentId: string, sessionId: string, turnId: string) => {
+    const firstChat = { agentId, sessionId, turnId };
+    return exit(`/chat/${encodeURIComponent(agentId)}?session=${sessionId}`, false, { firstChat, completed: false });
   };
   const back = () => {
     setError("");
@@ -72,6 +97,12 @@ export default function Wizard() {
   return <main class="setup-wizard" classList={{ "setup-window": isDesktopWindow() }}>
     <style>{styles}</style>
     <header class="setup-brand"><Wordmark /></header>
+    <Show when={!resetting()} fallback={<div class="setup-stage">
+      <Show when={error()} fallback={<p role="status">Opening setup…</p>}>
+        <p role="alert">{error()}</p>
+        <button class="setup-outline" onClick={() => void resetWizard()}>Retry</button>
+      </Show>
+    </div>}>
     <div class={`setup-stage setup-${link() ? "link" : steps[index()]}`}>
       <Switch>
         <Match when={index() === 0}>
@@ -97,14 +128,17 @@ export default function Wizard() {
           <AgentMark />
           <h1>Give your agents a model.</h1>
           <p class="setup-subtitle">Turn on one source or more.</p>
-          <ModelAccess onContinue={(list) => { setModels(list); setIndex(3); }} />
+          <ModelAccess onContinue={(list) => {
+            if (returnPath && repairStep === "model") void exit(returnPath).catch(() => undefined);
+            else { setModels(list); setIndex(3); }
+          }} />
         </Match>
         <Match when={index() === 3}>
           <h1>Create your first agent.</h1>
           <Show when={readAgentDraft() || agentModels().length} fallback={<Show when={loaded.loading} fallback={
             <button class="setup-outline" onClick={() => { setError(""); void refetch(); }}>Reload models</button>
           }><p role="status">Loading models…</p></Show>}>
-            <FirstAgent models={agentModels()} onBusy={setCreating} onCreated={(id) => exit(`/chat/${encodeURIComponent(id)}`)} />
+            <FirstAgent models={agentModels()} onBusy={setCreating} onCreated={createFirstChat} />
           </Show>
         </Match>
       </Switch>
@@ -115,5 +149,6 @@ export default function Wizard() {
       <div class="setup-dots" aria-hidden="true"><For each={steps}>{(_, i) => <span classList={{ current: i() === index() }} />}</For></div>
       <button disabled={busy() || creating() || leavingLink()} onClick={() => void skip()}>Skip</button>
     </footer>
+    </Show>
   </main>;
 }
