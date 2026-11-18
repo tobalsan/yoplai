@@ -56,8 +56,18 @@ export async function createModelAuth(options: {
       return typeof target === "string" ? nativeAuth(target, ...args) : nativeAuth(target, ...args);
     };
     if (options.submitted) {
-      return options.submitted.provider === provider && isLiteralKey(options.submitted.key) && runtime.getProvider(provider)?.auth.apiKey
-        ? native({ ...overrides, apiKey: options.submitted.key }) : undefined;
+      const { key } = options.submitted;
+      if (options.submitted.provider !== provider || !isLiteralKey(key) || !runtime.getProvider(provider)?.auth.apiKey) return undefined;
+      const result = await native({ ...overrides, apiKey: key });
+      if (!result || result.auth.apiKey !== key) return undefined;
+      for (const headers of [model?.headers, result.auth.headers]) {
+        for (const [name, value] of Object.entries(headers ?? {})) {
+          const lower = name.toLowerCase();
+          if (lower === "authorization" && value !== `Bearer ${key}`) return undefined;
+          if (/^(?:x[-_])?api[-_]?key$|^(?:proxy-authorization|cf-aig-authorization|x-auth-token)$/.test(lower) && value !== key) return undefined;
+        }
+      }
+      return result;
     }
     const credential = readStoredCredential(provider, authPath);
     const explicit = overrides?.apiKey;
