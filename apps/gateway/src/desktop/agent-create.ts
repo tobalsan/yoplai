@@ -8,6 +8,7 @@ import yaml from "js-yaml";
 import { z } from "zod";
 import { allowsDesktopAgentDiscovery, getActiveAgents, getConfigPath, isAgentActive, loadConfig, setLoadedConfig } from "../config/index.js";
 import { reloadAfterExtensionWrite } from "../extensions/reload.js";
+import type { createInstructionWriter } from "./agent-instructions.js";
 import type { createModelAccess } from "./model-access.js";
 
 const bodySchema = z.object({
@@ -24,10 +25,6 @@ const markerFile = ".desktop-create.json";
 const markerSchema = z.object({ requestId: z.string().uuid(), instructions: z.enum(["model", "template"]) });
 type Instructions = { text: string; source: z.infer<typeof markerSchema>["instructions"] };
 type FoundAgent = { id: string; instructions: Instructions["source"] };
-
-function template({ name, purpose }: AgentBody): Instructions {
-  return { text: `You are ${name}.\n${purpose ? `Your purpose is: ${purpose}\n` : ""}Ask for details when you need them.\n`, source: "template" };
-}
 
 async function findRequest(parent: string, requestId: string): Promise<FoundAgent | undefined> {
   const dirs = await fs.readdir(parent, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
@@ -132,7 +129,11 @@ async function recoverAgent(parent: string, found: FoundAgent, needsReload: bool
   }
 }
 
-export function createAgentRoutes(home: string, listModels: ReturnType<typeof createModelAccess>["listModels"]) {
+export function createAgentRoutes(
+  home: string,
+  listModels: ReturnType<typeof createModelAccess>["listModels"],
+  writeInstructions: ReturnType<typeof createInstructionWriter>,
+) {
   const routes = new Hono();
   const parent = path.join(home, "agents");
   routes.post("/", async (c) => {
@@ -154,7 +155,7 @@ export function createAgentRoutes(home: string, listModels: ReturnType<typeof cr
       }
       const models = await listModels().catch(() => { throw new AgentCreateError("model_list_failed"); });
       if (!models.some(({ provider, model }) => provider === body.model.provider && model === body.model.model)) return fail("unavailable_model");
-      const instructions = template(body);
+      const instructions = await writeInstructions(body);
       const result = await withAgentsLock(parent, async () => {
         const found = await findRequest(parent, body.requestId);
         if (found) return { agent: await recoverAgent(parent, found, false), status: 200 } as const;

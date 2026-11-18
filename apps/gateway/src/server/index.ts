@@ -1,3 +1,4 @@
+import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
 import { createModelAccess } from "../desktop/model-access.js";
 import { desktopSetupGuard } from "../desktop/guard.js";
@@ -135,7 +136,7 @@ app.use("/api/model-access/*", setupGuard);
 const modelAccess = createModelAccess(CONFIG_DIR);
 app.route("/api/model-access", modelAccess.routes);
 app.on("POST", "/api/agents", setupGuard);
-app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels));
+app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
