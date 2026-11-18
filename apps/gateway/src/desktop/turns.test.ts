@@ -80,7 +80,10 @@ async function boot() {
   const uiPort = (ui.address() as AddressInfo).port;
   const origin = `http://127.0.0.1:${uiPort}`;
   vi.stubEnv("YOPLAI_UI_PORT", String(uiPort));
+  const setupPath = `${origin}/api/desktop-setup`;
   return {
+    setup: async () => (await fetch(setupPath)).json(),
+    saveSetup: (body: object) => fetch(setupPath, { method: "PUT", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) }),
     state: async (sessionId: string, turnId: string) => (await fetch(`${origin}/api/desktop-setup/turns/alpha/${sessionId}/${turnId}`)).json(),
     history: async (sessionId: string) => (await fetch(`${origin}/api/agents/alpha/history?sessionId=${sessionId}`)).json(),
     send: (payload: object, socketOrigin = origin) => new Promise<{ type: string; code?: string; message?: string }>((resolve, reject) => {
@@ -153,4 +156,29 @@ it("reports a failed turn and refuses invalid or untrusted sends", async () => {
   expect(await app.state(sessionId, turnId)).toEqual({ state: "failed" });
   expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "turn_exists" });
   expect(run).toHaveBeenCalledTimes(1);
+});
+
+
+it("requires the saved exact answered turn to complete setup", async () => {
+  run.mockImplementation(async (params: SdkRunParams) => {
+    params.onHistoryEvent({ type: "assistant_text", text: "Ready", timestamp: Date.now() });
+    return { text: "Ready" };
+  });
+  const app = await boot();
+  const previous = { agentId: "alpha", sessionId: "previous-chat", turnId: randomUUID() };
+  const current = { agentId: "alpha", sessionId: "current-chat", turnId: randomUUID() };
+  const complete = (firstChat: typeof current) => app.saveSetup({ completed: true, firstChat });
+  expect((await app.saveSetup({ wizardExited: true, firstChat: previous, completed: false })).status).toBe(200);
+  expect(await app.send(previous)).toMatchObject({ type: "done" });
+  expect((await complete(previous)).status).toBe(200);
+  expect((await app.saveSetup({ wizardExited: true, firstChat: current, completed: false })).status).toBe(200);
+  const stale = await complete(previous);
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({ error: "turn_conflict" });
+  expect((await complete(current)).status).toBe(409);
+  expect(await app.send({ ...current, turnId: randomUUID() })).toMatchObject({ type: "done" });
+  expect((await complete(current)).status).toBe(409);
+  expect(await app.setup()).toMatchObject({ firstChat: current, completed: false, completedAt: null });
+  expect(await app.send(current)).toMatchObject({ type: "done" });
+  expect(await (await complete(current)).json()).toMatchObject({ firstChat: current, completed: true, completedAt: expect.any(String) });
 });

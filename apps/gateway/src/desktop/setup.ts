@@ -9,6 +9,9 @@ import { desktopTurnState } from "./turns.js";
 import { writeJsonAtomic } from "../util/atomic-write.js";
 
 const updateSchema = DesktopSetupStateSchema.partial().strict();
+const turnIdSchema = z.string().uuid();
+const validTurn = (sessionId: string, turnId: string) =>
+  isSafeSessionId(sessionId) && turnIdSchema.safeParse(turnId).success;
 
 export function createDesktopSetupRoutes(home: string) {
   const routes = new Hono();
@@ -26,7 +29,7 @@ export function createDesktopSetupRoutes(home: string) {
 
   routes.get("/turns/:agentId/:sessionId/:turnId", async (c) => {
     const { agentId, sessionId, turnId } = c.req.param();
-    if (!isSafeSessionId(sessionId) || !z.string().uuid().safeParse(turnId).success) {
+    if (!validTurn(sessionId, turnId)) {
       return c.json({ error: "invalid_turn" }, 400);
     }
     if (!getAgent(agentId)) return c.json({ error: "unknown_agent" }, 404);
@@ -47,9 +50,20 @@ export function createDesktopSetupRoutes(home: string) {
   routes.put("/", async (c) => {
     const body = updateSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_setup_state" }, 400);
+    const { completed, firstChat } = body.data;
+    if (completed === true && (!firstChat || !validTurn(firstChat.sessionId, firstChat.turnId))) {
+      return c.json({ error: "invalid_turn", message: "Specify a valid first chat." }, 400);
+    }
     const update = pending.then(async () => {
       const previous = await read();
-      const state = DesktopSetupStateSchema.parse({ ...previous, ...body.data });
+      if (completed === true && firstChat) {
+        const saved = previous.firstChat;
+        if (!saved || saved.agentId !== firstChat.agentId || saved.sessionId !== firstChat.sessionId || saved.turnId !== firstChat.turnId ||
+            !getAgent(saved.agentId) || await desktopTurnState(home, saved.agentId, saved.sessionId, saved.turnId.toLowerCase()) !== "answered") {
+          return "turn_conflict" as const;
+        }
+      }
+      const state = DesktopSetupStateSchema.parse({ ...previous, ...body.data, ...(completed === true ? { firstChat: previous.firstChat } : {}) });
       if (state.completed && !state.firstChat) return null;
       state.completedAt = state.completed ? previous.completedAt ?? new Date().toISOString() : null;
       await writeJsonAtomic(file, state);
@@ -58,6 +72,7 @@ export function createDesktopSetupRoutes(home: string) {
     pending = update.then(() => undefined, () => undefined);
     try {
       const state = await update;
+      if (state === "turn_conflict") return c.json({ error: state, message: "The saved first chat does not match an answered turn." }, 409);
       return state ? c.json(state) : c.json({ error: "first_chat_required" }, 400);
     } catch {
       return c.json({ error: "setup_write_failed" }, 500);
