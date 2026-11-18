@@ -60,7 +60,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- A desktop key check uses the same model endpoint as chat.
+- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error.
 - The desktop model picker respects the model list for the signed-in account.
 
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
