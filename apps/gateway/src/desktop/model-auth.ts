@@ -4,16 +4,15 @@ import type { AnyModel, Api, AssistantMessage, AuthResult, Model } from "@earend
 import type { ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR } from "../config/index.js";
 import { desktopEnabled } from "./guard.js";
+import { isRelayEnabled } from "../relay/state.js";
+import { getExternalSources } from "./external-sources.js";
+import { CODEX_EXPIRED, isLiteralKey } from "./literal-key.js";
+export { isLiteralKey } from "./literal-key.js";
 
 type AuthMode = "oauth" | "api_key";
 export type ExternalCredential = { type: AuthMode; key: string; source: string };
 type ReadExternal = (provider: string, model: AnyModel | undefined, mode?: AuthMode) => Promise<ExternalCredential | undefined>;
-export const CODEX_EXPIRED = "Your Codex login expired. Open Codex once, or sign in here.";
 const EXTERNAL_FAILURE = "The external login failed. Check the login in its app.";
-
-export function isLiteralKey(key: unknown): key is string {
-  return typeof key === "string" && key.length > 0 && key === key.trim() && !key.startsWith("!") && !/\$\{[^}]*\}|\$[A-Za-z_]/.test(key) && [...key].every((char) => char.charCodeAt(0) > 32 && char.charCodeAt(0) !== 127);
-}
 
 function safeExternalError(provider: string, message?: string): string {
   if (message === CODEX_EXPIRED || (provider === "openai-codex" && /\b401\b/.test(message ?? ""))) return CODEX_EXPIRED;
@@ -29,6 +28,7 @@ export async function createModelAuth(options: {
   const { ModelRuntime, readStoredCredential } = await import("@earendil-works/pi-coding-agent");
   const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
   const home = options.home ?? CONFIG_DIR;
+  const readExternal = options.readExternal ?? (isRelayEnabled() ? getExternalSources(home).resolve : undefined);
   const authPath = path.join(home, "auth.json");
   const runtime = await ModelRuntime.create({ authPath, modelsPath: path.join(home, "models.json") });
   const nativeAuth = runtime.getAuth.bind(runtime);
@@ -47,9 +47,9 @@ export async function createModelAuth(options: {
 
     const scope = request.getStore();
     let external: ExternalCredential | undefined;
-    if (desktopEnabled() && options.readExternal) {
+    if (desktopEnabled() && readExternal) {
       if (scope) scope.external = true;
-      external = await options.readExternal(provider, model, mode);
+      external = await readExternal(provider, model, mode);
       if (scope) scope.external = external !== undefined;
     }
     if (external) {
@@ -69,11 +69,18 @@ export async function createModelAuth(options: {
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, requestOptions) => {
     const scope = { external: false };
-    const result = request.run(scope, () => stream(model, context, requestOptions));
+    let status: number | undefined;
+    const result = request.run(scope, () => stream(model, context, {
+      ...requestOptions,
+      async onResponse(response, target) {
+        status = response.status;
+        await requestOptions?.onResponse?.(response, target);
+      },
+    }));
     const push = result.push.bind(result);
     const end = result.end.bind(result);
     const safe = (message: AssistantMessage): AssistantMessage => scope.external && message.stopReason === "error"
-      ? { ...message, errorMessage: safeExternalError(model.provider, message.errorMessage) }
+      ? { ...message, errorMessage: safeExternalError(model.provider, status === 401 ? "401" : message.errorMessage) }
       : message;
     result.push = (event) => push(event.type === "error" ? { ...event, error: safe(event.error) } : event);
     result.end = (message) => end(message ? safe(message) : undefined);
