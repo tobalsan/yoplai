@@ -54,9 +54,11 @@ import {
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
 import { ToastHost } from "./lib/toast";
+import { SetupGate } from "./desktop-setup/SetupGate";
 import { useScheduleAlerts } from "./lib/schedule-alerts";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
+const LazyDesktopSetup = lazy(() => import("./desktop-setup/Wizard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
@@ -131,7 +133,7 @@ function Layout(props: { children?: JSX.Element }) {
       <Show when={capabilitiesReady()} fallback={<AppBootSplash />}>
         <div class="app" classList={{ "zen-mode": zenMode() }}>
           <ImpersonationBanner />
-          {props.children}
+          <SetupGate>{props.children}</SetupGate>
           <OnboardingTour />
           <ConnectToolsPrompt />
           <SessionSearch />
@@ -273,6 +275,7 @@ export default function App() {
   const base = import.meta.env.BASE_URL;
   return (
     <Router root={Layout} base={base}>
+      <Route path="/setup" component={() => <Suspense><LazyDesktopSetup /></Suspense>} />
       <Route path="/login" component={LoginRoute} />
       <Route
         path="/"
