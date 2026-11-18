@@ -232,10 +232,49 @@ it.each([
     ]);
     return successfulCall();
   });
-  const { createModelAccessRoutes } = await import("./model-access.js");
-  const response = await createModelAccessRoutes(home).request("/api-key", {
-    method: "POST", body: JSON.stringify({ provider, key: "fake-submitted-key", checkOnly: true }),
-  });
+  if (provider === "cloudflare-ai-gateway") {
+    const { createModelAuth, checkLiteralModelKey } = await import("./model-auth.js");
+    const { defaultModel } = await import("./model-picker.js");
+    const { runtime } = await createModelAuth({ home });
+    const model = defaultModel(runtime.getModels(provider));
+    expect(await checkLiteralModelKey(provider, "fake-submitted-key", model!.id, home)).toBe(true);
+  } else {
+    const { createModelAccessRoutes } = await import("./model-access.js");
+    const routes = createModelAccessRoutes(home);
+    const save = provider === "openai";
+    const response = await routes.request("/api-key", {
+      method: "POST", body: JSON.stringify({ provider, key: "fake-submitted-key", ...(!save && { checkOnly: true }) }),
+    });
+    expect(await response.json()).toMatchObject({ provider, ready: true, saved: save });
+    if (save) {
+      const credentials = JSON.parse(await fs.readFile(path.join(home, "auth.json"), "utf8"));
+      expect(credentials.openai?.key === "fake-submitted-key").toBe(true);
+    }
+  }
   expect(calls).toEqual([{ host, keyMatches: true }]);
-  expect(await response.json()).toMatchObject({ provider, ready: true, saved: false });
+});
+
+
+it("lists and accepts only providers that need no input other than the key", async () => {
+  const call = vi.fn(async () => successfulCall());
+  vi.stubGlobal("fetch", call);
+  vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "fixture-account");
+  vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "fixture-gateway");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const routes = createModelAccessRoutes(home);
+  const status = await (await routes.request("/")).json() as { apiKeyProviders: Array<{ id: string }> };
+  const choices = status.apiKeyProviders.map(({ id }) => id);
+  expect(choices).toContain("openai");
+  for (const provider of ["amazon-bedrock", "cloudflare-ai-gateway", "cloudflare-workers-ai", "google-vertex"]) {
+    expect(choices).not.toContain(provider);
+    for (const checkOnly of [false, true]) {
+      const response = await routes.request("/api-key", {
+        method: "POST", body: JSON.stringify({ provider, key: "fake-submitted-key", checkOnly }),
+      });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "unsupported_provider", message: "This provider needs more than an API key. Use another provider." });
+    }
+  }
+  expect(call).not.toHaveBeenCalled();
+  expect(await (await routes.request("/")).json()).toMatchObject({ owned: [] });
 });
