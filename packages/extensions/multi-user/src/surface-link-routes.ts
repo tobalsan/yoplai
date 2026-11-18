@@ -1,5 +1,6 @@
 import type { Context, Hono } from "hono";
 import { getSurfaceLinkService, type GatewayConfig } from "@yoplai/shared";
+import { getRequestAuthContext, isVerifiedBearerRequest } from "./middleware.js";
 import { getMultiUserRuntime } from "./runtime-state.js";
 import { getEligibleAccount } from "./users.js";
 import { SurfaceLinkError } from "./surface-links.js";
@@ -38,12 +39,20 @@ export function registerSurfaceLinkRoutes(app: Hono, getBranding: () => GatewayC
     const service = getSurfaceLinkService();
     const runtime = getMultiUserRuntime();
     if (!service || !runtime) return c.json({ error: "linking_unavailable" }, 503);
-    const session = await runtime.auth.api.getSession({ headers: c.req.raw.headers });
-    if (!session) return c.json({ error: "login_required" }, 401);
-    const user = getEligibleAccount(runtime.db, session.user.id);
+    // A verified bearer is a linked gateway. The outer middleware bound its identity, and the request has no cookie.
+    const bearer = isVerifiedBearerRequest(c) ? getRequestAuthContext(c) : null;
+    let userId: string;
+    if (bearer) userId = bearer.user.id;
+    else {
+      const session = await runtime.auth.api.getSession({ headers: c.req.raw.headers });
+      if (!session) return c.json({ error: "login_required" }, 401);
+      userId = session.user.id;
+    }
+    const user = getEligibleAccount(runtime.db, userId);
     if (!user) return c.json({ error: "forbidden" }, 403);
     if (c.req.method === "GET") return c.json({ links: service.list(user.id) });
-    if (!isTrustedOrigin(c, service.baseUrl)) return c.json({ error: "invalid_origin" }, 403);
+    // The cookie branch needs a same-origin or configured Origin. A verified bearer request has no cookie.
+    if (!bearer && !isTrustedOrigin(c, service.baseUrl)) return c.json({ error: "invalid_origin" }, 403);
     service.unlink(user.id, c.req.param("id")!);
     return c.json({ ok: true });
   };

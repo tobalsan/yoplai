@@ -75,6 +75,7 @@ const mutations: Array<[string, string, unknown?]> = [
   ["PUT", `${prefix()}/api/admin/forks/pool@east/teams`, { teamIds: ["team@east"] }],
   ["PATCH", `${prefix()}/api/admin/forks/pool@east/visibility`, { public: false }],
   ["DELETE", `${prefix()}/api/admin/teams/team@east/agents/pool@east`],
+  ["DELETE", `${prefix()}/api/surface-links/link-1`],
 ];
 
 describe("configuration transport", () => {
@@ -107,7 +108,7 @@ describe("configuration transport", () => {
     expect(localCalls).toEqual([]);
   });
 
-  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/pool", "/api/pool/pool/avatar", "/api/pool-actions", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/admin/top-extensions", "/api/capabilities"])("reads %s from the selected gateway", async (path) => {
+  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/pool", "/api/pool/pool/avatar", "/api/pool-actions", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/admin/top-extensions", "/api/capabilities", "/api/surface-links"])("reads %s from the selected gateway", async (path) => {
     for (const name of ["east", "west"]) {
       expect((await app.request(`${prefix(name)}${path}`)).status).toBe(200);
       expect(records.at(-1)?.url.origin).toBe(`https://${name}.test`);
@@ -173,6 +174,9 @@ describe("configuration transport", () => {
     ["POST", `${prefix()}/api/auth/sign-out`, {}, 405],
     ["GET", `${prefix()}/api/internal/tools`, undefined, 405],
     ["GET", `${prefix()}/api/admin/users`, undefined, 405],
+    ["GET", `${prefix()}/api/surface-links/pair/token`, undefined, 405],
+    ["POST", `${prefix()}/api/surface-links/pair/token`, {}, 405],
+    ["POST", `${prefix()}/api/surface-links`, {}, 405],
     ["DELETE", `${prefix()}/api/admin/top-extensions`, undefined, 405],
     ["POST", `${prefix()}/api/admin/top-extensions`, {}, 405],
     ["DELETE", `${prefix()}/api/mcp/catalog`, undefined, 405],

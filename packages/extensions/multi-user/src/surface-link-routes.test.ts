@@ -10,6 +10,7 @@ import { createAuthMiddleware } from "./middleware.js";
 describe("surface linking HTTP routes", () => {
   let dataDir: string;
   let app: Hono;
+  let api: Hono;
   let unregister: () => void;
   const baseUrl = "http://127.0.0.1:4999";
   const identity = { surface: "threadit" as const, scope: "https://board.example.test", externalId: "17", username: "<alice>" };
@@ -44,7 +45,7 @@ describe("surface linking HTTP routes", () => {
     unregister = registerSurfaceIdentityProvider({ ...identity, lookup: async () => ({ username: "<alice>", email: "alice@example.test", isAgent: false }) });
     app = new Hono();
     app.use("/api/*", createAuthMiddleware());
-    const api = new Hono();
+    api = new Hono();
     multiUserExtension.registerRoutes!(api);
     app.route("/api", api);
   });
@@ -102,6 +103,26 @@ describe("surface linking HTTP routes", () => {
     expect((await request(path, { method: "DELETE", headers: { ...aliceHeaders, origin: baseUrl } })).status).toBe(200);
     expect(service.resolve("threadit", identity.scope, "17")).toBeUndefined();
     expect(await (await request(list, { headers: aliceHeaders })).json()).toEqual({ links: [] });
+  });
+  it("lists and unlinks for a verified bearer with no cookie and no Origin", async () => {
+    const alice = await signup("alice");
+    const service = getSurfaceLinkService()!;
+    await service.redeem(tokenFrom(await service.issue(identity)), alice.user);
+    const linked = new Hono();
+    linked.use("*", async (c, next) => {
+      c.set("multiUserAuthContext", { user: { id: alice.user.id } });
+      c.set("multiUserBearerVerified", true);
+      await next();
+    });
+    linked.route("/api", api);
+    const list = await linked.request(new URL("/api/surface-links", baseUrl).href);
+    expect(list.status).toBe(200);
+    const { links } = await list.json() as { links: Array<{ id: string }> };
+    expect(links).toHaveLength(1);
+    expect((await linked.request(new URL(`/api/surface-links/${links[0]!.id}`, baseUrl).href, { method: "DELETE" })).status).toBe(200);
+    expect(service.list(alice.user.id)).toEqual([]);
+    // A request with no verified bearer still needs a session and a trusted Origin.
+    expect((await request("/api/surface-links/x", { method: "DELETE" })).status).toBe(401);
   });
   it("requires login and trusted origins for redeem and unlink", async () => {
     const alice = await signup("alice");

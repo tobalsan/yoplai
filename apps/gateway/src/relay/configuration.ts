@@ -63,6 +63,9 @@ const rules: Rule[] = [
   // owns the pairings of that account. Token redemption and credential connection routes are not here.
   { methods: ["GET"], path: /^\/api\/slack\/pairings$/ },
   { methods: ["DELETE"], path: /^\/api\/slack\/pairings\/[^/]+\/[^/]+$/, bodyless: true },
+  // Threadit and Mattermost account links. The remote authenticates the linked bearer. The pair and redeem routes are not here.
+  { methods: ["GET"], path: /^\/api\/surface-links$/ },
+  { methods: ["DELETE"], path: /^\/api\/surface-links\/[^/]+$/, bodyless: true },
   { methods: ["PUT", "DELETE"], path: /^\/api\/dashboards\/[^/]+\/pin$/ },
   { methods: ["PATCH"], path: /^\/api\/dashboards\/[^/]+\/sharing$/ },
   { methods: ["POST"], path: /^\/api\/dashboards\/[^/]+\/claim$/ },
