@@ -21,10 +21,11 @@ extraResources:
     to: templates
 mac:
   category: public.app-category.productivity
-  # Ad-hoc signature. Apple silicon refuses a bundle with no valid signature as "damaged".
-  # Developer ID signing and the hardened runtime come in slice 5.
+  # Keep the ad-hoc signature until slice 5b adds Developer ID signing.
   identity: "-"
-  hardenedRuntime: false
+  hardenedRuntime: true
+  entitlements: entitlements/mac.plist
+  entitlementsInherit: entitlements/mac.plist
   target:
     - target: dir
       arch: arm64
