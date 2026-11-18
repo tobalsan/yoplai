@@ -24,6 +24,7 @@ export type RawRunRequestInput = {
   agentId: string;
   message?: unknown;
   sessionId?: unknown;
+  turnId?: unknown;
   sessionKey?: unknown;
   thinkLevel?: unknown;
   attachments?: unknown;
@@ -50,6 +51,7 @@ type NormalizeRunRequestParams = {
   source: string;
   onEvent?: (event: StreamEvent) => void;
   defaultSessionId?: string;
+  allowTurnId?: boolean;
 };
 
 function parseAttachments(value: unknown): FileAttachment[] | undefined {
@@ -62,7 +64,7 @@ const CONTROL_CHAR_REGEX = new RegExp(
   `[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}${String.fromCharCode(0x7f)}]`
 );
 
-function isSafeSessionId(sessionId: string): boolean {
+export function isSafeSessionId(sessionId: string): boolean {
   return (
     sessionId.length > 0 &&
     sessionId.length <= 200 &&
@@ -108,8 +110,16 @@ export async function normalizeRunRequest({
   source,
   onEvent,
   defaultSessionId,
+  allowTurnId,
 }: NormalizeRunRequestParams): Promise<NormalizedRunRequest> {
+  if (input.turnId !== undefined) {
+    if (!allowTurnId) return { type: "validation_error", message: "Only desktop chat accepts a turn ID." };
+    if (typeof input.sessionId !== "string" || !isSafeSessionId(input.sessionId)) {
+      return { type: "validation_error", message: "Supply a valid session ID with the turn ID." };
+    }
+  }
   const parsed = SendMessageRequestSchema.safeParse({
+    turnId: input.turnId,
     projectId: input.projectId,
     message: input.message,
     sessionId: input.sessionId,
@@ -118,13 +128,14 @@ export async function normalizeRunRequest({
     deviceTurnToken: input.deviceTurnToken,
   });
   if (!parsed.success) {
-    return { type: "validation_error", message: parsed.error.message };
+    return { type: "validation_error", message: input.turnId === undefined ? parsed.error.message : "Check the chat request. The turn ID must be a UUID." };
   }
 
   const data = parsed.data;
   if (data.sessionId && !isSafeSessionId(data.sessionId)) {
     return { type: "validation_error", message: "Invalid session id" };
   }
+  const turnId = data.turnId?.toLowerCase();
   const userId = authContext?.session.userId;
   const attachments = await normalizeInboundAttachments(
     parseAttachments(input.attachments)
@@ -142,6 +153,7 @@ export async function normalizeRunRequest({
         sessionKey: data.sessionKey,
         thinkLevel: data.thinkLevel,
         deviceTurnToken: data.deviceTurnToken,
+        turnId,
         context: userContext(authContext),
         extensionRuntime,
         source,
@@ -200,6 +212,7 @@ export async function normalizeRunRequest({
       projectId: data.projectId,
       thinkLevel: data.thinkLevel as ThinkLevel | undefined,
       deviceTurnToken: data.deviceTurnToken,
+      turnId,
       context: userContext(authContext),
       extensionRuntime,
       source,

@@ -25,6 +25,7 @@ export type AgentSession = {
   storageOwnerId?: string | null;
   requesterId?: string;
   deviceTurnToken?: string;
+  turnId?: string;
   settled?: Promise<void>;
   resolveSettled?: () => void;
   resetting?: boolean;

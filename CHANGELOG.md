@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- The desktop gateway accepts the first chat turn once and reports its state after a restart.
 - The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.
 - The desktop gateway creates agents with a selected avatar and model. A retry with the same request ID returns the same agent.
 

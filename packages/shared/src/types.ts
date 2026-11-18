@@ -1438,6 +1438,8 @@ export type RunAgentParams = {
   background?: boolean;
   /** A background run gets the device tools only when this is true. */
   requiresDevice?: boolean;
+  /** Turn ID from a guarded desktop send. */
+  turnId?: string;
   /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
   deviceTurnToken?: string;
   trace?: AgentTraceContext;
@@ -2053,6 +2055,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  turnId: z.string().uuid().optional(),
   deviceTurnToken: z.string().max(200).optional(),
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   message: z.string(),
@@ -2529,6 +2532,7 @@ export type WsSendMessage = {
   projectId?: string;
   type: "send";
   agentId: string;
+  turnId?: string;
   sessionId?: string; // explicit session ID (bypasses sessionKey resolution)
   sessionKey?: string; // logical key (resolved to sessionId with idle timeout)
   message: string;

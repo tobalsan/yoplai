@@ -96,6 +96,7 @@ export type WsStreamEvent =
     }
   | {
       type: "error";
+      code?: string;
       message: string;
       kind?: import("@yoplai/shared").RunFailureKind;
       userMessage?: string;

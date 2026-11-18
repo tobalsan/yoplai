@@ -153,6 +153,23 @@ type MetaEntry = {
 /**
  * Append a raw history entry to the canonical store
  */
+export async function hasDesktopTurnAnswer(agentId: string, sessionId: string, turnId: string): Promise<boolean> {
+  const file = await resolveHistoryFile(agentId, sessionId);
+  const raw = await fs.readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
+  return raw.split(/\r?\n/).some((line) => {
+    try {
+      const entry = JSON.parse(line);
+      return entry?.type === "history" && entry.role === "assistant" && entry.agentId === agentId &&
+        entry.sessionId === sessionId && entry.answeredTurnId === turnId;
+    } catch {
+      return false;
+    }
+  });
+}
+
 async function appendRawEntry(
   agentId: string,
   sessionId: string,
@@ -475,7 +492,8 @@ export async function flushTurnBuffer(
   agentId: string,
   sessionId: string,
   buffer: TurnBuffer,
-  userId?: string
+  userId?: string,
+  answeredTurnId?: string
 ): Promise<void> {
   if (buffer.systemContext) {
     await appendRawEntry(
@@ -540,6 +558,7 @@ export async function flushTurnBuffer(
         role: "assistant",
         content,
         meta: buffer.meta,
+        answeredTurnId,
         timestamp: buffer.startTimestamp,
       },
       userId

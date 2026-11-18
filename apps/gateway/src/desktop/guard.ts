@@ -1,3 +1,4 @@
+import type { IncomingMessage } from "node:http";
 import { isIP } from "node:net";
 import { readEnv } from "@yoplai/shared";
 import type { Context, MiddlewareHandler } from "hono";
@@ -43,20 +44,28 @@ function loopbackForwarding(headers: Headers): boolean {
   });
 }
 
-export function desktopSetupAllowed(c: Context, multiUser: boolean, uiPort: number): boolean {
+function desktopRequestAllowed(headers: Headers, peer: string | undefined, multiUser: boolean, uiPort: () => number): boolean {
   if (!desktopEnabled() || multiUser || !isRelayEnabled()) return false;
   const listener = getGatewayListener();
-  const peer = requestPeerAddress(c) ?? (c.env as { peerAddress?: string } | undefined)?.peerAddress;
   if (!listener || !isDesktopLoopbackAddress(listener.address) || !peer || !isDesktopLoopbackAddress(peer)) return false;
-  if (!loopbackForwarding(c.req.raw.headers)) return false;
-  const host = c.req.header("host")?.toLowerCase();
+  if (!loopbackForwarding(headers)) return false;
+  const host = headers.get("host")?.toLowerCase();
   if (!host || !loopbackGatewayHosts(listener.port).includes(host)) return false;
   const configuredPort = Number(readEnv("UI_PORT"));
-  const effectivePort = configuredPort > 0 && configuredPort < 65536 && Number.isInteger(configuredPort) ? configuredPort : uiPort;
-  const origin = c.req.header("origin");
-  if (origin !== undefined && !loopbackGatewayHosts(effectivePort).some((uiHost) => origin === `http://${uiHost}`)) return false;
-  const site = c.req.header("sec-fetch-site");
-  return site === undefined || site === "same-origin" || site === "none";
+  const effectivePort = configuredPort > 0 && configuredPort < 65536 && Number.isInteger(configuredPort) ? configuredPort : uiPort();
+  const origin = headers.get("origin");
+  if (origin !== null && !loopbackGatewayHosts(effectivePort).some((uiHost) => origin === `http://${uiHost}`)) return false;
+  const site = headers.get("sec-fetch-site");
+  return site === null || site === "same-origin" || site === "none";
+}
+
+export function desktopSetupAllowed(c: Context, multiUser: boolean, uiPort: number): boolean {
+  const peer = requestPeerAddress(c) ?? (c.env as { peerAddress?: string } | undefined)?.peerAddress;
+  return desktopRequestAllowed(c.req.raw.headers, peer, multiUser, () => uiPort);
+}
+
+export function desktopSocketAllowed(request: IncomingMessage, multiUser: boolean, uiPort: () => number): boolean {
+  return desktopRequestAllowed(new Headers(request.headers as Record<string, string>), request.socket.remoteAddress, multiUser, uiPort);
 }
 
 export function desktopSetupGuard(multiUser: () => boolean, uiPort: () => number): MiddlewareHandler {
