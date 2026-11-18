@@ -82,7 +82,7 @@ it("opens an approved browser URL and drops prompts on either abort signal", asy
   expect(saves).toBe(1);
 });
 
-it("refuses another active attempt and requires the Claude warning", async () => {
+it("resumes an open attempt and requires the Claude warning for a new attempt", async () => {
   const { createModelAuth } = await import("./model-auth.js");
   const { createModelAccessRoutes } = await import("./model-access.js");
   const auth = await createModelAuth({ home });
@@ -97,13 +97,18 @@ it("refuses another active attempt and requires the Claude warning", async () =>
   const res = await start("anthropic", { warningAccepted: true });
   expect(res.status).toBe(202);
   const { handle } = await res.json();
-  expect((await start("anthropic", { warningAccepted: true })).status).toBe(409);
+  const listing = async () => (await routes.request("/")).json();
+  await vi.waitFor(async () => expect(await listing()).toMatchObject({ attempts: [{ handle, provider: "anthropic", state: "waiting-code" }] }));
+  const resumed = await start("anthropic");
+  expect(resumed.status).toBe(200);
+  expect(await resumed.json()).toEqual({ handle, provider: "anthropic", state: "waiting-code", resumed: true });
   expect(login).toHaveBeenCalledTimes(1);
   const answer = await routes.request(`/oauth/attempts/${handle}/answer`, { method: "POST", body: '{"code":"fake-code"}' });
   expect(answer.status).toBe(200);
   const status = async () => (await routes.request(`/oauth/attempts/${handle}`)).text();
   await vi.waitFor(async () => expect(await status()).toContain('"failed"'));
   expect((await status()).includes("fake-provider-private-error")).toBe(false);
+  expect(await listing()).toMatchObject({ attempts: [] });
 });
 
 it("expires attempts after ten minutes and refuses other browser hosts", async () => {

@@ -35,6 +35,8 @@ export function createOAuthAttempts(
   const active = new Map<OAuthProvider, Attempt>();
   const view = ({ handle, provider, state, message }: Attempt) => ({ handle, provider, state, message });
 
+  const isOpen = (attempt: Attempt) => attempt.state === "waiting-browser" || attempt.state === "waiting-code";
+
   function terminal(attempt: Attempt, state: "done" | "failed" | "cancelled", message?: string) {
     attempt.state = state;
     attempt.message = message;
@@ -104,6 +106,11 @@ export function createOAuthAttempts(
 
   return {
     start,
+    openAttempts: () => [...active.values()].filter(isOpen).map(view),
+    resume(provider: OAuthProvider) {
+      const attempt = active.get(provider);
+      return attempt && isOpen(attempt) ? view(attempt) : undefined;
+    },
     busy: (provider: string) => isOAuthProvider(provider) && active.has(provider),
     status(handle: string) {
       const attempt = attempts.get(handle);
