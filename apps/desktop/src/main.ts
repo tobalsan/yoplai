@@ -1,9 +1,11 @@
-import { app, BrowserWindow, Menu, session, shell, type MenuItemConstructorOptions } from "electron";
+import path from "node:path";
+import { app, BrowserWindow, Menu, session, shell, type MenuItem, type MenuItemConstructorOptions } from "electron";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
 import { LogBuffer } from "./log-buffer.js";
 import { createDevHome, createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
 import { resolveHome, seedHome } from "./packaged-env.js";
+import { readSplashPreference, writeSplashPreference } from "./preferences.js";
 import { fallbackPath, probeShellPath } from "./shell-path.js";
 import { startStack } from "./stack.js";
 import { createStackController } from "./stack-controller.js";
@@ -16,6 +18,15 @@ const stackController = createStackController(() =>
 );
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
+let attempt = 0;
+let setupMenuItem: MenuItem | null = null;
+const SPLASH_PATH = path.join(import.meta.dirname, "splash/splash.html");
+type SplashMode = "splash" | "wait";
+
+function invalidateAttempt(): void {
+  attempt++;
+  if (setupMenuItem) setupMenuItem.enabled = false;
+}
 /** A packaged app runs one instance. The dev app keeps its own rules, so two worktrees can run side by side. */
 const hasInstanceLock = !app.isPackaged || app.requestSingleInstanceLock();
 
@@ -46,7 +57,8 @@ function openExternal(url: string): void {
 }
 
 function showError(reason: string): void {
-  void mainWindow?.loadURL(errorPageUrl(reason, log.tail()));
+  invalidateAttempt();
+  void mainWindow?.loadURL(errorPageUrl(reason, log.tail())).catch(() => undefined);
 }
 
 const SECURE_WEB_PREFERENCES = {
@@ -68,8 +80,12 @@ function createWindow(): BrowserWindow {
     const decision = decideNavigation({ url, uiOrigin: stackController.current()?.uiOrigin ?? "" });
     if (decision === "allow") return;
     event.preventDefault();
-    if (decision === "restart") void startAndLoad();
+    if (decision === "restart") void startAndLoad("wait");
     else if (decision === "system-browser") openExternal(url);
+  });
+  win.on("closed", () => {
+    invalidateAttempt();
+    mainWindow = null;
   });
   return win;
 }
@@ -87,23 +103,42 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
-function installMenu(): void {
+function installMenu(userData: string, splash: boolean): void {
   const restartSetup: MenuItemConstructorOptions = {
+    id: "restart-setup",
     label: "Run setup again…",
+    enabled: false,
     click: () => {
       const stack = stackController.current();
-      if (stack && !quitting) void mainWindow?.loadURL(new URL("/setup?restart=1", stack.uiUrl).href).catch(() => undefined);
+      if (stack && setupMenuItem?.enabled && !quitting) {
+        void mainWindow?.loadURL(new URL("/setup?restart=1", stack.uiUrl).href).catch(() => undefined);
+      }
+    },
+  };
+  const splashOption: MenuItemConstructorOptions = {
+    label: "Show Splash at Start",
+    type: "checkbox",
+    checked: splash,
+    click: (item) => {
+      try {
+        writeSplashPreference(userData, item.checked);
+      } catch {
+        item.checked = !item.checked;
+        console.error("[desktop] Cannot save the splash preference.");
+      }
     },
   };
   const template: MenuItemConstructorOptions[] = [
     { label: app.name, submenu: [
-      { role: "about" }, { type: "separator" }, restartSetup, { type: "separator" },
+      { role: "about" }, { type: "separator" }, restartSetup, splashOption, { type: "separator" },
       { role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" },
       { role: "unhide" }, { type: "separator" }, { role: "quit" },
     ] },
     { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
   ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  const menu = Menu.buildFromTemplate(template);
+  setupMenuItem = menu.getMenuItemById("restart-setup");
+  Menu.setApplicationMenu(menu);
 }
 
 function installPermissionHandlers(): void {
@@ -116,19 +151,36 @@ function installPermissionHandlers(): void {
   );
 }
 
-async function startAndLoad(): Promise<void> {
+async function startAndLoad(mode: SplashMode): Promise<void> {
+  const win = mainWindow;
+  if (!win || quitting) return;
+  invalidateAttempt();
+  const token = attempt;
+  const isCurrent = () => token === attempt;
   try {
+    const pageLoaded = win.loadFile(SPLASH_PATH, { query: { mode } }).then(() => true, () => false);
     if (app.isPackaged) await preparePackagedPlan();
+    if (!isCurrent()) return;
     const stack = await stackController.restart();
-    if (!quitting) await mainWindow?.loadURL(stack.uiUrl);
+    if (await pageLoaded && isCurrent()) {
+      await win.webContents.executeJavaScript("window.yoplaiSplash.finish()").catch(() => undefined);
+      if (isCurrent() && process.env.YOPLAI_SPLASH_STATS === "1") {
+        const stats = await win.webContents.executeJavaScript("window.yoplaiSplash.stats()").catch(() => null);
+        if (isCurrent() && stats) console.log("[desktop] splash stats", JSON.stringify(stats));
+      }
+    }
+    if (!isCurrent()) return;
+    await win.loadURL(stack.uiUrl);
+    if (isCurrent() && setupMenuItem) setupMenuItem.enabled = true;
   } catch (err) {
-    if (!quitting) showError((err as Error).message);
+    if (isCurrent()) showError((err as Error).message);
   }
 }
 
 async function shutdown(): Promise<void> {
   if (quitting) return;
   quitting = true;
+  invalidateAttempt();
   await stackController.shutdown();
   app.exit(0);
 }
@@ -156,6 +208,8 @@ void app.whenReady().then(async () => {
   console.log("[desktop] ready");
   installPermissionHandlers();
   mainWindow = createWindow();
-  installMenu();
-  await startAndLoad();
+  const userData = app.getPath("userData");
+  const splash = readSplashPreference(userData);
+  installMenu(userData, splash);
+  await startAndLoad(splash ? "splash" : "wait");
 });
