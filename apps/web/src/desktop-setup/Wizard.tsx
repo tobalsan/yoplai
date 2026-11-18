@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createResource, createSignal } from "solid-js";
 import { useNavigate } from "@solidjs/router";
-import { clearPendingSetupLink, GatewayLinkPanel, readPendingSetupLink } from "../pages/RemoteGateways";
+import { GatewayLinkPanel, readPendingSetupLink } from "../pages/RemoteGateways";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { AgentMark, Wordmark } from "./Marks";
 import { ModelAccess } from "./ModelAccess";
@@ -30,6 +30,17 @@ export default function Wizard() {
   const [busy, setBusy] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [leavingLink, setLeavingLink] = createSignal(false);
+  let leaveLink: (() => Promise<boolean>) | undefined;
+  const closeLink = async () => {
+    if (!leaveLink || leavingLink()) return false;
+    setLeavingLink(true);
+    try {
+      if (!await leaveLink()) return false;
+      setLink(false);
+      return true;
+    } finally { setLeavingLink(false); }
+  };
 
   const exit = async (destination: string, skip = false) => {
     if (busy()) return;
@@ -40,7 +51,6 @@ export default function Wizard() {
         skipped: [...new Set([...(setup.state()?.skipped ?? []), steps[index()]])],
       } : {}) });
       clearAgentDraft();
-      clearPendingSetupLink();
       sessionStorage.removeItem(checkpoint);
       navigate(destination, { replace: true });
     } catch (cause) {
@@ -50,8 +60,13 @@ export default function Wizard() {
   };
   const back = () => {
     setError("");
-    if (link()) { clearPendingSetupLink(); setLink(false); }
+    if (link()) void closeLink();
     else setIndex(index() - 1);
+  };
+
+  const skip = async () => {
+    if (link() && !await closeLink()) return;
+    await exit("/agents", true).catch(() => undefined);
   };
 
   return <main class="setup-wizard" classList={{ "setup-window": isDesktopWindow() }}>
@@ -76,7 +91,7 @@ export default function Wizard() {
         </Match>
         <Match when={index() === 1 && link()}>
           <h1>Connect to a Yoplai server</h1>
-          <GatewayLinkPanel onLinked={() => exit("/agents")} />
+          <GatewayLinkPanel registerLeave={(leave) => { leaveLink = leave; }} onLinked={() => exit("/agents")} />
         </Match>
         <Match when={index() === 2}>
           <AgentMark />
@@ -96,9 +111,9 @@ export default function Wizard() {
       <Show when={error()}><p role="alert">{error()}</p></Show>
     </div>
     <footer class="setup-footer">
-      <span><Show when={index() > 0}><button disabled={busy() || creating()} onClick={back}>Back</button></Show></span>
+      <span><Show when={index() > 0}><button disabled={busy() || creating() || leavingLink()} onClick={back}>Back</button></Show></span>
       <div class="setup-dots" aria-hidden="true"><For each={steps}>{(_, i) => <span classList={{ current: i() === index() }} />}</For></div>
-      <button disabled={busy() || creating()} onClick={() => void exit("/agents", true).catch(() => undefined)}>Skip</button>
+      <button disabled={busy() || creating() || leavingLink()} onClick={() => void skip()}>Skip</button>
     </footer>
   </main>;
 }

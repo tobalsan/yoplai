@@ -99,11 +99,18 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     keyRevision += 1;
     if (confirm()?.keyForm) setConfirm(undefined);
   };
+  const changeSearch = (query: string) => {
+    setSearch(query);
+    if (provider() && !providers().some((row) => row.id === provider())) {
+      invalidateKey();
+      setProvider("");
+    }
+  };
   const closeKey = () => {
     invalidateKey();
     setEntry(false);
     setKey("");
-    setSearch("");
+    changeSearch("");
   };
   const saveKey = async (id: string, value: string, revision = keyRevision, replace = false): Promise<void> => {
     const current = () => !disposed && entry() && keyRevision === revision;
@@ -174,7 +181,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
       <form class="setup-interaction" aria-label="Add an API key" onSubmit={(event) => {
         event.preventDefault(); void perform(() => saveKey(provider(), key()));
       }}>
-        <label>Search providers<input value={search()} onInput={(event) => setSearch(event.currentTarget.value)} /></label>
+        <label>Search providers<input value={search()} onInput={(event) => changeSearch(event.currentTarget.value)} /></label>
         <label>Provider<select required value={provider()} onChange={(event) => { invalidateKey(); setProvider(event.currentTarget.value); }}>
           <option value="">Select a provider</option>
           <For each={providers()}>{(row) => <option value={row.id} selected={provider() === row.id}>{row.name}</option>}</For>
