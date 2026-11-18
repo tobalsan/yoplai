@@ -159,6 +159,27 @@ it("reports a failed turn and refuses invalid or untrusted sends", async () => {
 });
 
 
+it.each(["changes", "clears"])("resets completion when a partial update %s the saved first chat", async (action) => {
+  run.mockImplementation(async (params: SdkRunParams) => {
+    params.onHistoryEvent({ type: "assistant_text", text: "Ready", timestamp: Date.now() });
+    return { text: "Ready" };
+  });
+  const app = await boot();
+  const firstChat = { agentId: "alpha", sessionId: "first", turnId: randomUUID() };
+  expect((await app.saveSetup({ wizardExited: true, firstChat })).status).toBe(200);
+  expect(await app.send(firstChat)).toMatchObject({ type: "done" });
+  const saved = await app.saveSetup({ firstChat, completed: true });
+  expect(saved.status).toBe(200);
+  const { completedAt } = await saved.json();
+  expect(completedAt).toEqual(expect.any(String));
+  expect(await (await app.saveSetup({ firstChat: { ...firstChat } })).json()).toMatchObject({
+    firstChat, completed: true, completedAt,
+  });
+  const next = action === "changes" ? { ...firstChat, turnId: randomUUID() } : null;
+  expect((await app.saveSetup({ firstChat: next })).status).toBe(200);
+  expect(await app.setup()).toMatchObject({ firstChat: next, completed: false, completedAt: null });
+});
+
 it("requires the saved exact answered turn to complete setup", async () => {
   run.mockImplementation(async (params: SdkRunParams) => {
     params.onHistoryEvent({ type: "assistant_text", text: "Ready", timestamp: Date.now() });

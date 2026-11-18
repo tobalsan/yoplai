@@ -1,5 +1,5 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js";
-import { request } from "./api";
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
+import { request, SetupError } from "./api";
 import { useOptionalSetup } from "./SetupGate";
 import type { ChatSession } from "../components/chat/createChatSession";
 
@@ -13,12 +13,12 @@ export function createFirstChat(input: {
   chat: ChatSession;
 }) {
   const setup = useOptionalSetup();
-  const pending = () => {
+  const pending = createMemo(() => {
     const state = setup?.state();
     const first = state?.firstChat;
     return !state?.completed && first && first.agentId === input.agentId() && first.sessionId === input.sessionId()
       ? first : undefined;
-  };
+  }, undefined, { equals: (a, b) => a?.agentId === b?.agentId && a?.sessionId === b?.sessionId && a?.turnId === b?.turnId });
   const [failed, setFailed] = createSignal(false);
   const [readError, setReadError] = createSignal(false);
   createEffect(() => {
@@ -39,7 +39,13 @@ export function createFirstChat(input: {
         if (!current()) return;
         setReadError(false);
         if (state === "answered") {
-          await setup.save({ completed: true, firstChat: first }, current);
+          try {
+            await setup.save({ completed: true, firstChat: first }, current);
+          } catch (error) {
+            if (!(error instanceof SetupError) || error.code !== "turn_conflict") throw error;
+            active = false;
+            await setup.refresh();
+          }
           return;
         }
         if (state === "failed" || (state === "none" && sendFailed)) {
