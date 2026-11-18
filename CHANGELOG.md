@@ -61,6 +61,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - A desktop key check uses the same model endpoint as chat.
+- The desktop model picker respects the model list for the signed-in account.
 
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
 - In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
