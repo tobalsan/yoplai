@@ -734,7 +734,7 @@ describe("ChatView abort handling", () => {
     const button = queryByRole(container, "button", { name: "Chat settings" })!;
     button.click();
     expect(queryByRole(container, "menu")).not.toBeNull();
-    expect(queryByRole(container, "menuitem", { name: "Default agent…" })).not.toBeNull();
+    expect(queryByRole(container, "menuitem", { name: "Set as default agent" })).not.toBeNull();
     expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/agent-1/edit");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(queryByRole(container, "menu")).toBeNull();
@@ -1520,17 +1520,17 @@ describe("ChatView abort handling", () => {
   it("opens the existing default-agent picker from the menu", async () => {
     const { container, dispose } = renderView();
     queryByRole(container, "button", { name: "Chat settings" })!.click();
-    queryByRole(container, "menuitem", { name: "Default agent…" })!.click();
+    queryByRole(container, "menuitem", { name: "Set as default agent" })!.click();
     await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
     dispose();
   });
 
-  it("marks the current default agent in the menu", async () => {
+  it("hides the current default agent action in the menu", async () => {
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: "agent-1", accessible: true, pickerDismissedAt: null });
     const { container, dispose } = renderView();
     await tick();
     queryByRole(container, "button", { name: "Chat settings" })!.click();
-    await waitFor(() => expect(queryByRole(container, "menuitem", { name: /Default agent/ })?.textContent).toContain("current"));
+    expect(queryByRole(container, "menuitem", { name: "Set as default agent" })).toBeNull();
     dispose();
   });
 

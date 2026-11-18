@@ -45,10 +45,12 @@ Core chat supports:
 
 Full tool/thinking/model view is restricted in multi-user mode. Canonical transcript lives in gateway history store; Pi runtime session files are not UI source of truth.
 
-The chat header's settings menu holds **Default agent…** (with a current marker),
-**Agent settings**, and, for saved multi-user chats, **Share link**. Agent settings
-keeps Back navigation to the current chat; project chats hide the default-agent
-picker. Sharing copies the link; the menu then offers **Copy link** and
+The chat header's settings menu holds **Agent settings**, **Set as default agent**,
+and, for saved multi-user chats, **Share link**, in that order, with icons and the
+sidebar context-menu styling in both themes. It opens without hiding the chat while
+sharing or preference requests load. Agent settings keeps Back navigation to the
+current chat; project chats and the known accessible default agent hide the
+default-agent picker. Sharing copies the link; the menu then offers **Copy link** and
 **Revoke link**. Revoking takes effect immediately, and sharing again creates a
 new link.
 
