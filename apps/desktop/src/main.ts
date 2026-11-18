@@ -34,7 +34,10 @@ function preparePackagedPlan(): Promise<void> {
         shellPath,
         parentEnv: process.env,
       });
-  })();
+  })().catch((error: unknown) => {
+    packagedReady = null;
+    throw error;
+  });
   return packagedReady;
 }
 

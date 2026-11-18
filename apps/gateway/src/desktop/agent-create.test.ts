@@ -229,6 +229,42 @@ it("avoids existing folders and IDs from custom rules and the pool", async () =>
   expect(await (await create(body("船"))).json()).toMatchObject({ id: "agent" });
 });
 
+it("uses a suffix when an existing folder or agent ID differs only in letter case", async () => {
+  await config({ agents: [agentsGlob, "team/*"], pool: "pool/*" });
+  await fs.mkdir(dir("ALPHA"), { recursive: true });
+  await fixture(path.join(home, "team", "Alpha-2"));
+  await fixture(path.join(home, "pool", "ALPHA-3"));
+  const res = await create(body("alpha"));
+  expect(res.status).toBe(201);
+  expect(await res.json()).toMatchObject({ id: "alpha-4" });
+  expect(await fs.readdir(dir(""))).toEqual(expect.arrayContaining(["ALPHA", "alpha-4"]));
+});
+
+it("uses a suffix when a literal discovery path reserves a name", async () => {
+  await config({ agents: [agentsGlob, "agents/Alpha"] });
+  const res = await create(body("alpha"));
+  expect(res.status).toBe(201);
+  expect(await res.json()).toMatchObject({ id: "alpha-2" });
+  expect(await list()).toEqual([expect.objectContaining({ id: "alpha-2" })]);
+});
+
+it("creates and retries when the agents folder is a symbolic link", async () => {
+  const target = path.join(home, "workspaces");
+  await fs.mkdir(target);
+  await fs.symlink(target, dir(""));
+  await config({ agents: "workspaces/*" });
+  const input = body("Linked");
+  const res = await create(input);
+  expect(res.status).toBe(201);
+  const created = await res.json();
+  expect(created).toMatchObject({ id: "linked" });
+  expect(await list()).toEqual([expect.objectContaining({ id: "linked" })]);
+  const retry = await create(input);
+  expect(retry.status).toBe(200);
+  expect(await retry.json()).toEqual(created);
+  expect(await fs.readdir(target)).toEqual(["linked"]);
+});
+
 it("serializes parallel creates with distinct names and reloads both into the list", async () => {
   const entered = deferred();
   const resume = deferred();

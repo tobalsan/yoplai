@@ -160,6 +160,21 @@ describe("home", () => {
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
+  it("migrates the target of a config link and keeps the link", () => {
+    const home = tempDir();
+    const targetDir = tempDir();
+    const target = path.join(targetDir, "config.json");
+    const link = path.join(home, "yoplai.json");
+    const config = { version: 3, agents: [], pool: "team/*" };
+    fs.writeFileSync(target, JSON.stringify(config));
+    fs.symlinkSync(path.relative(home, target), link);
+
+    expect(seedHome(home)).toBe(false);
+    expect(fs.readlinkSync(link)).toBe(path.relative(home, target));
+    expect(JSON.parse(fs.readFileSync(target, "utf8"))).toEqual({ ...config, agents: "$YOPLAI_HOME/agents/*" });
+    expect(fs.readdirSync(targetDir)).toEqual(["config.json"]);
+  });
+
   it("keeps a legacy config file", () => {
     const home = tempDir();
     fs.writeFileSync(path.join(home, "aihub.json"), '{"version":3}');

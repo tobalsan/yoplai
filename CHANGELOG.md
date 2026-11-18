@@ -66,6 +66,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
+- Desktop setup keeps config links during migration. Restart works after you correct a config error.
+
 - Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
 - Desktop setup lists only providers that need no input other than the API key.
 - A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
