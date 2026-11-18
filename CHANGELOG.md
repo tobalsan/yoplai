@@ -15,6 +15,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload.
+- Desktop setup shows missing items and links to model access. The app menu can start setup again.
+- The desktop window uses a hidden title bar with a strip for window movement.
 - Desktop setup guides the user through model access or a server link. It can create the first local agent.
 - The desktop gateway accepts the first chat turn once and reports its state after a restart.
 - The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.

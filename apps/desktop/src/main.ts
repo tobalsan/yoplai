@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, shell } from "electron";
+import { app, BrowserWindow, Menu, session, shell, type MenuItemConstructorOptions } from "electron";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
 import { LogBuffer } from "./log-buffer.js";
@@ -59,7 +59,10 @@ const SECURE_WEB_PREFERENCES = {
 } as const;
 
 function createWindow(): BrowserWindow {
-  const win = new BrowserWindow({ width: 1280, height: 860, webPreferences: SECURE_WEB_PREFERENCES });
+  const win = new BrowserWindow({
+    width: 1280, height: 860, titleBarStyle: "hiddenInset", backgroundColor: "#000000",
+    webPreferences: SECURE_WEB_PREFERENCES,
+  });
   // Child windows (OAuth) must reach identity providers, so only the main window is pinned.
   win.webContents.on("will-navigate", (event, url) => {
     const decision = decideNavigation({ url, uiOrigin: stackController.current()?.uiOrigin ?? "" });
@@ -83,6 +86,25 @@ app.on("web-contents-created", (_event, contents) => {
     return { action: "deny" };
   });
 });
+
+function installMenu(): void {
+  const restartSetup: MenuItemConstructorOptions = {
+    label: "Run setup again…",
+    click: () => {
+      const stack = stackController.current();
+      if (stack && !quitting) void mainWindow?.loadURL(new URL("/setup?restart=1", stack.uiUrl).href).catch(() => undefined);
+    },
+  };
+  const template: MenuItemConstructorOptions[] = [
+    { label: app.name, submenu: [
+      { role: "about" }, { type: "separator" }, restartSetup, { type: "separator" },
+      { role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" },
+      { role: "unhide" }, { type: "separator" }, { role: "quit" },
+    ] },
+    { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function installPermissionHandlers(): void {
   const ses = session.defaultSession;
@@ -134,5 +156,6 @@ void app.whenReady().then(async () => {
   console.log("[desktop] ready");
   installPermissionHandlers();
   mainWindow = createWindow();
+  installMenu();
   await startAndLoad();
 });
