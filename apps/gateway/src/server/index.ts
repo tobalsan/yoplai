@@ -1,3 +1,4 @@
+import { createModelAccessRoutes } from "../desktop/model-access.js";
 import { desktopSetupGuard } from "../desktop/guard.js";
 import { createDesktopSetupRoutes } from "../desktop/setup.js";
 import { serve } from "@hono/node-server";
@@ -81,7 +82,7 @@ const globalCors = cors({
 // The dashboard viewer and the browser link routes answer CORS themselves: a narrower grant than the global list.
 app.use("*", (c, next) => {
   const pathname = new URL(c.req.url).pathname;
-  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) || pathname === "/api/desktop-setup" ? next() : globalCors(c, next);
+  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) || pathname === "/api/desktop-setup" || pathname === "/api/model-access" || pathname.startsWith("/api/model-access/") ? next() : globalCors(c, next);
 });
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
@@ -128,6 +129,8 @@ const setupGuard = desktopSetupGuard(
 );
 app.use("/api/desktop-setup", setupGuard);
 app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
+app.use("/api/model-access/*", setupGuard);
+app.route("/api/model-access", createModelAccessRoutes(CONFIG_DIR));
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.

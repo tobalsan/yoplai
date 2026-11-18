@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- The desktop gateway checks API keys and opens the system browser for model sign-in.
 - The local desktop gateway reports setup access and saves setup state.
 - `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
 
