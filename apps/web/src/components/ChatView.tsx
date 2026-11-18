@@ -60,6 +60,7 @@ import { impersonationStatus } from "./ImpersonationBanner";
 import { SuggestionCards } from "./SuggestionCards";
 import { showToast } from "../lib/toast";
 import { ChatSettingsMenu } from "./ChatSettingsMenu";
+import { Button } from "./ui/Button";
 import { fetchPoolActions } from "../api/teams";
 import {
   notificationSoundEnabled,
@@ -949,7 +950,7 @@ export function ChatView() {
       <Show when={firstChat.failed() || missingModel()}>
         <div class="desktop-chat-repair">
           <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
-          <button type="button" class="pill-btn" onClick={() => navigate(repairModel())}>Fix model access</button>
+          <Button onClick={() => navigate(repairModel())}>Fix model access</Button>
         </div>
       </Show>
       <Show when={firstChat.readError()}><p role="status">Yoplai could not check the first turn. Yoplai will try again.</p></Show>

@@ -17,7 +17,7 @@
 .setup-brand { padding: clamp(16px, 2.55vh, 26px) clamp(20px, 2.5vw, 40px) 0; }
 .setup-window .setup-brand {
   padding-left: clamp(90px, 7.2vw, 115px);
-  -webkit-app-region: drag;
+  -webkit-app-region: var(--desktop-header-region, drag);
 }
 .setup-brand svg { display: block; width: clamp(60px, 5.4vw, 86px); }
 .setup-stage { width: 100%; padding: 0 24px; margin: 0 auto; text-align: center; flex: 1 0 auto; }
