@@ -74,6 +74,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The desktop UI stays black until the first screen appears. A reload does not repeat the fade.
 - Desktop setup keeps agent creation and server consent available after a reload. Back and Skip cancel pending server links. After a timeout, retry sends a new cancellation request. If cancellation fails, the wizard shows the consent link when it has the address. A temporary status error lets the user resume or cancel the link. The wizard discards old key confirmations and offers Retry if setup cannot load.
 
 - The desktop dev proxy accepts first chat turns. The gateway reports duplicates with `turn_exists` and refuses known slash commands with a turn ID. File paths still work.

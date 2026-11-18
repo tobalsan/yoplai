@@ -12,6 +12,11 @@
     <link rel="manifest" href="/api/manifest.webmanifest" />
     <title>Yoplai</title>
     <script>
+      if (/\bElectron\//.test(navigator.userAgent)) {
+        var firstDesktopScreen = true;
+        try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
+        if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
+      }
       var t = localStorage.getItem('yoplai-theme') || localStorage.getItem('aihub-theme');
       if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', t);
@@ -102,6 +107,9 @@
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         background: var(--bg-base);
         color: var(--text-primary);
+      }
+      html[data-desktop-first-screen], html[data-desktop-first-screen] body {
+        background: #000;
       }
       #root {
         height: 100%;
