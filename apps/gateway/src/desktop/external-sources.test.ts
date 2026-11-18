@@ -156,3 +156,47 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   expect(refresh).not.toHaveBeenCalled();
   expect(socketAttempt).not.toHaveBeenCalled();
 });
+
+it.each(["pi", "opencode"] as const)("requires the Claude warning for Anthropic OAuth in %s", async (source) => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const token = "sk-ant-oat-fake-pi";
+  await fixture(source, { anthropic: { type: "oauth", access: token, expires: Date.now() + 60_000 } });
+  const external = createExternalSources(home);
+  const routes = createModelAccessRoutes(home, { external });
+  const { runtime, requireModelAuth } = await createModelAuth({ readExternal: external.resolve });
+  const model = runtime.getModels("anthropic")[0];
+  const enable = (warningAccepted?: boolean) => routes.request(`/external/${source}`, {
+    method: "POST", body: JSON.stringify({ enabled: true, warningAccepted }),
+  });
+  const refused = await enable();
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ error: "warning_required" });
+  expect(await external.status()).toEqual(expect.arrayContaining([expect.objectContaining({ source, enabled: false })]));
+  await expect(requireModelAuth(model)).rejects.toThrow();
+  const accepted = await enable(true);
+  expect(accepted.status).toBe(200);
+  const body = await accepted.text();
+  expect(JSON.parse(body)).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: source === "pi" }] });
+  expect(body.includes(token)).toBe(false);
+  if (source === "pi") expect((await runtime.getAuth(model))?.auth.apiKey === token).toBe(true);
+});
+
+it("enables Pi API keys without the Claude warning but does not use a later Anthropic OAuth entry", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const keys = { anthropic: { type: "api_key", key: "fake-api-key" } };
+  await fixture("pi", keys);
+  const external = createExternalSources(home);
+  const routes = createModelAccessRoutes(home, { external });
+  const accepted = await routes.request("/external/pi", { method: "POST", body: '{"enabled":true}' });
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "api_key", available: true }] });
+  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  const model = runtime.getModels("anthropic")[0];
+  expect((await runtime.getAuth(model))?.auth.apiKey === keys.anthropic.key).toBe(true);
+  await fixture("pi", { anthropic: { type: "oauth", access: "sk-ant-oat-fake-pi", expires: Date.now() + 60_000 } });
+  expect(await runtime.getAuth(model)).toBeUndefined();
+});

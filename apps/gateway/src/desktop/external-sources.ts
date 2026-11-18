@@ -52,7 +52,12 @@ const systemKeychain: Keychain = {
 };
 
 type Entry = { provider: string; type: ExternalCredential["type"]; key?: string; expires?: number; supported: boolean };
-type Consent = Partial<Record<ExternalSource, "enabled" | "denied">>;
+type ConsentState = "enabled" | "warning-accepted" | "denied";
+type Consent = Partial<Record<ExternalSource, ConsentState>>;
+
+function isAnthropicOAuth(entry: Entry): boolean {
+  return entry.provider === "anthropic" && entry.type === "oauth";
+}
 
 function oauthEntry(provider: string, value: unknown, expires: unknown, account?: unknown): Entry {
   const entry: Entry = { provider, type: "oauth", supported: knownOAuthProvider(provider) };
@@ -115,14 +120,14 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       const data = object(JSON.parse(await fs.readFile(file, "utf8")));
       return Object.fromEntries(EXTERNAL_SOURCES.flatMap((source) => {
         const state = data?.[source];
-        return state === "enabled" || state === "denied" ? [[source, state]] : [];
+        return state === "enabled" || state === "warning-accepted" || state === "denied" ? [[source, state]] : [];
       }));
     } catch {
       return {};
     }
   }
 
-  function update(source: ExternalSource, state?: "enabled" | "denied") {
+  function update(source: ExternalSource, state?: ConsentState) {
     const write = pending.then(async () => {
       const data = await consent();
       if (state) data[source] = state;
@@ -133,8 +138,22 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     return write;
   }
 
+  async function requiresWarning(source: ExternalSource): Promise<boolean> {
+    if (source === "claude-code") return true;
+    if (source === "codex") return false;
+    try {
+      const data = object(JSON.parse((await fs.readFile(externalPath(source), "utf8")).replace(/^\uFEFF/, "")));
+      return object(data?.anthropic)?.type === "oauth";
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
+
   async function read(source: ExternalSource, enabled: Consent): Promise<Entry[]> {
-    if (enabled[source] !== "enabled" || (source === "claude-code" && keychainDenied)) return [];
+    const state = enabled[source];
+    if (state !== "enabled" && state !== "warning-accepted") return [];
+    if (source === "claude-code" && (state !== "warning-accepted" || keychainDenied)) return [];
     let raw: string;
     if (source === "claude-code") {
       keychainRead ??= keychain.read().finally(() => { keychainRead = undefined; });
@@ -154,7 +173,10 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
         return [];
       }
     }
-    try { return parseSource(source, raw); } catch { return []; }
+    try {
+      const rows = parseSource(source, raw);
+      return state === "warning-accepted" ? rows : rows.filter((entry) => !isAnthropicOAuth(entry));
+    } catch { return []; }
   }
 
   async function statusOf(source: ExternalSource, enabled: Consent) {
@@ -164,7 +186,7 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
     return {
-      source, detected, enabled: enabled[source] === "enabled" && !denied, denied,
+      source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
       ...(denied ? { message: "Access denied" } : {}),
       providers: providers.map(({ provider, type, supported, key, expires }) => ({
         provider, type, available: Boolean(key) && (expires === undefined || expires > Date.now()),
@@ -178,9 +200,10 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       const enabled = await consent();
       return Promise.all(EXTERNAL_SOURCES.map((source) => statusOf(source, enabled)));
     },
-    async enable(source: ExternalSource, enabled: boolean) {
+    async enable(source: ExternalSource, enabled: boolean, warningAccepted = false) {
+      if (enabled && !warningAccepted && await requiresWarning(source)) return { warningRequired: true } as const;
       if (source === "claude-code") keychainDenied = false;
-      await update(source, enabled ? "enabled" : undefined);
+      await update(source, enabled ? (warningAccepted ? "warning-accepted" : "enabled") : undefined);
       return enabled ? statusOf(source, await consent()) : { source, enabled: false };
     },
     async resolve(provider: string, model: AnyModel | undefined, mode?: ExternalCredential["type"]): Promise<ExternalCredential | undefined> {
