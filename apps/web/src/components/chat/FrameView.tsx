@@ -132,8 +132,11 @@ export function CapturedFrameView(props: {
   const [primed, setPrimed] = createSignal(!props.startCallId || props.startCallId === props.callId());
   const callId = createMemo(() => (primed() ? props.callId() : props.startCallId!));
   const [failed, setFailed] = createSignal(false);
+  // An extension page of a linked gateway has no route through the local gateway. A local /x URL would open the wrong page.
+  const remoteExtension = createMemo(() => props.kind === "extension" && !!props.gateway);
   let identity = "";
   createEffect(() => {
+    if (remoteExtension()) return;
     const controller = new AbortController();
     const nextIdentity = `${props.agentId}\n${props.sessionId}`;
     if (identity !== nextIdentity) setTarget(undefined);
@@ -189,7 +192,7 @@ export function CapturedFrameView(props: {
       when={frame()}
       fallback={
         <p role="status">
-          {failed() ? `${props.kind === "dashboard" ? "Dashboard" : "View"} unavailable` : `Loading ${props.kind === "dashboard" ? "dashboard" : "view"}…`}
+          {remoteExtension() ? "This view is not available for an agent of a linked gateway." : failed() ? `${props.kind === "dashboard" ? "Dashboard" : "View"} unavailable` : `Loading ${props.kind === "dashboard" ? "dashboard" : "view"}…`}
         </p>
       }
     >

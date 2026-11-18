@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getByRole, getByTitle, queryAllByRole, queryByRole } from "@testing-library/dom";
+import { getByRole, getByTitle, queryAllByRole, queryByRole, queryByTitle } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { FrameView } from "./FrameView";
@@ -125,3 +125,21 @@ describe("dashboard annotation toggle", () => {
   });
 });
 
+
+describe("captured extension frame of a linked gateway", () => {
+  it("shows a status and opens no local extension page", async () => {
+    const mcpApps = await import("../../api/mcp-apps");
+    const load = vi.spyOn(mcpApps, "loadMcpAppData").mockResolvedValue({
+      result: { structuredContent: { url: "/x/example/view", extensionId: "example", title: "Example" } },
+    } as never);
+    const { CapturedFrameView } = await import("./FrameView");
+    dispose = render(() => (
+      <CapturedFrameView kind="extension" agentId="pom@ams" gateway="ams" sessionId="s1" callId={() => "c1"} mode="inline" />
+    ), container);
+    expect(getByRole(container, "status").textContent).toBe("This view is not available for an agent of a linked gateway.");
+    expect(queryByRole(container, "link", { name: "Open in browser" })).toBeNull();
+    expect(queryByTitle(container, "Example view")).toBeNull();
+    expect(load).not.toHaveBeenCalled();
+    load.mockRestore();
+  });
+});

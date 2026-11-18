@@ -45,6 +45,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.
 - A large text attachment (JSON, CSV, text, docx, spreadsheet) no longer breaks the chat. Above 250,000 extracted characters it is not pasted into the message; the agent is told its size and reads the file from its path.
