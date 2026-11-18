@@ -6,7 +6,7 @@ import type { ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent"
 import { CONFIG_DIR } from "../config/index.js";
 import { desktopEnabled } from "./guard.js";
 import { isRelayEnabled } from "../relay/state.js";
-import { getExternalSources } from "./external-sources.js";
+import { CLAUDE_LOGIN_UNAVAILABLE, CLAUDE_WARNING_REQUIRED, getExternalSources } from "./external-sources.js";
 import { modelReadiness } from "./model-picker.js";
 import { CODEX_EXPIRED, isLiteralKey } from "./literal-key.js";
 export { isLiteralKey } from "./literal-key.js";
@@ -16,8 +16,13 @@ export type ExternalCredential = { type: AuthMode; key: string; source: string }
 type ReadExternal = (provider: string, model: AnyModel | undefined, mode?: AuthMode) => Promise<ExternalCredential | undefined>;
 const EXTERNAL_FAILURE = "The external login failed. Check the login in its app.";
 
+export function isSafeModelAccessError(message: string | undefined): message is string {
+  return message === CODEX_EXPIRED || message === CLAUDE_WARNING_REQUIRED || message === CLAUDE_LOGIN_UNAVAILABLE;
+}
+
 function safeExternalError(provider: string, message?: string): string {
-  if (message === CODEX_EXPIRED || (provider === "openai-codex" && /\b401\b/.test(message ?? ""))) return CODEX_EXPIRED;
+  if (isSafeModelAccessError(message)) return message;
+  if (provider === "openai-codex" && /\b401\b/.test(message ?? "")) return CODEX_EXPIRED;
   return EXTERNAL_FAILURE;
 }
 
@@ -168,7 +173,7 @@ export async function createModelAuth(options: {
 
 export async function completeModelOnce(runtime: Awaited<ReturnType<typeof createModelAuth>>["runtime"], model: Model<Api>, text: string, signal = AbortSignal.timeout(20_000), maxTokens = 256) {
   const result = await runtime.completeSimple(model, { messages: [{ role: "user", content: text, timestamp: Date.now() }] }, { maxTokens, signal, ...(model.provider === "openai-codex" && { transport: "sse" }) });
-  if (result.stopReason === "aborted" || result.stopReason === "error") throw new Error(result.errorMessage === CODEX_EXPIRED ? CODEX_EXPIRED : "The model call failed.");
+  if (result.stopReason === "aborted" || result.stopReason === "error") throw new Error(isSafeModelAccessError(result.errorMessage) ? result.errorMessage : "The model call failed.");
   return result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
 }
 

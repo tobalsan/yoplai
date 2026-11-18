@@ -1,9 +1,8 @@
-import { CODEX_EXPIRED } from "./literal-key.js";
 import { defaultModel, modelReadiness, pickerModel } from "./model-picker.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getExternalSources, isExternalSource, isTrustedExternalOAuthModel } from "./external-sources.js";
-import { checkLiteralModelKey, completeModelOnce, createModelAuth, CUSTOM_KEY_CHECK_HEADERS, isLiteralKey } from "./model-auth.js";
+import { checkLiteralModelKey, completeModelOnce, createModelAuth, CUSTOM_KEY_CHECK_HEADERS, isLiteralKey, isSafeModelAccessError } from "./model-auth.js";
 import { createOAuthAttempts, isOAuthProvider, OAUTH_HOSTS, type openDesktopBrowser } from "./oauth-attempts.js";
 
 export const CLAUDE_WARNING = "Anthropic terms do not allow a Claude subscription in third-party apps. Anthropic can limit or close your account. Use an API key to stay inside the terms.";
@@ -158,7 +157,7 @@ export function createModelAccessRoutes(home: string, deps: {
       const text = await completeModelOnce(runtime, model, "Reply with OK.", undefined, 16);
       if (text.trim()) return c.json({ provider, model: id, ready: true });
     } catch (error) {
-      if (error instanceof Error && error.message === CODEX_EXPIRED) return c.json({ provider, model: id, ready: false, message: CODEX_EXPIRED }, 422);
+      if (error instanceof Error && isSafeModelAccessError(error.message)) return c.json({ provider, model: id, ready: false, message: error.message }, 422);
     }
     return c.json({ provider, model: id, ready: false, message: "The model check failed." }, 422);
   });
