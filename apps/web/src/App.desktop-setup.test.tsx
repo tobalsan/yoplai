@@ -284,6 +284,7 @@ it.each(["pending start", "linked start", "linked status"])("ignores a late %s r
       return pending;
     }
     if (path.endsWith("/status/test")) { requested(); return pending; }
+    if (path.endsWith("/cancel")) return response({ status: "cancelled" });
   };
   await startServerLink();
   await waitFor(() => expect(requested).toHaveBeenCalled(), { timeout: 2500 });
@@ -312,7 +313,7 @@ it("resumes the link in the same tab without opening consent twice", async () =>
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
 });
 
-it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel before reply"])("discards a key confirmation after %s", async (action) => {
+it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel before reply", "Search", "Search before reply"])("discards a key confirmation after %s", async (action) => {
   const old = holdReply();
   const calls: unknown[] = [];
   const replacement = () => response({ error: "replacement_required" }, 409);
@@ -330,7 +331,11 @@ it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel bef
   await click("Save key", form);
   if (!action.endsWith("before reply")) await findByRole(root, "alertdialog");
   if (action.startsWith("Cancel")) await click("Cancel", form);
-  else if (action === "Edit provider") fireEvent.change(provider, { target: { value: "" } });
+  else if (action.startsWith("Search")) {
+    fireEvent.input(within(form).getByRole("textbox", { name: "Search providers" }), { target: { value: "mistral" } });
+    expect((provider as HTMLSelectElement).value).toBe("");
+    expect((await button("Save key", form) as HTMLButtonElement).disabled).toBe(true);
+  } else if (action === "Edit provider") fireEvent.change(provider, { target: { value: "" } });
   else fireEvent.input(key, { target: { value: "fake-new-key" } });
   old.reply(replacement());
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -348,4 +353,104 @@ it.each(["/setup", "/agents"])("blocks %s until setup read succeeds", async (pat
   await click("Retry");
   await heading("All your agents. One app.");
   expect(setupReads).toBe(2);
+});
+
+it.each(["Back", "Skip"])("waits for a late start and cancels it before %s", async (action) => {
+  const start = holdReply();
+  const cancel = holdReply();
+  const cancelRequests = vi.fn();
+  overrides = (path, _method, body) => {
+    if (path.endsWith("/start")) return start.pending;
+    if (path.endsWith("/cancel")) { cancelRequests(body.attemptId); return cancel.pending; }
+  };
+  await startServerLink();
+  await click(action);
+  expect((await findByRole(root, "status", { name: "" })).textContent).toContain("Wait for the gateway");
+  start.reply(pendingLink());
+  await waitFor(() => expect(cancelRequests).toHaveBeenCalledWith("test"));
+  expect(window.open).not.toHaveBeenCalled();
+  expect((await button("Link gateway") as HTMLButtonElement).disabled).toBe(true);
+  expect(location.pathname).toBe("/setup");
+  cancel.reply(response({ status: "cancelled" }));
+  if (action === "Back") await heading("Where do your agents run?");
+  else await waitFor(() => expect(location.pathname).toBe("/agents"));
+});
+
+it("keeps a pending link if Back cannot cancel it and lets the same gateway link after retry", async () => {
+  let pending = false;
+  let starts = 0;
+  let cancels = 0;
+  overrides = (path, _method, body) => {
+    if (path.endsWith("/start")) {
+      expect(body.remote).toBe("https://remote.example.test");
+      starts += 1;
+      if (pending) return response({ error: "name_in_use" }, 409);
+      if (starts === 2) return linked();
+      pending = true;
+      return pendingLink();
+    }
+    if (path.endsWith("/cancel")) {
+      cancels += 1;
+      if (cancels === 1) return response({ message: "Try to cancel again." }, 503);
+      expect(body.attemptId).toBe("test");
+      pending = false;
+      return response({ status: "cancelled" });
+    }
+  };
+  await startServerLink();
+  await findByRole(root, "link", { name: "Open the sign-in page" });
+  await click("Back");
+  expect((await findByRole(root, "alert")).textContent).toBe("Try to cancel again.");
+  await click("Back");
+  await heading("Where do your agents run?");
+  await click("Continue");
+  fireEvent.input(await findByRole(root, "textbox", { name: "Remote gateway address" }), { target: { value: "https://remote.example.test" } });
+  await click("Link gateway");
+  await waitFor(() => expect(location.pathname).toBe("/agents"));
+  expect(starts).toBe(2);
+  expect(cancels).toBe(2);
+});
+
+it.each(["Resume status checks", "Cancel"])("lets the user choose %s after a temporary status error", async (action) => {
+  let reads = 0;
+  const cancelled = vi.fn();
+  overrides = (path) => {
+    if (path.endsWith("/start")) return pendingLink();
+    if (path.endsWith("/status/test")) return ++reads === 1 ? response({ message: "Try to read the status again." }, 503) : linked();
+    if (path.endsWith("/cancel")) { cancelled(); return response({ status: "cancelled" }); }
+  };
+  await startServerLink();
+  expect((await findByRole(root, "alert", {}, { timeout: 2500 })).textContent).toBe("Try to read the status again.");
+  await click(action);
+  if (action === "Cancel") {
+    await waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1));
+    expect(setupWrites).toHaveLength(0);
+  } else await waitFor(() => expect(location.pathname).toBe("/agents"), { timeout: 2500 });
+  expect(window.open).toHaveBeenCalledTimes(1);
+});
+
+it("opens the original chat after create succeeds but the setup exit save fails", async () => {
+  const drafts: Record<string, unknown>[] = [];
+  let exits = 0;
+  overrides = (path, method, draft) => {
+    if (path === "/api/desktop-setup" && method === "PUT" && ++exits === 1) return response({ message: "Could not save setup." }, 500);
+    if (path === "/api/agents" && method === "POST") {
+      drafts.push(draft);
+      return response({ id: draft.requestId === drafts[0].requestId ? "alpha" : "another-agent" });
+    }
+    if (path.endsWith("/model-access/models") && drafts.length) return response({ models: [] });
+  };
+  boot("/setup");
+  await modelScreen();
+  await click("Continue");
+  await click("Create agent");
+  await button("Retry");
+  expect(location.pathname).toBe("/setup");
+  expect(exits).toBe(1);
+  dispose?.();
+  boot("/setup");
+  await click("Retry");
+  await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
+  expect(drafts).toEqual([drafts[0], drafts[0]]);
+  expect(exits).toBe(2);
 });
