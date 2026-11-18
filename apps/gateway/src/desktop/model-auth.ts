@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
+import fs from "node:fs/promises";
 import type { AnyModel, Api, AssistantMessage, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR } from "../config/index.js";
@@ -58,16 +59,7 @@ export async function createModelAuth(options: {
     if (options.submitted) {
       const { key } = options.submitted;
       if (options.submitted.provider !== provider || !isLiteralKey(key) || !runtime.getProvider(provider)?.auth.apiKey) return undefined;
-      const result = await native({ ...overrides, apiKey: key });
-      if (!result || result.auth.apiKey !== key) return undefined;
-      for (const headers of [model?.headers, result.auth.headers]) {
-        for (const [name, value] of Object.entries(headers ?? {})) {
-          const lower = name.toLowerCase();
-          if (lower === "authorization" && value !== `Bearer ${key}`) return undefined;
-          if (/^(?:x[-_])?api[-_]?key$|^(?:proxy-authorization|cf-aig-authorization|x-auth-token)$/.test(lower) && value !== key) return undefined;
-        }
-      }
-      return result;
+      return native({ ...overrides, apiKey: key });
     }
     const credential = readStoredCredential(provider, authPath);
     const explicit = overrides?.apiKey;
@@ -180,13 +172,44 @@ export async function completeModelOnce(runtime: Awaited<ReturnType<typeof creat
   return result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
 }
 
-export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR) {
-  if (!isLiteralKey(key)) return false;
-  const { runtime } = await createModelAuth({ home, submitted: { provider, key } });
-  if (runtime.getError()) return false;
-  const model = runtime.getModel(provider, modelId);
-  if (!model || !runtime.getProvider(provider)?.auth.apiKey) return false;
+type ModelHeaderConfig = {
+  providers?: Record<string, {
+    headers?: Record<string, unknown>;
+    models?: Array<{ id: string; headers?: Record<string, unknown> }>;
+    modelOverrides?: Record<string, { headers?: Record<string, unknown> }>;
+  }>;
+};
+
+async function readModelConfig(home: string): Promise<string | undefined> {
   try {
+    return await fs.readFile(path.join(home, "models.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function hasCustomHeaders(raw: string, provider: string, model: string): boolean {
+  // Pi accepts line comments and trailing commas in models.json.
+  const json = raw.replace(/^\uFEFF/, "")
+    .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (match) => match.startsWith('"') ? match : "")
+    .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (match, tail) => tail ?? match);
+  const config = (JSON.parse(json) as ModelHeaderConfig).providers?.[provider];
+  const headers = [config?.headers, config?.modelOverrides?.[model]?.headers, config?.models?.find((entry) => entry.id === model)?.headers];
+  return headers.some((value) => value && Object.keys(value).length > 0);
+}
+
+export const CUSTOM_KEY_CHECK_HEADERS = "Yoplai cannot check this key because the model config adds custom headers.";
+
+export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR): Promise<boolean | "custom_headers"> {
+  if (!isLiteralKey(key)) return false;
+  try {
+    const config = await readModelConfig(home);
+    const { runtime } = await createModelAuth({ home, submitted: { provider, key } });
+    if (runtime.getError() || config !== await readModelConfig(home)) return false;
+    if (config !== undefined && hasCustomHeaders(config, provider, modelId)) return "custom_headers";
+    const model = runtime.getModel(provider, modelId);
+    if (!model || !runtime.getProvider(provider)?.auth.apiKey) return false;
     return Boolean((await completeModelOnce(runtime, model, "Reply with OK.", undefined, 16)).trim());
   } catch {
     return false;

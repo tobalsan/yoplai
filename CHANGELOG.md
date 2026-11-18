@@ -60,7 +60,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or supplies a conflicting authentication header.
+- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
 - The desktop guard rejects IPv4 forwarding addresses in brackets.
 - The desktop model picker respects the model list for the signed-in account.
 

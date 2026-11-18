@@ -3,7 +3,7 @@ import { defaultModel, modelReadiness, pickerModel } from "./model-picker.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getExternalSources, isExternalSource, isTrustedExternalOAuthModel } from "./external-sources.js";
-import { checkLiteralModelKey, completeModelOnce, createModelAuth, isLiteralKey } from "./model-auth.js";
+import { checkLiteralModelKey, completeModelOnce, createModelAuth, CUSTOM_KEY_CHECK_HEADERS, isLiteralKey } from "./model-auth.js";
 import { createOAuthAttempts, isOAuthProvider, OAUTH_HOSTS, type openDesktopBrowser } from "./oauth-attempts.js";
 
 export const CLAUDE_WARNING = "Anthropic terms do not allow a Claude subscription in third-party apps. Anthropic can limit or close your account. Use an API key to stay inside the terms.";
@@ -84,7 +84,8 @@ export function createModelAccessRoutes(home: string, deps: {
       const model = defaultModel(runtime.getModels(provider));
       if (!model || !runtime.getProvider(provider)?.auth.apiKey?.login) return c.json({ error: "unknown_provider" }, 404);
       if (!checkOnly && !replace && (await runtime.listCredentials()).some((entry) => entry.providerId === provider)) return c.json({ error: "replacement_required", provider }, 409);
-      if (!await checkKey(provider, key, model.id, home)) return c.json({ error: "key_check_failed", message: "The API key check failed." }, 422);
+      const checked = await checkKey(provider, key, model.id, home);
+      if (checked !== true) return c.json({ error: "key_check_failed", message: checked === "custom_headers" ? CUSTOM_KEY_CHECK_HEADERS : "The API key check failed." }, 422);
       if (!checkOnly) await runtime.login(provider, "api_key", {
         prompt: async (prompt) => {
           if (prompt.type !== "secret") throw new Error("The model access request failed.");

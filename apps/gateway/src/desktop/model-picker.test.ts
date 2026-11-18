@@ -188,18 +188,54 @@ it("does not send a submitted key when the model config is invalid", async () =>
   expect(call).not.toHaveBeenCalled();
 });
 
-it.each(["provider", "model"] as const)("does not check a key with a conflicting %s header", async (level) => {
-  const headers = { aUtHoRiZaTiOn: "Bearer fake-valid-header" };
-  const openai = level === "provider" ? { headers } : { modelOverrides: { "gpt-4.1-mini": { headers } } };
-  await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { openai } }));
-  const call = vi.fn(async (_input: unknown, init?: RequestInit) => new Headers(init?.headers).get("authorization") === "Bearer fake-valid-header"
-    ? successfulCall() : new Response(null, { status: 401 }));
+it.each([
+  { level: "provider", config: { headers: { "x-goog-api-key": "fake-configured-key" } } },
+  { level: "model", config: { modelOverrides: { "gemini-2.5-flash": { headers: { "x-test-label": "test" } } } } },
+])("refuses a custom header on the $level without a request or save", async ({ config }) => {
+  await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { google: config } }));
+  const call = vi.fn(async () => successfulCall());
   vi.stubGlobal("fetch", call);
   const { createModelAccessRoutes } = await import("./model-access.js");
-  const response = await createModelAccessRoutes(home).request("/api-key", {
-    method: "POST", body: JSON.stringify({ provider: "openai", key: "fake-bad-key", checkOnly: true }),
+  const routes = createModelAccessRoutes(home);
+  const response = await routes.request("/api-key", {
+    method: "POST", body: JSON.stringify({ provider: "google", key: "fake-bad-key" }),
   });
   expect(response.status).toBe(422);
-  expect(await response.json()).toEqual({ error: "key_check_failed", message: "The API key check failed." });
+  expect(await response.json()).toEqual({ error: "key_check_failed", message: "Yoplai cannot check this key because the model config adds custom headers." });
   expect(call).not.toHaveBeenCalled();
+  expect(await (await routes.request("/")).json()).toMatchObject({ owned: [] });
+});
+
+it.each([
+  { provider: "google", host: "generativelanguage.googleapis.com", header: "x-goog-api-key", value: "fake-submitted-key" },
+  { provider: "cloudflare-ai-gateway", host: "gateway.ai.cloudflare.com", header: "cf-aig-authorization", value: "Bearer fake-submitted-key" },
+  { provider: "openai", host: "api.openai.com", header: "authorization", value: "Bearer fake-submitted-key" },
+])("checks the submitted key through native $provider auth", async ({ provider, host, header, value }) => {
+  if (provider === "cloudflare-ai-gateway") {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "fixture-account");
+    vi.stubEnv("CLOUDFLARE_GATEWAY_ID", "fixture-gateway");
+  }
+  const calls: Array<{ host: string; keyMatches: boolean }> = [];
+  vi.stubGlobal("fetch", async (input: string | Request | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const keyMatches = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get(header) === value;
+    calls.push({ host: url.hostname, keyMatches });
+    if (!keyMatches || url.hostname !== host) return new Response(null, { status: 401 });
+    if (provider === "google") return providerStream([{ candidates: [{ content: { role: "model", parts: [{ text: "OK" }] }, finishReason: "STOP" }] }]);
+    if (url.pathname.endsWith("/messages")) return providerStream([
+      { type: "message_start", message: { id: "fake", type: "message", role: "assistant", content: [], stop_reason: null, model: "fixture", usage: { input_tokens: 1, output_tokens: 0 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+      { type: "message_stop" },
+    ]);
+    return successfulCall();
+  });
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const response = await createModelAccessRoutes(home).request("/api-key", {
+    method: "POST", body: JSON.stringify({ provider, key: "fake-submitted-key", checkOnly: true }),
+  });
+  expect(calls).toEqual([{ host, keyMatches: true }]);
+  expect(await response.json()).toMatchObject({ provider, ready: true, saved: false });
 });
