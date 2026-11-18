@@ -156,11 +156,14 @@ function Layout(props: { children?: JSX.Element }) {
           --desktop-buttons-width: 88px;
           --desktop-buttons-height: 40px;
         }
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open])) .desktop-window {
+          --desktop-header-region: no-drag;
+        }
         .desktop-window:not(.desktop-wizard, :has(.left-nav-shell))::before {
           content: "";
           flex: 0 0 8px;
           margin-inline-start: var(--desktop-buttons-width);
-          -webkit-app-region: drag;
+          -webkit-app-region: var(--desktop-header-region, drag);
         }
         .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
           -webkit-app-region: no-drag;

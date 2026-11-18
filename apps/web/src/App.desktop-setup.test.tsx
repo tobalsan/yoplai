@@ -712,13 +712,18 @@ it("keeps the desktop setup links on a page without a sidebar", async () => {
   try {
     wizardExited = true;
     overrides = (path) => path === "/api/model-access/models" ? response({ models: [] }) : undefined;
-    boot("/remote-gateways");
-    await heading("Linked gateways");
+    boot("/gateway-link");
+    await heading("Link a device");
+    expect(queryByRole(root, "navigation", { name: "Primary" })).toBeNull();
     const items = await findByRole(root, "complementary", { name: "Missing setup items" });
-    const link = await within(items).findByRole("link", { name: "Model access" });
-    expect(new URL(link.getAttribute("href")!, location.origin).searchParams.get("return")).toBe("/remote-gateways");
+    for (const [name, step] of [["Model access", "model"], ["First agent", "agent"]]) {
+      const link = await within(items).findByRole("link", { name }) as HTMLAnchorElement;
+      const params = new URL(link.href).searchParams;
+      expect(params.get("step")).toBe(step);
+      expect(params.get("return")).toBe("/gateway-link");
+    }
     await click("Close missing setup items", items);
-    await heading("Linked gateways");
+    await heading("Link a device");
     expect(queryByRole(root, "complementary", { name: "Missing setup items" })).toBeNull();
   } finally {
     userAgent.mockRestore();

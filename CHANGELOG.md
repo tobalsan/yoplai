@@ -79,6 +79,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The desktop chat repair button shows its label on one line. Dialogs stop header dragging. Full-height pages fit below the drag inset.
+
 - The desktop UI stays black until the first screen appears. A reload does not repeat the fade.
 - Desktop setup keeps agent creation and server consent available after a reload. Back and Skip cancel pending server links. After a timeout, retry sends a new cancellation request. If cancellation fails, the wizard shows the consent link when it has the address. A temporary status error lets the user resume or cancel the link. The wizard discards old key confirmations and offers Retry if setup cannot load.
 

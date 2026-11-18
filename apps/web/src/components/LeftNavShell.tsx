@@ -60,7 +60,7 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           </svg>
         </button>
       </Show>
-      <div class="left-nav-main">{props.children}</div>
+      <div class="left-nav-main"><div class="left-nav-scroll">{props.children}</div></div>
       <style>{`
         .left-nav-shell {
           height: 100%;
@@ -79,8 +79,21 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           overflow-x: hidden;
         }
 
+        .left-nav-scroll { display: contents; }
+
         .desktop-window .left-nav-main {
           --desktop-main-clearance: 0px;
+          overflow: visible;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .desktop-window .left-nav-scroll {
+          display: block;
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
         }
 
         @media (width > 768px) {
@@ -93,15 +106,16 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           --desktop-main-clearance: var(--desktop-buttons-width);
         }
 
-        .desktop-window .left-nav-main:not(:has(> :is(.chat-view, .agent-catalog)))::before {
+        .desktop-window .left-nav-main:not(:has(> .left-nav-scroll > :is(.chat-view, .agent-catalog)))::before {
           content: "";
           display: block;
+          flex: none;
           height: 8px;
           margin-inline-start: var(--desktop-main-clearance);
-          -webkit-app-region: drag;
+          -webkit-app-region: var(--desktop-header-region, drag);
         }
 
-        .desktop-window :is(.agent-sidebar.collapsed ~ .left-nav-main, .zen-mode .left-nav-main):not(:has(> :is(.chat-view, .agent-catalog)))::before {
+        .desktop-window :is(.agent-sidebar.collapsed ~ .left-nav-main, .zen-mode .left-nav-main):not(:has(> .left-nav-scroll > :is(.chat-view, .agent-catalog)))::before {
           height: var(--desktop-buttons-height);
         }
 
@@ -110,7 +124,7 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
             --desktop-main-clearance: var(--desktop-buttons-width);
           }
 
-          .desktop-window .left-nav-main:not(:has(> :is(.chat-view, .agent-catalog)))::before {
+          .desktop-window .left-nav-main:not(:has(> .left-nav-scroll > :is(.chat-view, .agent-catalog)))::before {
             height: var(--desktop-buttons-height);
           }
         }

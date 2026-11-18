@@ -222,11 +222,20 @@
 
         .desktop-window .chat-main > .header {
           padding-inline-start: max(18px, var(--desktop-main-clearance, 0px), calc((100% - var(--transcript-width)) / 2 + 18px));
-          -webkit-app-region: drag;
+          -webkit-app-region: var(--desktop-header-region, drag);
         }
 
         .desktop-window .chat-main > .header .device-panel {
           -webkit-app-region: no-drag;
+        }
+
+        .desktop-chat-repair {
+          flex: none;
+          padding: 8px 12px;
+        }
+
+        .desktop-chat-repair > button {
+          white-space: nowrap;
         }
 
         @media (max-width: 768px) {
