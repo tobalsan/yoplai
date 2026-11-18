@@ -132,9 +132,15 @@ export async function createModelAuth(options: {
     }));
     const push = result.push.bind(result);
     const end = result.end.bind(result);
-    const safe = (message: AssistantMessage): AssistantMessage => scope.external && message.stopReason === "error"
-      ? { ...message, errorMessage: safeExternalError(model.provider, status === 401 ? "401" : message.errorMessage) }
-      : message;
+    function safe(message: AssistantMessage): AssistantMessage {
+      if (!scope.external) return message;
+      const clean = { ...message };
+      delete clean.diagnostics;
+      if (clean.stopReason === "error" || clean.errorMessage !== undefined) {
+        clean.errorMessage = safeExternalError(model.provider, status === 401 ? "401" : clean.errorMessage);
+      }
+      return clean;
+    }
     function remember(message: AssistantMessage) {
       if (!desktopEnabled() || !scope.source || message.stopReason === "aborted") return;
       const ok = message.stopReason !== "error" && message.content.some((part) => part.type === "text" && part.text.trim());
@@ -143,7 +149,9 @@ export async function createModelAuth(options: {
     result.push = (event) => {
       if (event.type === "done") remember(event.message);
       if (event.type === "error") remember(event.error);
-      push(event.type === "error" ? { ...event, error: safe(event.error) } : event);
+      if (event.type === "error") push({ ...event, error: safe(event.error) });
+      else if (event.type === "done") push({ ...event, message: safe(event.message) });
+      else push({ ...event, partial: safe(event.partial) });
     };
     result.end = (message) => end(message ? safe(message) : undefined);
     return result;
