@@ -3,9 +3,11 @@ import { createDevLaunchPlan } from "./launch-plan.js";
 
 describe("dev launch plan", () => {
   it("forces loopback hosts and the chosen ports for every child", () => {
-    const plan = createDevLaunchPlan({ gatewayPort: 4001, uiPort: 3001 });
+    const plan = createDevLaunchPlan({ gatewayPort: 4001, uiPort: 3001 }, "/test-desktop");
+    expect(plan.children.find((child) => child.name === "gateway")?.env.YOPLAI_DESKTOP).toBe("1");
     expect(plan.uiUrl).toBe("http://127.0.0.1:3001");
     for (const child of plan.children) {
+      expect(child.env.YOPLAI_HOME).toBe("/test-desktop/home");
       expect(child.env.YOPLAI_UI_HOST).toBe("127.0.0.1");
       expect(child.env.YOPLAI_GATEWAY_HOST).toBe("127.0.0.1");
       expect(child.env.YOPLAI_UI_PORT).toBe("3001");

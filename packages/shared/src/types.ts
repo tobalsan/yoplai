@@ -2083,9 +2083,21 @@ const CapabilitiesUserSchema = z.object({
     .optional(),
 });
 
+export const DesktopSetupStateSchema = z.object({
+  version: z.literal(1).default(1),
+  wizardExited: z.boolean().default(false),
+  exitedAt: z.string().nullable().default(null),
+  skipped: z.array(z.string()).default([]),
+  firstChat: z.object({ agentId: z.string(), sessionId: z.string(), turnId: z.string() }).nullable().default(null),
+  completed: z.boolean().default(false),
+  completedAt: z.string().nullable().default(null),
+});
+export type DesktopSetupState = z.infer<typeof DesktopSetupStateSchema>;
+
 export const CapabilitiesResponseSchema = z.object({
   version: z.number(),
   apps: z.object({ available: z.boolean() }).optional(),
+  desktopSetup: z.boolean().optional(),
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),

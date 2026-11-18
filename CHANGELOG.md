@@ -15,6 +15,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- The local desktop gateway reports setup access and saves setup state.
+- `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
+
 - Extension tools receive trusted messaging reply origins on Pi and container runs; Slack delivery supports thread destinations, and Threadit adds a reply delivery sink.
 - External extensions can serve authenticated browser pages and cookie-free token POSTs, re-check viewer access, and open their own pages as reusable sandboxed chat-panel frames.
 - Threadit and Mattermost `!pair` links connect human accounts to signed-in Yoplai users through ten-minute, single-use, email-matched links; Account connections lists and unlinks them.

@@ -1,3 +1,4 @@
+import { desktopSetupAllowed } from "../desktop/guard.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -625,6 +626,7 @@ api.get("/capabilities", async (c) => {
     extensions,
     agents: agents.map((agent) => agent.id),
     multiUser: isMultiUserEnabled,
+    desktopSetup: desktopSetupAllowed(c, isMultiUserEnabled, config.ui?.port ?? 3000),
     ...(isMultiUserEnabled
       ? {
           authMethods: {
