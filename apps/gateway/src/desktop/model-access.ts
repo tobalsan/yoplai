@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Hono } from "hono";
 import { z } from "zod";
+import { getExternalSources, isExternalSource } from "./external-sources.js";
 import { checkLiteralModelKey, createModelAuth, isLiteralKey } from "./model-auth.js";
 import { createOAuthAttempts, isOAuthProvider, type openDesktopBrowser } from "./oauth-attempts.js";
 
@@ -8,6 +9,7 @@ export const CLAUDE_WARNING = "Anthropic terms do not allow a Claude subscriptio
 const confirm = { replace: z.boolean().optional() };
 const startSchema = z.object({ ...confirm, warningAccepted: z.boolean().optional() }).strict();
 const keySchema = z.object({ ...confirm, provider: z.string(), key: z.string().max(8192), checkOnly: z.boolean().optional() }).strict();
+const consentSchema = z.object({ enabled: z.boolean(), warningAccepted: z.boolean().optional() }).strict();
 const codeSchema = z.object({ code: z.string().min(1).max(8192) }).strict();
 export const defaultModel = (models: readonly Model<Api>[]) => models.find((model) => !model.id.endsWith("-free") && Object.values(model.cost).some((cost) => typeof cost === "number" && cost > 0));
 
@@ -15,9 +17,11 @@ export function createModelAccessRoutes(home: string, deps: {
   createAuth?: typeof createModelAuth;
   checkKey?: typeof checkLiteralModelKey;
   open?: typeof openDesktopBrowser;
+  external?: ReturnType<typeof getExternalSources>;
 } = {}) {
   const routes = new Hono();
   const makeAuth = deps.createAuth ?? createModelAuth;
+  const external = deps.external ?? getExternalSources(home);
   const checkKey = deps.checkKey ?? checkLiteralModelKey;
   let auth: ReturnType<typeof createModelAuth> | undefined;
   const getAuth = () => {
@@ -31,7 +35,7 @@ export function createModelAccessRoutes(home: string, deps: {
   routes.onError((_error, c) => c.json({ error: "model_access_failed", message: "The model access request failed." }, 500));
   routes.get("/", async (c) => {
     const { runtime } = await getAuth();
-    return c.json({ owned: (await runtime.listCredentials()).filter((entry) => runtime.getProvider(entry.providerId)), oauthProviders: Object.keys({ "openai-codex": true, anthropic: true }), apiKeyProviders: runtime.getProviders().filter((provider) => provider.auth.apiKey && defaultModel(runtime.getModels(provider.id))).map(({ id, name }) => ({ id, name })) });
+    return c.json({ external: await external.status(), owned: (await runtime.listCredentials()).filter((entry) => runtime.getProvider(entry.providerId)), oauthProviders: Object.keys({ "openai-codex": true, anthropic: true }), apiKeyProviders: runtime.getProviders().filter((provider) => provider.auth.apiKey && defaultModel(runtime.getModels(provider.id))).map(({ id, name }) => ({ id, name })) });
   });
   routes.post("/oauth/:provider", async (c) => {
     const provider = c.req.param("provider");
@@ -85,6 +89,14 @@ export function createModelAccessRoutes(home: string, deps: {
     } finally {
       locks.delete(provider);
     }
+  });
+  routes.post("/external/:source", async (c) => {
+    const source = c.req.param("source");
+    if (!isExternalSource(source)) return c.json({ error: "unknown_source" }, 404);
+    const body = consentSchema.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) return c.json({ error: "invalid_request" }, 400);
+    if (source === "claude-code" && body.data.enabled && body.data.warningAccepted !== true) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
+    return c.json(await external.enable(source, body.data.enabled));
   });
   routes.delete("/:provider", async (c) => {
     const provider = c.req.param("provider");

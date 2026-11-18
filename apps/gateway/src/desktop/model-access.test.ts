@@ -14,6 +14,7 @@ beforeEach(async () => {
   vi.stubEnv("HOME", root);
   vi.stubEnv("YOPLAI_HOME", home);
   vi.stubEnv("YOPLAI_DESKTOP", "1");
+  vi.stubEnv("YOPLAI_DEV", "1");
 });
 afterEach(async () => {
   vi.useRealTimers();
