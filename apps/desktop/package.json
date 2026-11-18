@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-splash.mjs",
     "start": "node launch.mjs",
     "postinstall": "install-electron",
     "dist": "node scripts/build-package.mjs"
