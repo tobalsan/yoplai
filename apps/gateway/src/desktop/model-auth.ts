@@ -125,6 +125,10 @@ export async function createModelAuth(options: {
     let status: number | undefined;
     const result = request.run(scope, () => stream(model, context, {
       ...requestOptions,
+      // Pi reads this option after it resolves the credential for the request.
+      get transport() {
+        return model.provider === "openai-codex" && scope.external ? "sse" : requestOptions?.transport;
+      },
       async onResponse(response, target) {
         status = response.status;
         await requestOptions?.onResponse?.(response, target);

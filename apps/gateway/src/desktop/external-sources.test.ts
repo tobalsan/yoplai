@@ -127,7 +127,14 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
     }
     return localFetch(`http://127.0.0.1:${port}/`, init);
   });
-  const chat = () => runtime.completeSimple(model, { messages: [{ role: "user", content: "Test.", timestamp: Date.now() }] }, { transport: "sse" });
+  const socketAttempt = vi.fn();
+  vi.stubGlobal("WebSocket", class {
+    constructor() {
+      socketAttempt();
+      throw new Error("Unexpected WebSocket request.");
+    }
+  });
+  const chat = () => runtime.completeSimple(model, { messages: [{ role: "user", content: "Test.", timestamp: Date.now() }] }, { sessionId: "test-codex-session" });
   expect((await chat()).stopReason).toBe("stop");
   const near = crt("account-two", 2);
   await fixture("codex", near);
@@ -139,12 +146,13 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   revoked = true;
   expect((await chat()).errorMessage).toBe(CODEX_EXPIRED);
   revoked = false;
-  const replacement = crt("account-three", 30);
+  const replacement = crt("account-two", 45);
   await fixture("codex", replacement);
   expect((await chat()).stopReason).toBe("stop");
-  expect(observed.map(({ account }) => account)).toEqual(["account-one", "account-two", "account-two", "account-three"]);
+  expect(observed.map(({ account }) => account)).toEqual(["account-one", "account-two", "account-two", "account-two"]);
   expect(observed[3].auth === `Bearer ${replacement.tokens.access_token}`).toBe(true);
   expect((await fs.readFile(file, "utf8")) === JSON.stringify(replacement)).toBe(true);
   expect((await fs.readFile(owned, "utf8")) === ownedBefore).toBe(true);
   expect(refresh).not.toHaveBeenCalled();
+  expect(socketAttempt).not.toHaveBeenCalled();
 });
