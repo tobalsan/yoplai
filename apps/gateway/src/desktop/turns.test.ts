@@ -35,7 +35,7 @@ beforeEach(async () => {
   stubDesktopTestEnv(root, home);
   await fs.mkdir(path.join(home, "agents", "alpha"), { recursive: true });
   await fs.writeFile(path.join(home, "yoplai.json"), '{"version":3,"agents":["agents/*"]}');
-  await fs.writeFile(path.join(home, "agents", "alpha", "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: openai\n  model: gpt-4.1-mini\n");
+  await fs.writeFile(path.join(home, "agents", "alpha", "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: openai\n  model: gpt-4.1-mini\nauth:\n  mode: oauth\n");
 });
 
 async function stop() {
@@ -112,8 +112,9 @@ it("starts one run for parallel sends and refuses the same ID after a restart", 
   const turnId = randomUUID();
   let app = await boot();
   expect(await app.state(sessionId, turnId)).toEqual({ state: "none" });
-  const first = app.send({ sessionId, turnId });
-  const second = app.send({ sessionId, turnId: turnId.toUpperCase() });
+  const message = "/tmp/report.txt";
+  const first = app.send({ sessionId, turnId, message });
+  const second = app.send({ sessionId, turnId: turnId.toUpperCase(), message });
   try {
     expect(await Promise.race([first, second])).toMatchObject({ type: "turn_exists" });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
@@ -129,7 +130,7 @@ it("starts one run for parallel sends and refuses the same ID after a restart", 
   app = await boot();
   expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "turn_exists" });
   expect(await app.state(sessionId, turnId)).toEqual({ state: "answered" });
-  expect(await app.history(sessionId)).toMatchObject({ messages: [{ role: "user", content: "Hello" }, { role: "assistant", content: "Ready" }] });
+  expect(await app.history(sessionId)).toMatchObject({ messages: [{ role: "user", content: message }, { role: "assistant", content: "Ready" }] });
   expect(run).toHaveBeenCalledTimes(1);
 });
 

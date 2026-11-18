@@ -1,3 +1,8 @@
+import { findChatCommand } from "../agents/chat-command.js";
+import { parseThinkDirective } from "../sessions/directives.js";
+import { DEFAULT_RESET_TRIGGERS } from "../sessions/store.js";
+import { loadConfig } from "../config/index.js";
+import { resolveRunActor } from "../extensions/runtime.js";
 import {
   SendMessageRequestSchema,
   buildUserContext,
@@ -136,10 +141,16 @@ export async function normalizeRunRequest({
     return { type: "validation_error", message: "Invalid session id" };
   }
   const turnId = data.turnId?.toLowerCase();
-  if (turnId && data.message.trimStart().startsWith("/")) {
-    return { type: "validation_error", message: "Send a message without a slash command when you use a turn ID." };
-  }
   const userId = authContext?.session.userId;
+  if (turnId && data.sessionId && data.message.trimStart().startsWith("/")) {
+    const config = loadConfig();
+    const identity = { agentId: agent.id, source, userId, message: data.message, sessionId: data.sessionId, turnId, ...resolveRunActor(config, userId) };
+    if (isAbortTrigger(data.message) || isAbortTrigger(data.message, DEFAULT_RESET_TRIGGERS) ||
+      (agent.auth?.mode === "oauth" && parseThinkDirective(data.message).hasDirective) ||
+      await findChatCommand(extensionRuntime, agent, config, data.sessionId, identity, data.message)) {
+      return { type: "validation_error", message: "Send a message without a slash command when you use a turn ID." };
+    }
+  }
   const attachments = await normalizeInboundAttachments(
     parseAttachments(input.attachments)
   );
