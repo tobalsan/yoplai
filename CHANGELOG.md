@@ -66,6 +66,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The desktop gateway lists open sign-ins and returns the same attempt on retry.
+- The desktop proxy accepts model access cancellation and deletion without a body.
+- The desktop gateway tells the user when Claude Code needs a new sign-in.
+
 - Desktop chat accepts an enabled Codex CLI login without an owned credential.
 
 - Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.

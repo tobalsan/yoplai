@@ -50,13 +50,15 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
     const apiKeyProviders = runtime.getProviders()
       .filter((provider) => !API_KEY_LOGIN_REQUIRES_MORE_INPUT.has(provider.id) && provider.auth.apiKey?.login && defaultModel(runtime.getModels(provider.id)))
       .map(({ id, name }) => ({ id, name }));
-    return c.json({ external: await external.status(), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders });
+    return c.json({ external: await external.status(), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders, attempts: attempts.openAttempts() });
   });
   routes.post("/oauth/:provider", async (c) => {
     const provider = c.req.param("provider");
     if (!isOAuthProvider(provider)) return c.json({ error: "unknown_provider" }, 404);
-    const body = startSchema.safeParse(c.req.raw.body ? await c.req.json().catch(() => undefined) : {});
+    const body = startSchema.safeParse(c.req.raw.body && !c.req.raw.bodyUsed ? await c.req.json().catch(() => undefined) : {});
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
+    const open = attempts.resume(provider);
+    if (open) return c.json({ ...open, resumed: true }, 200);
     if (provider === "anthropic" && body.data.warningAccepted !== true) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
     if (locks.has(provider) || attempts.busy(provider)) return c.json({ error: "provider_busy" }, 409);
     locks.add(provider);

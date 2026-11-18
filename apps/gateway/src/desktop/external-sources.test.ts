@@ -237,3 +237,21 @@ it.each([
   }
   expect(calls).toEqual([...new Set([provider, "anthropic"])].map((model) => ({ model, usesEnvKey: true, usesClaudeToken: false })));
 });
+
+
+it.each([
+  { accessToken: "", expiresAt: Number.MAX_SAFE_INTEGER },
+  { accessToken: "sk-ant-oat-fake", expiresAt: 1 },
+  {},
+])("reports a signed-out Claude Code login", async (claudeAiOauth) => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const sources = createExternalSources(home, { keychain: {
+    exists: async () => true,
+    read: async () => JSON.stringify({ claudeAiOauth }),
+  } });
+  const message = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
+  expect(await sources.enable("claude-code", true, true)).toMatchObject({
+    detected: true, enabled: true, denied: false, message,
+    providers: [{ provider: "anthropic", type: "oauth", available: false, message }],
+  });
+});

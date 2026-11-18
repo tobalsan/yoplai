@@ -56,6 +56,7 @@ type ConsentState = "enabled" | "warning-accepted" | "denied";
 type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
 const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude Code source";
+const CLAUDE_CODE_SIGNED_OUT = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
 export const CLAUDE_LOGIN_UNAVAILABLE = "This Claude login cannot be used. Sign in with Claude here, or use an API key.";
 
 function isAnthropicOAuthToken(value: unknown): value is string {
@@ -106,7 +107,7 @@ function parseSource(source: ExternalSource, raw: string): Entry[] {
   }
   if (source === "claude-code") {
     const oauth = object(data.claudeAiOauth);
-    return oauth ? [oauthEntry("anthropic", oauth.accessToken, oauth.expiresAt)] : [];
+    return [oauthEntry("anthropic", oauth?.accessToken, oauth?.expiresAt)];
   }
   return entries(data).flatMap(([provider, value]): Entry[] => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(provider)) return [];
@@ -191,13 +192,19 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       : await fs.access(externalPath(source)).then(() => true, () => false);
     const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
+    const rows = providers.map(({ provider, type, supported, key, expires, message }) => {
+      const available = Boolean(key) && (expires === undefined || expires > Date.now());
+      return {
+        provider, type, available,
+        ...(source === "claude-code" && !available ? { message: CLAUDE_CODE_SIGNED_OUT }
+          : !supported ? { message: message ?? "Not supported yet" } : {}),
+      };
+    });
+    const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : undefined;
     return {
       source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
-      ...(denied ? { message: "Access denied" } : {}),
-      providers: providers.map(({ provider, type, supported, key, expires, message }) => ({
-        provider, type, available: Boolean(key) && (expires === undefined || expires > Date.now()),
-        ...(!supported ? { message: message ?? "Not supported yet" } : {}),
-      })),
+      ...(message ? { message } : {}),
+      providers: rows,
     };
   }
 

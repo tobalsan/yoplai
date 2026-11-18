@@ -26,7 +26,21 @@ afterEach(async () => {
 });
 
 it("reports the capability and reads and writes setup through the UI proxy", async () => {
-  const { app } = await import("../server/index.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const auth = await createModelAuth({ home: configHome });
+  vi.spyOn(auth.runtime, "login").mockImplementation(async (_provider, _type, io) => {
+    await io.prompt({ type: "manual_code", message: "Test" });
+    throw new Error("Test sign-in failed.");
+  });
+  vi.doMock("./model-auth.js", async (load) => ({
+    ...await load<typeof import("./model-auth.js")>(), createModelAuth: async () => auth,
+  }));
+  let app: typeof import("../server/index.js").app;
+  try {
+    ({ app } = await import("../server/index.js"));
+  } finally {
+    vi.doUnmock("./model-auth.js");
+  }
   const state = await import("../relay/state.js");
   const { startUiListener } = await import("../server/ui-listener.js");
   const gateway = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
@@ -47,6 +61,17 @@ it("reports the capability and reads and writes setup through the UI proxy", asy
   const res = await fetch(url, { method: "PUT", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify({ wizardExited: true, skipped: ["model"] }) });
   expect(res.status).toBe(200);
   expect(await res.json()).toMatchObject({ wizardExited: true, skipped: ["model"] });
+  const modelAccess = `${base}/api/model-access`;
+  const attempt = await fetch(`${modelAccess}/oauth/openai-codex`, { method: "POST", headers: { origin: base } });
+  expect(attempt.status).toBe(202);
+  const { handle } = await attempt.json();
+  for (const [method, suffix, expected] of [
+    ["POST", `/oauth/attempts/${handle}/cancel`, 200], ["DELETE", "/openai", 204],
+  ] as const) {
+    expect((await fetch(`${modelAccess}${suffix}`, { method, headers: { origin: "http://localhost:9999" } })).status).toBe(403);
+    expect((await fetch(`${modelAccess}${suffix}`, { method, headers: { origin: base }, body: "text" })).status).toBe(415);
+    expect((await fetch(`${modelAccess}${suffix}`, { method, headers: { origin: base } })).status).toBe(expected);
+  }
   expect((await app.request(`http://127.0.0.1:${port}/api/desktop-setup`, { headers: { host: `127.0.0.1:${uiPort}` } }, { incoming: { socket: { remoteAddress: "127.0.0.1" } } })).status).toBe(403);
 });
 

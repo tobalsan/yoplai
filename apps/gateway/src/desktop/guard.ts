@@ -66,7 +66,26 @@ export function desktopSetupGuard(multiUser: () => boolean, uiPort: () => number
     }
     if (c.req.raw.body !== null && !["GET", "HEAD"].includes(c.req.method)) {
       const mediaType = c.req.header("content-type")?.split(";", 1)[0].trim().toLowerCase();
-      if (mediaType !== "application/json") return c.json({ error: "json_required" }, 415, { "cache-control": "no-store" });
+      if (mediaType !== "application/json") {
+        // The Node adapter supplies a stream even if the request has no bytes.
+        const reader = c.req.raw.body.getReader();
+        let hasBody = false;
+        try {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            if (chunk.value.byteLength > 0) {
+              hasBody = true;
+              break;
+            }
+          }
+        } catch {
+          hasBody = true;
+        } finally {
+          reader.releaseLock();
+        }
+        if (hasBody) return c.json({ error: "json_required" }, 415, { "cache-control": "no-store" });
+      }
     }
     c.header("cache-control", "no-store");
     await next();
