@@ -173,6 +173,7 @@ export async function completeModelOnce(runtime: Awaited<ReturnType<typeof creat
 export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR) {
   if (!isLiteralKey(key)) return false;
   const { runtime } = await createModelAuth({ home, submitted: { provider, key } });
+  if (runtime.getError()) return false;
   const model = runtime.getModel(provider, modelId);
   if (!model || !runtime.getProvider(provider)?.auth.apiKey) return false;
   try {

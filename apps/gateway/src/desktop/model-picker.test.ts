@@ -174,3 +174,16 @@ it("lists only the Copilot models that the owned account can use", async () => {
   ]);
   expect(call).not.toHaveBeenCalled();
 });
+
+it("does not send a submitted key when the model config is invalid", async () => {
+  await fs.writeFile(path.join(home, "models.json"), '{"providers":');
+  const call = vi.fn(async () => successfulCall());
+  vi.stubGlobal("fetch", call);
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const response = await createModelAccessRoutes(home).request("/api-key", {
+    method: "POST", body: JSON.stringify({ provider: "openai", key: "fake-submitted-key", checkOnly: true }),
+  });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual({ error: "key_check_failed", message: "The API key check failed." });
+  expect(call).not.toHaveBeenCalled();
+});
