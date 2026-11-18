@@ -125,3 +125,31 @@ it("applies every refusal to every desktop route before it reads state", async (
     logged.mockRestore();
   }
 });
+
+it("hides the attempt handle and query when the packaged proxy cannot forward a request", async () => {
+  const { createServer } = await import("node:http");
+  const { startUiListener } = await import("../server/ui-listener.js");
+  const failed = createServer((req) => req.socket.destroy());
+  await new Promise<void>((resolve) => failed.listen(0, "127.0.0.1", resolve));
+  stop.push(() => { failed.close(); failed.closeAllConnections(); });
+  const gatewayPort = (failed.address() as AddressInfo).port;
+  const ui = startUiListener({ webDist: home, host: "127.0.0.1", port: 0, gatewayHost: "127.0.0.1", gatewayPort, onError: (error) => { throw error; } });
+  stop.push(() => { ui.close(); ui.closeAllConnections(); });
+  await new Promise<void>((resolve) => ui.once("listening", resolve));
+  const uiPort = (ui.address() as AddressInfo).port;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const handle = "fake-model-attempt-handle";
+    const query = "fake-model-access-query";
+    const res = await fetch(`http://127.0.0.1:${uiPort}/api/model-access/oauth/attempts/${handle}?other=${query}`);
+    expect(res.status).toBe(502);
+    expect(await res.text()).toBe("Bad Gateway");
+    expect(warn).toHaveBeenCalledTimes(1);
+    const log = String(warn.mock.calls[0][0]);
+    expect(log).toContain("/api/model-access/[redacted]");
+    expect(log).not.toContain(handle);
+    expect(log).not.toContain(query);
+  } finally {
+    warn.mockRestore();
+  }
+});

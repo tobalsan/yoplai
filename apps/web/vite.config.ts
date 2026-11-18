@@ -182,7 +182,9 @@ export default defineConfig({
         configure: (proxy) => {
           proxy.on("error", (_error, request) => {
             const path = pathOf(request.url);
-            if (ownsDashboardViewPath(path)) {
+            if (ownsRedactedPath(path, "/api/model-access")) {
+              request.url = "/api/model-access/[redacted]";
+            } else if (ownsDashboardViewPath(path)) {
               request.url = `${DASHBOARD_VIEW_NAMESPACE}/[redacted]`;
             } else if (ownsRedactedPath(path, LINK_NAMESPACE)) {
               request.url = `${LINK_NAMESPACE}/[redacted]`;
