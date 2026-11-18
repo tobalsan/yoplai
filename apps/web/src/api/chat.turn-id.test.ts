@@ -5,7 +5,7 @@ import { streamMessage } from "./chat";
 afterEach(() => vi.unstubAllGlobals());
 
 it("sends the explicit turn ID and reports a duplicate without a chat error", () => {
-  const wire = { send: vi.fn(), close: vi.fn(), onopen: () => {}, onmessage: (_event: { data: string }) => {} };
+  const wire = { send: vi.fn(), close: vi.fn(), onopen: () => {}, onclose: () => {}, onmessage: (_event: { data: string }) => {} };
   vi.stubGlobal("WebSocket", function () { return wire; });
   const onError = vi.fn();
   const onTurnExists = vi.fn();
@@ -14,7 +14,8 @@ it("sends the explicit turn ID and reports a duplicate without a chat error", ()
   try {
     wire.onopen();
     expect(JSON.parse(wire.send.mock.calls[0][0])).toMatchObject({ type: "send", agentId: "alpha", turnId, sessionId: "first" });
-    wire.onmessage({ data: JSON.stringify({ type: "error", code: "turn_exists", message: "The turn already exists." }) });
+    wire.onmessage({ data: JSON.stringify({ type: "turn_exists" }) });
+    wire.onclose();
     expect(onTurnExists).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
   } finally {

@@ -136,6 +136,9 @@ export async function normalizeRunRequest({
     return { type: "validation_error", message: "Invalid session id" };
   }
   const turnId = data.turnId?.toLowerCase();
+  if (turnId && data.message.trimStart().startsWith("/")) {
+    return { type: "validation_error", message: "Send a message without a slash command when you use a turn ID." };
+  }
   const userId = authContext?.session.userId;
   const attachments = await normalizeInboundAttachments(
     parseAttachments(input.attachments)
@@ -153,7 +156,6 @@ export async function normalizeRunRequest({
         sessionKey: data.sessionKey,
         thinkLevel: data.thinkLevel,
         deviceTurnToken: data.deviceTurnToken,
-        turnId,
         context: userContext(authContext),
         extensionRuntime,
         source,

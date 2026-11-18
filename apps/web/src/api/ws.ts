@@ -1,4 +1,4 @@
-import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
+import type { McpAppView, McpAppViewReference, WsTurnExistsEvent } from "@yoplai/shared/types";
 import type { ActiveTurn } from "./agents";
 import type { DoneMeta, StreamCallbacks } from "./chat";
 
@@ -22,6 +22,7 @@ type DispatchCallbacks = Partial<
 >;
 
 export type WsStreamEvent =
+  | WsTurnExistsEvent
   | {
       type: "text";
       data: string;
@@ -96,7 +97,6 @@ export type WsStreamEvent =
     }
   | {
       type: "error";
-      code?: string;
       message: string;
       kind?: import("@yoplai/shared").RunFailureKind;
       userMessage?: string;
