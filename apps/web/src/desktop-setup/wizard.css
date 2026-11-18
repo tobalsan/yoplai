@@ -15,7 +15,10 @@
 .setup-wizard button:disabled { opacity: .5; cursor: default; }
 .setup-wizard :focus-visible { outline: 2px solid #bcdcff; outline-offset: 3px; }
 .setup-brand { padding: clamp(16px, 2.55vh, 26px) clamp(20px, 2.5vw, 40px) 0; }
-.setup-window .setup-brand { padding-left: clamp(90px, 7.2vw, 115px); }
+.setup-window .setup-brand {
+  padding-left: clamp(90px, 7.2vw, 115px);
+  -webkit-app-region: drag;
+}
 .setup-brand svg { display: block; width: clamp(60px, 5.4vw, 86px); }
 .setup-stage { width: 100%; padding: 0 24px; margin: 0 auto; text-align: center; flex: 1 0 auto; }
 .setup-stage h1 { margin: 0; color: #fff; font-size: clamp(34px, 4vw, 64px); font-weight: 800; line-height: 1.08; letter-spacing: -.035em; }

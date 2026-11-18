@@ -40,6 +40,8 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("open", vi.fn());
+  GreetingSocket.openSends = false;
+  vi.stubGlobal("WebSocket", GreetingSocket);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.origin).pathname;
     const method = init?.method ?? "GET";
@@ -703,6 +705,24 @@ it("lists missing local items, and keeps the bar closed until a new app start", 
   sessionStorage.clear();
   boot("/agents?filter=local");
   await bar();
+});
+
+it("keeps the desktop setup links on a page without a sidebar", async () => {
+  const userAgent = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Electron/45");
+  try {
+    wizardExited = true;
+    overrides = (path) => path === "/api/model-access/models" ? response({ models: [] }) : undefined;
+    boot("/remote-gateways");
+    await heading("Linked gateways");
+    const items = await findByRole(root, "complementary", { name: "Missing setup items" });
+    const link = await within(items).findByRole("link", { name: "Model access" });
+    expect(new URL(link.getAttribute("href")!, location.origin).searchParams.get("return")).toBe("/remote-gateways");
+    await click("Close missing setup items", items);
+    await heading("Linked gateways");
+    expect(queryByRole(root, "complementary", { name: "Missing setup items" })).toBeNull();
+  } finally {
+    userAgent.mockRestore();
+  }
 });
 
 it.each([true, false])("shows the empty list action only in desktop mode (%s)", async (flag) => {

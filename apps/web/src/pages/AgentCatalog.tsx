@@ -268,6 +268,23 @@ export function AgentCatalog() {
           margin-bottom: 20px;
         }
 
+        .desktop-window .agent-catalog {
+          padding-top: 0;
+        }
+
+        .desktop-window .catalog-heading {
+          margin-inline: -24px;
+          padding: 12px 24px 0;
+          padding-inline-start: max(24px, var(--desktop-main-clearance, 0px));
+          -webkit-app-region: drag;
+        }
+
+        @media (max-width: 768px) {
+          .desktop-window .catalog-heading {
+            min-height: 78px;
+          }
+        }
+
         .loading, .error {
           padding: 24px;
           text-align: center;

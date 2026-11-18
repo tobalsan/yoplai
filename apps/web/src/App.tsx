@@ -54,9 +54,8 @@ import {
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
 import { ToastHost } from "./lib/toast";
-import { MissingItems } from "./desktop-setup/MissingItems";
 import { isDesktopWindow } from "./lib/desktop-window";
-import { SetupGate, useSetup } from "./desktop-setup/SetupGate";
+import { SetupGate } from "./desktop-setup/SetupGate";
 import { useScheduleAlerts } from "./lib/schedule-alerts";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
@@ -67,12 +66,6 @@ const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
 const LazyAdminQuotaPage = lazy(() => import("./pages/admin/Quota"));
 const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
-
-function DesktopMissingItems() {
-  const location = useLocation();
-  const setup = useSetup();
-  return <Show when={setup.state()?.wizardExited && stripBase(location.pathname) !== "/setup"}><MissingItems /></Show>;
-}
 
 function Layout(props: { children?: JSX.Element }) {
   const location = useLocation();
@@ -142,9 +135,8 @@ function Layout(props: { children?: JSX.Element }) {
       <Show when={capabilitiesReady()} fallback={<AppBootSplash />}>
         <div class="app" classList={{ "zen-mode": zenMode(), "desktop-window": desktopWindow,
           "desktop-wizard": desktopWindow && stripBase(location.pathname) === "/setup" }}>
-          <Show when={desktopWindow}><div class="desktop-drag-strip" aria-hidden="true" /></Show>
           <ImpersonationBanner />
-          <SetupGate><DesktopMissingItems />{props.children}</SetupGate>
+          <SetupGate>{props.children}</SetupGate>
           <OnboardingTour />
           <ConnectToolsPrompt />
           <SessionSearch />
@@ -161,30 +153,19 @@ function Layout(props: { children?: JSX.Element }) {
         }
 
         .desktop-window {
-          --desktop-title-height: 40px;
-          box-sizing: border-box;
-          padding-top: var(--desktop-title-height);
+          --desktop-buttons-width: 88px;
+          --desktop-buttons-height: 40px;
         }
-        .desktop-window.desktop-wizard { padding-top: 0; }
-        .desktop-drag-strip {
-          position: fixed;
-          inset: 0 0 auto;
-          height: var(--desktop-title-height);
-          z-index: 880;
-          background: #000;
+        .desktop-window:not(.desktop-wizard, :has(.left-nav-shell))::before {
+          content: "";
+          flex: 0 0 8px;
+          margin-inline-start: var(--desktop-buttons-width);
           -webkit-app-region: drag;
         }
-        .desktop-wizard .desktop-drag-strip { background: transparent; }
-        .desktop-window :is(button, a, input, select, textarea, [role="menu"], [role="button"], [contenteditable]) {
+        .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
           -webkit-app-region: no-drag;
         }
-        .desktop-window .mobile-sidebar-toggle { margin-top: var(--desktop-title-height); }
-        @media (max-width: 768px) {
-          .desktop-window .agent-sidebar {
-            margin-top: var(--desktop-title-height);
-            height: calc(100dvh - var(--desktop-title-height));
-          }
-        }
+        .desktop-window .mobile-sidebar-toggle { margin-top: var(--desktop-buttons-height); }
         .app.zen-mode {
           background: var(--bg-base);
         }

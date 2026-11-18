@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import type { DesktopSetupState } from "@yoplai/shared/types";
 import { capabilities } from "../lib/capabilities";
 import { chatRouteSession, stripBase } from "../lib/path";
+import { MissingItems } from "./MissingItems";
 import { readModels, readSetup, saveSetup, type Model } from "./api";
 
 const Setup = createContext<{
@@ -69,6 +70,9 @@ export function SetupGate(props: { children: JSX.Element }) {
         <button onClick={() => void refresh()}>Retry setup refresh</button>
       </div>
     </Show>
-    <Show when={show()}>{props.children}</Show>
+    <Show when={show()}>
+      <Show when={exited()}><MissingItems /></Show>
+      {props.children}
+    </Show>
   </Setup.Provider>;
 }
