@@ -43,6 +43,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The setup wordmark shows YOPLAI with no period. The splash keeps its period.
+
 - Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.
 
 - The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
