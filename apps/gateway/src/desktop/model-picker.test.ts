@@ -187,3 +187,19 @@ it("does not send a submitted key when the model config is invalid", async () =>
   expect(await response.json()).toEqual({ error: "key_check_failed", message: "The API key check failed." });
   expect(call).not.toHaveBeenCalled();
 });
+
+it.each(["provider", "model"] as const)("does not check a key with a conflicting %s header", async (level) => {
+  const headers = { aUtHoRiZaTiOn: "Bearer fake-valid-header" };
+  const openai = level === "provider" ? { headers } : { modelOverrides: { "gpt-4.1-mini": { headers } } };
+  await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { openai } }));
+  const call = vi.fn(async (_input: unknown, init?: RequestInit) => new Headers(init?.headers).get("authorization") === "Bearer fake-valid-header"
+    ? successfulCall() : new Response(null, { status: 401 }));
+  vi.stubGlobal("fetch", call);
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const response = await createModelAccessRoutes(home).request("/api-key", {
+    method: "POST", body: JSON.stringify({ provider: "openai", key: "fake-bad-key", checkOnly: true }),
+  });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual({ error: "key_check_failed", message: "The API key check failed." });
+  expect(call).not.toHaveBeenCalled();
+});
