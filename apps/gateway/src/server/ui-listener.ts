@@ -76,6 +76,7 @@ export function isForwardedPath(pathname: string): boolean {
 /** Secret paths show as a namespace only. */
 export function redactedTarget(target: string | undefined): string {
   const pathname = pathnameOf(target);
+  if (ownsRedactedPath(pathname, "/api/model-access")) return "/api/model-access/[redacted]";
   if (ownsDashboardViewPath(pathname)) return `${DASHBOARD_VIEW_NAMESPACE}/[redacted]`;
   if (ownsRedactedPath(pathname, LINK_NAMESPACE)) return `${LINK_NAMESPACE}/[redacted]`;
   if (ownsRedactedPath(pathname, REMOTE_LINK_NAMESPACE)) return `${REMOTE_LINK_NAMESPACE}/[redacted]`;
