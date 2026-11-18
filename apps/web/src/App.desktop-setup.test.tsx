@@ -81,6 +81,7 @@ it("redirects to setup, shows Back after welcome, and saves a skipped screen", a
   boot("/agents");
   await heading("All your agents. One app.");
   expect(location.pathname).toBe("/setup");
+  expect(getByRole(root, "img", { name: /^Yoplai$/i })).toBeTruthy();
   expect(queryByRole(root, "button", { name: "Back" })).toBeNull();
   await click("Get started");
   await heading("Where do your agents run?");
