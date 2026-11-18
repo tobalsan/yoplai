@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { readEnv } from "@yoplai/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { getGatewayListener, isRelayEnabled } from "../relay/state.js";
@@ -7,12 +8,16 @@ export function desktopEnabled(): boolean {
   return process.env.YOPLAI_DESKTOP === "1";
 }
 
+function isDesktopLoopbackAddress(address: string): boolean {
+  return isIP(address) !== 0 && isLoopbackAddress(address);
+}
+
 function loopbackNode(raw: string): boolean {
   const value = raw.trim();
   const node = value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
-  if (isLoopbackAddress(node)) return true;
+  if (isDesktopLoopbackAddress(node)) return true;
   const parts = /^(?:\[([\da-f:.]+)\]|([\d.]+))(?::(\d{1,5}))?$/i.exec(node);
-  return Boolean(parts && (!parts[3] || (+parts[3] > 0 && +parts[3] < 65536)) && isLoopbackAddress(parts[1] ?? parts[2]));
+  return Boolean(parts && (!parts[3] || (+parts[3] > 0 && +parts[3] < 65536)) && isDesktopLoopbackAddress(parts[1] ?? parts[2]));
 }
 
 function loopbackForwarding(headers: Headers): boolean {
@@ -40,7 +45,7 @@ export function desktopSetupAllowed(c: Context, multiUser: boolean, uiPort: numb
   if (!desktopEnabled() || multiUser || !isRelayEnabled()) return false;
   const listener = getGatewayListener();
   const peer = requestPeerAddress(c) ?? (c.env as { peerAddress?: string } | undefined)?.peerAddress;
-  if (!listener || !isLoopbackAddress(listener.address) || !peer || !isLoopbackAddress(peer)) return false;
+  if (!listener || !isDesktopLoopbackAddress(listener.address) || !peer || !isDesktopLoopbackAddress(peer)) return false;
   if (!loopbackForwarding(c.req.raw.headers)) return false;
   const host = c.req.header("host")?.toLowerCase();
   if (!host || !loopbackGatewayHosts(listener.port).includes(host)) return false;
