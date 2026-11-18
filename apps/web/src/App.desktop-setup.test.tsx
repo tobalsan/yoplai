@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { findByRole, fireEvent, getByRole, queryByRole, waitFor, within } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import App from "./App";
+import { FIRST_GREETING } from "./desktop-setup/first-chat";
 import { loadCapabilities, resetCapabilitiesForTests } from "./lib/capabilities";
 
 let root: HTMLDivElement;
@@ -11,7 +12,8 @@ let mode: boolean | undefined;
 let auth: boolean;
 let available: boolean;
 let wizardExited: boolean;
-let firstChat: object | null;
+let firstChat: { agentId: string; sessionId: string; turnId: string } | null;
+let completed: boolean;
 let setupReads: number;
 let setupWrites: unknown[];
 let overrides: (path: string, method: string, body: Record<string, unknown>) => Response | Promise<Response> | undefined;
@@ -32,7 +34,7 @@ const click = async (name: string, scope?: HTMLElement) => {
 
 beforeEach(() => {
   localStorage.clear(); sessionStorage.clear();
-  mode = true; auth = false; available = true; wizardExited = false; firstChat = null;
+  mode = true; auth = false; available = true; wizardExited = false; firstChat = null; completed = false;
   setupReads = 0; setupWrites = []; overrides = () => undefined;
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -47,8 +49,13 @@ beforeEach(() => {
     if (path === "/api/desktop-setup") {
       if (method === "GET") setupReads += 1;
       if (overridden) return overridden;
-      if (method === "PUT") { setupWrites.push(body); wizardExited = body.wizardExited; }
-      return response({ version: 1, wizardExited, skipped: body.skipped ?? [], firstChat, completed: false });
+      if (method === "PUT") {
+        setupWrites.push(body);
+        if (typeof body.wizardExited === "boolean") wizardExited = body.wizardExited;
+        if ("firstChat" in body) firstChat = body.firstChat as typeof firstChat;
+        if (typeof body.completed === "boolean") completed = body.completed;
+      }
+      return response({ version: 1, wizardExited, skipped: body.skipped ?? [], firstChat, completed });
     }
     if (overridden) return overridden;
     if (path === "/api/model-access") return response({
@@ -222,7 +229,7 @@ it("creates the agent after retry with the same request ID and does not send a g
   expect((await findByRole(root, "alert")).textContent).toBe("Remove the $env: or $secret: prefix.");
   await click("Retry");
   await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
-  expect(location.search).toBe("");
+  expect(new URLSearchParams(location.search).get("session")).toBe(firstChat?.sessionId);
   expect(drafts).toEqual([drafts[0], drafts[0]]);
   expect(drafts[0]).toMatchObject({ model: { provider: "openai", model: "owned" }, name: original });
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
@@ -505,4 +512,188 @@ it("shows the late consent link when cancellation fails without opening a tab", 
   expect(link.getAttribute("href")).toBe("https://remote.example.test/consent");
   expect(window.open).not.toHaveBeenCalled();
   expect(setupWrites).toHaveLength(0);
+});
+
+class GreetingSocket {
+  static OPEN = 1;
+  static CONNECTING = 0;
+  static wires: { socket: GreetingSocket; payload: Record<string, unknown> }[] = [];
+  static openSends = true;
+  readyState = 0;
+  onopen?: () => void;
+  onmessage?: (event: { data: string }) => void;
+  constructor() { queueMicrotask(() => { if (GreetingSocket.openSends) this.open(); }); }
+  open() { if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); } }
+  send(data: string) {
+    const payload = JSON.parse(data);
+    if (payload.type === "send") GreetingSocket.wires.push({ socket: this, payload });
+  }
+  close() { this.readyState = 3; }
+  receive(event: unknown) { this.onmessage?.({ data: JSON.stringify(event) }); }
+}
+
+const oldChat = { agentId: "alpha", sessionId: "old-session", turnId: "old-turn" };
+const answer = "I am your agent. I can sort your tasks.";
+const unrelatedAnswer = "This answer belongs to another turn.";
+const message = (role: "user" | "assistant", text: string, timestamp: number) => ({
+  role, content: [{ type: "text", text }], timestamp,
+});
+const transcript = () => within(getByRole(root, "region", { name: "Chat transcript" }));
+const activeGreeting = {
+  userText: FIRST_GREETING, userTimestamp: 1, startedAt: 2, text: "", thinking: "", toolCalls: [], toolResults: [],
+};
+function enableGreetingSocket() {
+  GreetingSocket.wires = [];
+  GreetingSocket.openSends = true;
+  vi.stubGlobal("WebSocket", GreetingSocket);
+
+}
+
+it("starts again, saves new chat IDs, and sends one greeting after a reload before the send", async () => {
+  enableGreetingSocket();
+  wizardExited = true; completed = true; firstChat = oldChat;
+  sessionStorage.setItem("yoplai:desktop-setup-step", "agent");
+  let checks = 0;
+  overrides = (path, method) => {
+    if (path === "/api/agents" && method === "POST") return response({ id: "alpha" });
+    if (path.startsWith("/api/desktop-setup/turns/")) { checks += 1; return response({ state: "none" }); }
+  };
+  boot("/setup?restart=1");
+  await heading("All your agents. One app.");
+  expect(wizardExited).toBe(false);
+  await modelScreen();
+  await click("Continue");
+  GreetingSocket.openSends = false;
+  await click("Create agent");
+  await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
+  expect(firstChat).not.toEqual(oldChat);
+  expect(completed).toBe(false);
+  expect(setupWrites.at(-1)).toMatchObject({ wizardExited: true, completed: false, firstChat });
+  await waitFor(() => expect(checks).toBeGreaterThan(0));
+  const path = location.pathname + location.search;
+  dispose?.();
+  GreetingSocket.openSends = true;
+  boot(path);
+  await waitFor(() => expect(GreetingSocket.wires).toHaveLength(1), { timeout: 2000 });
+  expect(GreetingSocket.wires[0].payload).toMatchObject({ ...firstChat, message: FIRST_GREETING });
+  expect(transcript().getAllByText(FIRST_GREETING)).toHaveLength(1);
+  expect(completed).toBe(false);
+});
+
+it.each(["answered", "failed"] as const)("resumes an active greeting and reloads after it is %s", async (outcome) => {
+  enableGreetingSocket();
+  wizardExited = true; firstChat = oldChat;
+  let turn = "running";
+  let checks = 0;
+  overrides = (path) => {
+    if (path === "/api/desktop-setup/turns/alpha/old-session/old-turn") { checks++; return response({ state: turn }); }
+    if (path.endsWith("/history")) return response(turn === "running" ? {
+      messages: [message("assistant", unrelatedAnswer, 0)], isStreaming: true, activeTurn: activeGreeting,
+    } : { messages: [message("user", FIRST_GREETING, 1), ...(turn === "answered" ? [message("assistant", answer, 3)] : [])] });
+  };
+  const path = "/chat/alpha?session=old-session";
+  boot(path);
+  await waitFor(() => expect(transcript().getAllByText(FIRST_GREETING)).toHaveLength(1));
+  expect(transcript().getByText(unrelatedAnswer)).toBeDefined();
+  await waitFor(() => expect(checks).toBeGreaterThan(0));
+  expect(completed).toBe(false);
+  expect(GreetingSocket.wires).toHaveLength(0);
+  turn = outcome;
+  dispose?.();
+  boot(path);
+  await waitFor(() => expect(transcript().getAllByText(FIRST_GREETING)).toHaveLength(1));
+  if (outcome === "answered") {
+    expect(transcript().getAllByText(answer)).toHaveLength(1);
+    await waitFor(() => expect(completed).toBe(true));
+  } else {
+    await button("Fix model access");
+    expect(completed).toBe(false);
+    await click("Fix model access");
+    await heading("Give your agents a model.");
+    expect(new URLSearchParams(location.search).get("return")).toBe(path);
+    await click("Continue");
+    await waitFor(() => expect(location.pathname + location.search).toBe(path));
+    await button("Fix model access");
+    await waitFor(() => expect(transcript().getAllByText(FIRST_GREETING)).toHaveLength(1));
+  }
+  expect(GreetingSocket.wires).toHaveLength(0);
+});
+
+it("does not show a raw error from the tagged socket", async () => {
+  enableGreetingSocket();
+  wizardExited = true; firstChat = oldChat;
+  let failed = false;
+  overrides = (path) => {
+    if (path.includes("desktop-setup/turns/")) return response({ state: failed ? "failed" : "none" });
+    if (path.endsWith("/history") && failed) return response({ messages: [message("user", FIRST_GREETING, 1)] });
+  };
+  boot("/chat/alpha?session=old-session");
+  await waitFor(() => expect(GreetingSocket.wires).toHaveLength(1), { timeout: 2000 });
+  failed = true;
+  GreetingSocket.wires[0].socket.receive({ type: "error", message: "Private provider error fixture" });
+  await button("Fix model access");
+  expect(root.textContent).toContain("Yoplai could not complete the first turn.");
+  expect(root.textContent).not.toContain("Private provider error fixture");
+  expect(transcript().getAllByText(FIRST_GREETING)).toHaveLength(1);
+  expect(completed).toBe(false);
+});
+
+it("lists missing local items, and keeps the bar closed until a new app start", async () => {
+  wizardExited = true;
+  overrides = (path) => {
+    if (path === "/api/model-access/models") return response({ models: [] });
+    if (path === "/api/agents") return response([{ id: "alpha@relay", name: "Remote Alpha", gateway: "relay" }]);
+  };
+  boot("/agents?filter=local");
+  const bar = () => findByRole(root, "complementary", { name: "Missing setup items" });
+  const scope = within(await bar());
+  for (const [name, step] of [["Model access", "model"], ["First agent", "agent"]]) {
+    const link = await scope.findByRole("link", { name }) as HTMLAnchorElement;
+    expect(new URL(link.href).searchParams.get("step")).toBe(step);
+    expect(new URL(link.href).searchParams.get("return")).toBe("/agents?filter=local");
+  }
+  await click("Close missing setup items");
+  dispose?.();
+  boot("/agents?filter=local");
+  await waitFor(() => expect(setupReads).toBe(2));
+  expect(queryByRole(root, "complementary", { name: "Missing setup items" })).toBeNull();
+  dispose?.();
+  sessionStorage.clear();
+  boot("/agents?filter=local");
+  await bar();
+});
+
+it.each([true, false])("shows the empty list action only in desktop mode (%s)", async (flag) => {
+  mode = flag; wizardExited = true;
+  if (flag) overrides = (path, method) => path === "/api/agents" && method === "POST" ? response({ id: "alpha" }) : undefined;
+  boot("/agents");
+  if (flag) {
+    await heading("Create your first agent");
+    await click("Create agent");
+    await heading("Create your first agent.");
+    expect(new URLSearchParams(location.search).get("return")).toBe("/agents");
+    await click("Create agent");
+    await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
+    expect(new URLSearchParams(location.search).get("session")).toBe(firstChat?.sessionId);
+  } else {
+    await heading("Agents");
+    expect(queryByRole(root, "heading", { name: "Create your first agent" })).toBeNull();
+  }
+});
+
+it("offers model repair for an agent whose exact model is missing", async () => {
+  wizardExited = true;
+  overrides = (path) => path === "/api/model-access/models" ? response({ models: [models[1]] }) : undefined;
+  boot("/chat/alpha?session=unrelated");
+  await click("Fix model access");
+  await heading("Give your agents a model.");
+  expect(new URLSearchParams(location.search).get("return")).toBe("/chat/alpha?session=unrelated");
+});
+
+it.each(["//elsewhere.test/", "/\\elsewhere.test/", "https://elsewhere.test/", "/.//elsewhere.test/"])("refuses the repair return %s", async (path) => {
+  wizardExited = true;
+  boot(`/setup?${new URLSearchParams({ step: "model", return: path })}`);
+  await click("Continue");
+  await heading("Create your first agent.");
+  expect(location.pathname).toBe("/setup");
 });

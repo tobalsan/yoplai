@@ -1,3 +1,7 @@
+import { stripBase } from "../lib/path";
+import { createFirstChat } from "../desktop-setup/first-chat";
+import { setupRepairHref } from "../desktop-setup/repair";
+import { useOptionalSetup } from "../desktop-setup/SetupGate";
 import type { McpAppViewReference } from "@yoplai/shared/types";
 import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
@@ -322,6 +326,18 @@ export function ChatView() {
     contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
+  const setup = useOptionalSetup();
+  const firstChat = createFirstChat({
+    agentId: () => params.agentId, sessionId: explicitSessionId, chat: session,
+    ready: () => !!agent() && session.historyLoaded()?.scope === currentSession() && !loading(),
+  });
+  const missingModel = () => {
+    const current = agent();
+    const models = setup?.models();
+    return current && !current.gateway && current.model && models && !models.some((model) =>
+      model.provider === current.model?.provider && model.model === current.model.model);
+  };
+  const repairModel = () => setupRepairHref("model", stripBase(location.pathname) + location.search);
   const [panelStorageReady, setPanelStorageReady] = createSignal(false);
   const initialPanelScope = currentSession();
   const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession, {
@@ -930,6 +946,13 @@ export function ChatView() {
         <ChatSettingsMenu agentId={params.agentId} settingsAgentId={settingsAgentId()} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
       </header>
 
+      <Show when={firstChat.failed() || missingModel()}>
+        <div class="desktop-chat-repair">
+          <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
+          <button type="button" class="pill-btn" onClick={() => navigate(repairModel())}>Fix model access</button>
+        </div>
+      </Show>
+      <Show when={firstChat.readError()}><p role="status">Yoplai could not check the first turn. Yoplai will try again.</p></Show>
       <ArchivedSessionBanner
         isArchived={isSessionArchived()}
         onRestore={async () => { await session.restoreArchived(); }}
@@ -937,7 +960,7 @@ export function ChatView() {
 
       <ScheduleAlertsBanner agentId={params.agentId} gateway={chatGateway()} schedulesAgentId={settingsAgentId() ?? undefined} />
 
-      <div class="chat-body">
+      <div class="chat-body" role="region" aria-label="Chat transcript">
         <div class="hero-spacer hero-spacer-top" />
         <div class="hero hero-collapsible" classList={{ gone: heroGone() }}>
           <Show
