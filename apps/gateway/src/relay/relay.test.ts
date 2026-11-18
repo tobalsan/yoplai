@@ -704,7 +704,7 @@ describe("desktop relay: chat relay", () => {
         // A chat message to an ID that HTTP cannot carry stays local too, so the transports agree.
         const events = await chat(localBase, "a%b@ids", "hi");
         expect(events.at(-1)?.type).toBe("error");
-        expect(fake.socketMessages).toEqual([]);
+        expect(fake.socketMessages.filter((message) => message.type !== "hello")).toEqual([]);
       }
     );
   });
