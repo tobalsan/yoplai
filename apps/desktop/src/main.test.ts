@@ -16,6 +16,9 @@ const desktop = vi.hoisted(() => ({
   loadURL: vi.fn<(_url: string) => Promise<void>>(),
   execute: vi.fn<(_code: string) => Promise<void>>(),
   onNavigation: vi.fn<(name: string, listener: (event: { preventDefault(): void }, url: string) => void) => void>(),
+  onWindowEvent: vi.fn<(name: string, listener: () => void) => void>(),
+  onAppEvent: vi.fn<(name: string, listener: (event: { preventDefault(): void }) => void) => void>(),
+  exit: vi.fn(),
   probe: vi.fn(async () => "/usr/bin"),
   start: vi.fn<(hooks: StackHooks) => { ready: Promise<Stack>; stop: Stack["stop"] }>(),
 }));
@@ -26,12 +29,13 @@ vi.mock("electron", () => ({
     isPackaged: true,
     requestSingleInstanceLock: () => true,
     getPath: (name: string) => path.join(storage.root, name),
-    on: vi.fn(),
+    on: desktop.onAppEvent,
+    exit: desktop.exit,
     whenReady: async () => {},
   },
   BrowserWindow: class {
     constructor(options: BrowserWindowConstructorOptions) { desktop.options(options); }
-    on = vi.fn();
+    on = desktop.onWindowEvent;
     loadFile = desktop.loadFile;
     loadURL = desktop.loadURL;
     webContents = { on: desktop.onNavigation, executeJavaScript: desktop.execute };
@@ -143,6 +147,57 @@ it("keeps the error page if the stack crashes during the fade", async () => {
   expect(desktop.loadURL).toHaveBeenCalledTimes(1);
   expect(decodeURIComponent(desktop.loadURL.mock.calls[0][0])).toContain("Gateway stopped");
   expect(setupItem().enabled).toBe(false);
+});
+
+it("does not load the UI from a pending fade after Restart", async () => {
+  const oldFade = Promise.withResolvers<void>();
+  const newFade = Promise.withResolvers<void>();
+  desktop.execute.mockReturnValueOnce(oldFade.promise).mockReturnValueOnce(newFade.promise);
+  await import("./main.js");
+  await vi.waitFor(() => expect(desktop.execute).toHaveBeenCalledTimes(1));
+  const navigate = desktop.onNavigation.mock.calls.find(([name]) => name === "will-navigate")![1];
+  navigate({ preventDefault: vi.fn() }, RESTART_URL);
+  await vi.waitFor(() => expect(desktop.execute).toHaveBeenCalledTimes(2));
+  expect(desktop.loadFile).toHaveBeenLastCalledWith(expect.any(String), { query: { mode: "wait" } });
+
+  oldFade.resolve();
+  await new Promise(setImmediate);
+  expect(desktop.loadURL).not.toHaveBeenCalled();
+  expect(setupItem().enabled).toBe(false);
+
+  newFade.resolve();
+  await vi.waitFor(() => expect(setupItem().enabled).toBe(true));
+  expect(desktop.loadURL.mock.calls).toEqual([[uiUrl]]);
+});
+
+it("does not load the UI from a pending fade after the window closes", async () => {
+  const fade = Promise.withResolvers<void>();
+  desktop.execute.mockReturnValue(fade.promise);
+  await import("./main.js");
+  await vi.waitFor(() => expect(desktop.execute).toHaveBeenCalled());
+  const close = desktop.onWindowEvent.mock.calls.find(([name]) => name === "closed")![1];
+  close();
+  fade.resolve();
+  await new Promise(setImmediate);
+  expect(desktop.loadURL).not.toHaveBeenCalled();
+  expect(setupItem().enabled).toBe(false);
+});
+
+it("does not load the UI from a pending fade during quit", async () => {
+  const fade = Promise.withResolvers<void>();
+  const shutdown = Promise.withResolvers<void>();
+  desktop.execute.mockReturnValue(fade.promise);
+  desktop.start.mockReturnValue({ ready: Promise.resolve({ ...stack, stop: () => shutdown.promise }), stop });
+  await import("./main.js");
+  await vi.waitFor(() => expect(desktop.execute).toHaveBeenCalled());
+  const quit = desktop.onAppEvent.mock.calls.find(([name]) => name === "before-quit")![1];
+  quit({ preventDefault: vi.fn() });
+  fade.resolve();
+  await new Promise(setImmediate);
+  expect(desktop.loadURL).not.toHaveBeenCalled();
+  expect(setupItem().enabled).toBe(false);
+  shutdown.resolve();
+  await vi.waitFor(() => expect(desktop.exit).toHaveBeenCalledWith(0));
 });
 
 it("starts in wait mode from the Restart link after the user corrects invalid JSON", async () => {
