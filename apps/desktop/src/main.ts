@@ -2,14 +2,15 @@ import { app, BrowserWindow, session, shell } from "electron";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
 import { LogBuffer } from "./log-buffer.js";
-import { createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
+import { createDevHome, createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
 import { resolveHome, seedHome } from "./packaged-env.js";
 import { fallbackPath, probeShellPath } from "./shell-path.js";
 import { startStack } from "./stack.js";
 import { createStackController } from "./stack-controller.js";
 
 const log = new LogBuffer(50);
-let createPlan: (ports: LaunchPorts) => LaunchPlan = createDevLaunchPlan;
+let devHome: string | undefined;
+let createPlan: (ports: LaunchPorts) => LaunchPlan = (ports) => createDevLaunchPlan(ports, devHome ??= createDevHome());
 const stackController = createStackController(() =>
   startStack({ log, createPlan: (ports) => createPlan(ports), onCrash: (reason) => !quitting && showError(reason) })
 );

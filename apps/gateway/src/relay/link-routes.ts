@@ -44,15 +44,23 @@ export function getRelayLinkService(): RelayLinkService {
   return sharedService;
 }
 
+export function requestPeerAddress(c: Context): string | undefined {
+  return (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
+}
+
+export function loopbackGatewayHosts(port: number): string[] {
+  return ["127.0.0.1", "localhost", "[::1]"].map((name) => `${name}:${port}`);
+}
+
 const defaultDeps: LinkRoutesDeps = {
   service: getRelayLinkService,
   isEnabled: isRelayEnabled,
   listener: getGatewayListener,
   configuredOrigins: allowedCorsOrigins,
-  peerAddress: (c) => (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress,
+  peerAddress: requestPeerAddress,
 };
 
-function isLoopbackAddress(address: string): boolean {
+export function isLoopbackAddress(address: string): boolean {
   const value = address.replace(/^::ffff:/i, "");
   return value === "::1" || LOOPBACK_V4_RE.test(value);
 }
@@ -237,7 +245,7 @@ export function relayLinkApi(overrides: Partial<LinkRoutesDeps> = {}): Middlewar
     if (!listener || peer === undefined || !isLoopbackAddress(peer)) return refuse(403, "untrusted_peer", "This route answers only on this computer.");
     if (!forwardedAddressesAreLoopback(c.req.raw.headers)) return refuse(403, "untrusted_peer", "This route answers only on this computer.");
     const host = c.req.header("host");
-    const allowedHosts = ["127.0.0.1", "localhost", "[::1]"].map((name) => `${name}:${listener.port}`);
+    const allowedHosts = loopbackGatewayHosts(listener.port);
     // The UI port is the port of the browser page. A proxy from that page rewrites Host to the gateway, so only the gateway port counts.
     if (host === undefined || !allowedHosts.includes(host.toLowerCase())) return refuse(403, "untrusted_host", "This route answers only on a loopback host name of this gateway.");
 
