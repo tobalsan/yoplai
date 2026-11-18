@@ -198,5 +198,56 @@ it("enables Pi API keys without the Claude warning but does not use a later Anth
   const model = runtime.getModels("anthropic")[0];
   expect((await runtime.getAuth(model))?.auth.apiKey === keys.anthropic.key).toBe(true);
   await fixture("pi", { anthropic: { type: "oauth", access: "sk-ant-oat-fake-pi", expires: Date.now() + 60_000 } });
+  await expect(runtime.getAuth(model)).rejects.toThrow("Accept the Claude warning in Model Access before you use this login.");
+});
+
+
+it.each([false, true])("requires the Claude warning for a mislabeled Pi token (expiry: %s)", async (hasExpiry) => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const external = createExternalSources(home);
+  const routes = createModelAccessRoutes(home, { external });
+  const post = (warningAccepted = false) => routes.request("/external/pi", {
+    method: "POST", body: JSON.stringify({ enabled: true, warningAccepted }),
+  });
+  const token = "sk-ant-oat-fake-pi";
+  await fixture("pi", { anthropic: { type: "api_key", key: token, ...(hasExpiry && { expires: Date.now() + 60_000 }) } });
+  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  const model = runtime.getModels("anthropic")[0];
+  const refused = await post();
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ error: "warning_required" });
   expect(await runtime.getAuth(model)).toBeUndefined();
+  const accepted = await post(true);
+  const body = await accepted.text();
+  expect(accepted.status).toBe(200);
+  expect(JSON.parse(body)).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: hasExpiry }] });
+  expect(body.includes(token)).toBe(false);
+  if (hasExpiry) expect((await runtime.getAuth(model))?.auth.apiKey === token).toBe(true);
+  else await expect(runtime.getAuth(model)).rejects.toThrow("This Claude login cannot be used. Sign in with Claude here, or use an API key.");
+});
+
+it("keeps Pi API keys after refusal and gives chat the Claude warning message", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const external = createExternalSources(home);
+  const routes = createModelAccessRoutes(home, { external });
+  const enable = () => routes.request("/external/pi", { method: "POST", body: '{"enabled":true}' });
+  const keys = { openai: { type: "api_key", key: "fake-openai-key" } };
+  await fixture("pi", keys);
+  expect((await enable()).status).toBe(200);
+  await fixture("pi", { ...keys, anthropic: { type: "api_key", key: "sk-ant-oat-fake-pi", expires: Date.now() + 60_000 } });
+  const { runtime, requireModelAuth } = await createModelAuth({ readExternal: external.resolve });
+  const claude = runtime.getModels("anthropic")[0];
+  const message = "Accept the Claude warning in Model Access before you use this login.";
+  await expect(requireModelAuth(claude)).rejects.toThrow(message);
+  expect((await enable()).status).toBe(409);
+  const fetch = vi.fn(async () => new Response(null, { status: 500 }));
+  vi.stubGlobal("fetch", fetch);
+  const chat = await runtime.completeSimple(claude, { messages: [{ role: "user", content: "Test.", timestamp: Date.now() }] });
+  expect(chat.errorMessage).toBe(message);
+  expect(fetch).not.toHaveBeenCalled();
+  expect((await runtime.getAuth(runtime.getModels("openai")[0]))?.auth.apiKey === keys.openai.key).toBe(true);
 });
