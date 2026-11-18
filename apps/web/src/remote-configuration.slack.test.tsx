@@ -50,6 +50,7 @@ beforeEach(() => {
   gateways.on("GET", `${east}/api/capabilities`, { json: caps() });
   gateways.on("GET", `${west}/api/capabilities`, { json: caps({ user: { id: "remote-bob", name: "Bob", role: "user" } }) });
   gateways.on("GET", "/api/slack/pairings", { json: { pairings: [pairing("ULOCAL")] } });
+  gateways.on("GET", "/api/surface-links", { json: { links: [] } });
   gateways.on("GET", `${east}/api/slack/pairings`, { json: { pairings: [pairing("UEAST")] } });
   gateways.on("GET", `${west}/api/slack/pairings`, { json: { pairings: [pairing("UWEST")] } });
   vi.stubGlobal("fetch", gateways.fetchMock);

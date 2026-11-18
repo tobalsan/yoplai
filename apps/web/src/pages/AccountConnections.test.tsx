@@ -60,7 +60,7 @@ describe("AccountConnections", () => {
       { id: "link-threadit", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 },
       { id: "link-mattermost", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 },
     ] }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     expect(fetchMock).toHaveBeenCalledWith("/api/surface-links", expect.objectContaining({ credentials: "include" }));
     expect(root.textContent).toContain("Threadit @river");
@@ -78,7 +78,7 @@ describe("AccountConnections", () => {
       .mockResolvedValueOnce(Response.json({ links: [{ id: "link-threadit", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }))
       .mockResolvedValueOnce(Response.json({ ok: true }))
       .mockResolvedValueOnce(Response.json({ links: [] }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     expect(root.textContent).toContain("Threadit @river");
     root.querySelector<HTMLButtonElement>("button")!.click();
@@ -100,7 +100,7 @@ describe("AccountConnections", () => {
       .mockResolvedValueOnce(Response.json({ links: [{ id: "bob-link", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 }] }))
       .mockReturnValueOnce(new Promise<Response>((resolve) => { finishBob = resolve; }))
       .mockResolvedValueOnce(Response.json({ links: [] }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     root.querySelector<HTMLButtonElement>("button")!.click();
     expect(root.textContent).toContain("Removing…");
@@ -131,7 +131,7 @@ describe("AccountConnections", () => {
     fetchMock
       .mockReturnValueOnce(new Promise<Response>((resolve) => { finishAlice = resolve; }))
       .mockResolvedValueOnce(Response.json({ links: [{ id: "bob-link", surface: "mattermost", scope: "https://chat.example.test", externalId: "user-ember", username: "ember", linkedAt: 1704067200000 }] }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     setSession({ data: { user: { id: "bob" } } });
     await tick();
     expect(root.textContent).toContain("Mattermost @ember");
@@ -151,13 +151,13 @@ describe("AccountConnections", () => {
       signal = init?.signal ?? undefined;
       signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
     }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     expect(root.textContent).toContain("Loading linked accounts…");
     expect(root.textContent).toContain("Slack user U1");
     root.querySelector<HTMLButtonElement>("button")!.click();
     await tick();
-    expect(unpairMock).toHaveBeenCalledWith(pairing);
+    expect(unpairMock).toHaveBeenCalledWith(pairing, undefined);
     expect(root.textContent).toContain("No Slack accounts are paired.");
     expect(root.textContent).toContain("Loading linked accounts…");
     await vi.waitFor(() => expect(root.querySelector('[role="alert"]')).not.toBeNull(), { timeout: 10_000 });
@@ -171,7 +171,7 @@ describe("AccountConnections", () => {
     useSessionMock.mockReturnValue(session);
     fetchPairingsMock.mockResolvedValue([pairing]);
     fetchMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     expect(root.querySelector('[role="alert"]')?.textContent).toBe("Failed to load linked accounts");
     expect(root.textContent).toContain("Slack user U1");
@@ -184,7 +184,7 @@ describe("AccountConnections", () => {
     fetchMock
       .mockResolvedValueOnce(Response.json({ links: [{ id: "alice-link", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }))
       .mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
-    dispose = render(() => <AccountConnections />, root);
+    dispose = mountPage();
     await tick();
     root.querySelector<HTMLButtonElement>("button")!.click();
     await tick();
