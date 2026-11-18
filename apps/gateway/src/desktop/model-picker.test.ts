@@ -119,3 +119,40 @@ it("checks the default for each external source with a fake provider", async () 
   expect(await list()).toEqual(expect.arrayContaining(defaults.map((row) => expect.objectContaining({ ...row, default: true, ready: true }))));
   expect(call).toHaveBeenCalledTimes(4);
 });
+
+it("sends the submitted key only to the endpoint in the chat model config", async () => {
+  const { createServer } = await import("node:http");
+  const requests: Array<{ path?: string; submitted: boolean }> = [];
+  const server = createServer((req, res) => {
+    requests.push({ path: req.url, submitted: req.headers.authorization === "Bearer fake-submitted-key" });
+    req.resume();
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    void successfulCall().text().then((text) => res.end(text));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const bound = server.address();
+    if (!bound || typeof bound === "string") throw new Error("The test server did not bind.");
+    const baseUrl = `http://127.0.0.1:${bound.port}/custom`;
+    await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { openai: { baseUrl } } }));
+    const fetchLocal = globalThis.fetch;
+    const otherEndpoint = vi.fn();
+    vi.stubGlobal("fetch", (input: string | Request | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.origin !== new URL(baseUrl).origin) {
+        otherEndpoint();
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }
+      return fetchLocal(input, init);
+    });
+    const { createModelAccessRoutes } = await import("./model-access.js");
+    const routes = createModelAccessRoutes(home);
+    const checked = await routes.request("/api-key", { method: "POST", body: JSON.stringify({ provider: "openai", key: "fake-submitted-key", checkOnly: true }) });
+    expect(await checked.json()).toMatchObject({ ready: true, saved: false });
+    expect(requests).toEqual([{ path: "/custom/responses", submitted: true }]);
+    expect(otherEndpoint).not.toHaveBeenCalled();
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+});
