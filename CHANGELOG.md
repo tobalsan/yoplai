@@ -43,6 +43,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The desktop app uses the new Yoplai icon in the Dock.
 - The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.
 - The setup wordmark shows YOPLAI with no period. The splash keeps its period.
 
