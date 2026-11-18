@@ -83,7 +83,7 @@ it("checks the default for each external source with a fake provider", async () 
     exists: async () => true,
     read: async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt: Date.now() + 60_000 } }),
   } });
-  for (const source of ["codex", "claude-code", "opencode", "pi"] as const) await external.enable(source, true);
+  for (const source of ["codex", "claude-code", "opencode", "pi"] as const) await external.enable(source, true, source === "claude-code");
   const call = vi.fn(async (input: string | Request | URL) => {
     const url = new URL(input instanceof Request ? input.url : input);
     if (url.hostname === "api.anthropic.com") return providerStream([

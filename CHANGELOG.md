@@ -62,6 +62,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop setup requires the Claude warning before it can use an external Claude subscription.
 - Desktop setup lists only providers that need no input other than the API key.
 - A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
 - The desktop guard rejects IPv4 forwarding addresses in brackets.

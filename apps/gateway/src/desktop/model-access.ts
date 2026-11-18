@@ -113,9 +113,10 @@ export function createModelAccessRoutes(home: string, deps: {
     if (!isExternalSource(source)) return c.json({ error: "unknown_source" }, 404);
     const body = consentSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
-    if (source === "claude-code" && body.data.enabled && body.data.warningAccepted !== true) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
+    const result = await external.enable(source, body.data.enabled, body.data.warningAccepted);
+    if ("warningRequired" in result) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
     modelReadiness.clear(source);
-    return c.json(await external.enable(source, body.data.enabled));
+    return c.json(result);
   });
   routes.get("/models", async (c) => {
     const { runtime } = await getAuth();
