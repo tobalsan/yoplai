@@ -205,6 +205,7 @@ if (!hasInstanceLock) app.quit();
 
 void app.whenReady().then(async () => {
   if (!hasInstanceLock) return;
+  if (!app.isPackaged) app.dock?.setIcon(path.join(import.meta.dirname, "../resources/icon.png"));
   console.log("[desktop] ready");
   installPermissionHandlers();
   mainWindow = createWindow();
