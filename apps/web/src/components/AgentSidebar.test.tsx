@@ -95,6 +95,23 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
+  it.each([["Chrome/146", true], ["Electron/45", false]])("shows the brand text in %s when expected", (userAgent, visible) => {
+    const agent = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(userAgent);
+    const toggle = vi.fn();
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={toggle} />, container);
+    try {
+      const home = queryByRole(container, "link", { name: "Yoplai" });
+      expect(home?.getAttribute("href") ?? null).toBe(visible ? "/" : null);
+      expect(getByRole(container, "navigation", { name: "Primary" })).toBeTruthy();
+      getByRole(container, "button", { name: "«" }).click();
+      expect(toggle).toHaveBeenCalledOnce();
+    } finally {
+      dispose();
+      agent.mockRestore();
+    }
+  });
+
   it("marks Agents while any actionable credential pause remains", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{
       agentId: "scribe", jobId: "digest", jobName: "Digest", mode: "owner",
