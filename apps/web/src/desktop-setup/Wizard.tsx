@@ -1,10 +1,10 @@
 import { For, Match, Show, Switch, createEffect, createResource, createSignal } from "solid-js";
 import { useNavigate } from "@solidjs/router";
-import { GatewayLinkPanel } from "../pages/RemoteGateways";
+import { clearPendingSetupLink, GatewayLinkPanel, readPendingSetupLink } from "../pages/RemoteGateways";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { AgentMark, Wordmark } from "./Marks";
 import { ModelAccess } from "./ModelAccess";
-import { FirstAgent } from "./FirstAgent";
+import { FirstAgent, clearAgentDraft, readAgentDraft } from "./FirstAgent";
 import { useSetup } from "./SetupGate";
 import { errorText, readModels, type Model } from "./api";
 import styles from "./wizard.css?inline";
@@ -18,8 +18,9 @@ export default function Wizard() {
   const savedStep = sessionStorage.getItem(checkpoint);
   const [index, setIndex] = createSignal(Math.max(0, steps.findIndex((step) => step === savedStep)));
   createEffect(() => sessionStorage.setItem(checkpoint, steps[index()]));
-  const [remote, setRemote] = createSignal(false);
-  const [link, setLink] = createSignal(false);
+  const resume = savedStep === "choice" && !!readPendingSetupLink();
+  const [remote, setRemote] = createSignal(resume);
+  const [link, setLink] = createSignal(resume);
   const [models, setModels] = createSignal<Model[]>([]);
   const [loaded, { refetch }] = createResource(() => index() === 3 && !models().length, async () => {
     try { return await readModels(); }
@@ -38,6 +39,8 @@ export default function Wizard() {
       await setup.save({ wizardExited: true, exitedAt: new Date().toISOString(), ...(skip ? {
         skipped: [...new Set([...(setup.state()?.skipped ?? []), steps[index()]])],
       } : {}) });
+      clearAgentDraft();
+      clearPendingSetupLink();
       sessionStorage.removeItem(checkpoint);
       navigate(destination, { replace: true });
     } catch (cause) {
@@ -47,7 +50,7 @@ export default function Wizard() {
   };
   const back = () => {
     setError("");
-    if (link()) setLink(false);
+    if (link()) { clearPendingSetupLink(); setLink(false); }
     else setIndex(index() - 1);
   };
 
@@ -83,7 +86,7 @@ export default function Wizard() {
         </Match>
         <Match when={index() === 3}>
           <h1>Create your first agent.</h1>
-          <Show when={agentModels().length} fallback={<Show when={loaded.loading} fallback={
+          <Show when={readAgentDraft() || agentModels().length} fallback={<Show when={loaded.loading} fallback={
             <button class="setup-outline" onClick={() => { setError(""); void refetch(); }}>Reload models</button>
           }><p role="status">Loading models…</p></Show>}>
             <FirstAgent models={agentModels()} onBusy={setCreating} onCreated={(id) => exit(`/chat/${encodeURIComponent(id)}`)} />

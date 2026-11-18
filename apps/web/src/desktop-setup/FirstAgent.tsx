@@ -15,18 +15,31 @@ const rank = (source: string) => source === "owned" ? 0 : source === "environmen
 
 type Draft = { requestId: string; name: string; purpose: string; avatar: number; model: { provider: string; model: string } };
 
+const draftKey = "yoplai:desktop-setup-draft";
+export const clearAgentDraft = () => sessionStorage.removeItem(draftKey);
+export function readAgentDraft(): Draft | undefined {
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(draftKey) ?? "null") as Draft | null;
+    if (draft && typeof draft.requestId === "string" && typeof draft.name === "string" &&
+      typeof draft.purpose === "string" && Number.isInteger(draft.avatar) && draft.avatar >= 1 && draft.avatar <= 10 &&
+      typeof draft.model?.provider === "string" && typeof draft.model.model === "string") return draft;
+  } catch { return undefined; }
+}
+
 export function FirstAgent(props: { models: Model[]; onCreated: (id: string) => Promise<void>; onBusy: (busy: boolean) => void }) {
-  const [name, setName] = createSignal(randomName());
-  const [purpose, setPurpose] = createSignal("");
-  const [avatar, setAvatar] = createSignal(Math.floor(Math.random() * 10) + 1);
+  const saved = readAgentDraft();
+  const [name, setName] = createSignal(saved?.name ?? randomName());
+  const [purpose, setPurpose] = createSignal(saved?.purpose ?? "");
+  const [avatar, setAvatar] = createSignal(saved?.avatar ?? Math.floor(Math.random() * 10) + 1);
   const defaultModel = [...props.models].sort((a, b) => rank(a.source) - rank(b.source)).find((model) => model.default);
-  const [selected, setSelected] = createSignal(defaultModel ? modelKey(defaultModel) : "");
+  const [selected, setSelected] = createSignal(saved ? JSON.stringify([saved.model.provider, saved.model.model]) : defaultModel ? modelKey(defaultModel) : "");
   const [creating, setCreating] = createSignal("");
   const [error, setError] = createSignal("");
-  const [retry, setRetry] = createSignal<Draft>();
+  const [retry, setRetry] = createSignal<Draft | undefined>(saved);
   const model = createMemo(() => props.models.find((row) => modelKey(row) === selected()));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(timer));
+  let disposed = false;
+  onCleanup(() => { disposed = true; clearTimeout(timer); });
   const change = () => { setRetry(undefined); setError(""); };
   const create = async (draft: Draft) => {
     if (creating()) return;
@@ -36,22 +49,22 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string) => 
     setCreating("Creating your agent…");
     timer = setTimeout(() => setCreating("Writing its instructions…"), 650);
     try {
+      sessionStorage.setItem(draftKey, JSON.stringify(draft));
       const result = await request<{ id: string }>("agents", "POST", draft);
-      await props.onCreated(result.id);
+      if (!disposed) await props.onCreated(result.id);
     } catch (cause) {
-      setError(errorText(cause));
-      setRetry(draft);
+      if (!disposed) { setError(errorText(cause)); setRetry(draft); }
     } finally {
       clearTimeout(timer);
-      setCreating("");
-      props.onBusy(false);
+      if (!disposed) { setCreating(""); props.onBusy(false); }
     }
   };
   return <form onSubmit={(event) => {
     event.preventDefault();
+    const draft = retry();
+    if (draft) { void create(draft); return; }
     const option = model();
     if (!option) return;
-    if (retry()) { void create(retry()!); return; }
     const chosenName = name().trim() || randomName();
     setName(chosenName);
     void create({ requestId: crypto.randomUUID(), name: chosenName, purpose: purpose(), avatar: avatar(), model: { provider: option.provider, model: option.model } });
@@ -74,14 +87,14 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string) => 
             <button type="button" class="setup-outline" aria-pressed={purpose() === text} disabled={!!creating()} onClick={() => { change(); setPurpose(text); }}>{title}</button>
           }</For></div>
         </div>
-        <label>Model<select required value={selected()} disabled={!!creating()} onChange={(event) => { change(); setSelected(event.currentTarget.value); }}>
-          <Show when={!defaultModel}><option value="">Select a model</option></Show>
+        <label>Model<select required={!retry()} value={selected()} disabled={!!creating()} onChange={(event) => { change(); setSelected(event.currentTarget.value); }}>
+          <Show when={!defaultModel || (retry() && !model())}><option value="" selected={!model()}>Select a model</option></Show>
           <For each={props.models}>{(option) => <option value={modelKey(option)} selected={selected() === modelKey(option)}>{option.name}{option.ready ? "     ● Ready" : ""}</option>}</For>
         </select></label>
       </div>
     </div>
     <Show when={error()}><p role="alert">{error()}</p></Show>
     <Show when={creating()}><p role="status">{creating()}</p></Show>
-    <button class="setup-primary" type="submit" disabled={!model() || !!creating()}>{retry() ? "Retry" : "Create agent"}</button>
+    <button class="setup-primary" type="submit" disabled={(!retry() && !model()) || !!creating()}>{retry() ? "Retry" : "Create agent"}</button>
   </form>;
 }

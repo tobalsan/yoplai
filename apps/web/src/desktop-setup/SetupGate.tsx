@@ -16,7 +16,7 @@ export function SetupGate(props: { children: JSX.Element }) {
   const navigate = useNavigate();
   const enabled = () => capabilities.desktopSetup === true && !capabilities.multiUser;
   const onSetup = () => stripBase(location.pathname) === "/setup";
-  const [state, { mutate }] = createResource(enabled, () => readSetup().catch(() => undefined));
+  const [state, { mutate, refetch }] = createResource(enabled, () => readSetup().catch(() => undefined));
   const pendingChat = () => {
     const chat = state()?.firstChat;
     if (!chat || state()?.completed) return false;
@@ -31,9 +31,14 @@ export function SetupGate(props: { children: JSX.Element }) {
     }
   });
   const show = () => enabled()
-    ? !state.loading && (onSetup() || state()?.wizardExited !== false || pendingChat())
+    ? !state.loading && !!state() && (onSetup() || state()?.wizardExited === true || pendingChat())
     : !onSetup();
   return <Setup.Provider value={{ state, async save(update) { mutate(await saveSetup(update)); } }}>
+    <Show when={enabled() && !state.loading && !state()}>
+      <main><p role="alert">Yoplai could not read the setup state.</p>
+        <button onClick={() => void refetch()}>Retry</button>
+      </main>
+    </Show>
     <Show when={show()}>{props.children}</Show>
   </Setup.Provider>;
 }
