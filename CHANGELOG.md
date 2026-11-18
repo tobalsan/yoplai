@@ -60,6 +60,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- A desktop key check uses the same model endpoint as chat.
+
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
 - In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
 - The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.

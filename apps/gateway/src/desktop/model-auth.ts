@@ -32,8 +32,9 @@ export async function createModelAuth(options: {
   const home = options.home ?? CONFIG_DIR;
   const readExternal = options.readExternal ?? (isRelayEnabled() ? getExternalSources(home).resolve : undefined);
   const authPath = path.join(home, "auth.json");
+  const modelsPath = path.join(home, "models.json");
   const runtime = await ModelRuntime.create(options.submitted ? {
-    modelsPath: null,
+    modelsPath,
     refreshOnCreate: false,
     credentials: {
       read: async () => undefined,
@@ -41,7 +42,7 @@ export async function createModelAuth(options: {
       modify: async () => { throw new Error("This store cannot save keys."); },
       delete: async () => { throw new Error("This store cannot delete keys."); },
     },
-  } : { authPath, modelsPath: path.join(home, "models.json") });
+  } : { authPath, modelsPath });
   const nativeAuth = runtime.getAuth.bind(runtime);
   const request = new AsyncLocalStorage<{ external: boolean; source?: string }>();
 
@@ -157,9 +158,9 @@ export async function completeModelOnce(runtime: Awaited<ReturnType<typeof creat
   return result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
 }
 
-export async function checkLiteralModelKey(provider: string, key: string, modelId: string) {
+export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR) {
   if (!isLiteralKey(key)) return false;
-  const { runtime } = await createModelAuth({ submitted: { provider, key } });
+  const { runtime } = await createModelAuth({ home, submitted: { provider, key } });
   const model = runtime.getModel(provider, modelId);
   if (!model || !runtime.getProvider(provider)?.auth.apiKey) return false;
   try {

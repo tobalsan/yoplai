@@ -84,7 +84,7 @@ export function createModelAccessRoutes(home: string, deps: {
       const model = defaultModel(runtime.getModels(provider));
       if (!model || !runtime.getProvider(provider)?.auth.apiKey?.login) return c.json({ error: "unknown_provider" }, 404);
       if (!checkOnly && !replace && (await runtime.listCredentials()).some((entry) => entry.providerId === provider)) return c.json({ error: "replacement_required", provider }, 409);
-      if (!await checkKey(provider, key, model.id)) return c.json({ error: "key_check_failed", message: "The API key check failed." }, 422);
+      if (!await checkKey(provider, key, model.id, home)) return c.json({ error: "key_check_failed", message: "The API key check failed." }, 422);
       if (!checkOnly) await runtime.login(provider, "api_key", {
         prompt: async (prompt) => {
           if (prompt.type !== "secret") throw new Error("The model access request failed.");
