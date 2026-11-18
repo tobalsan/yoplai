@@ -156,7 +156,7 @@ function Layout(props: { children?: JSX.Element }) {
           --desktop-buttons-width: 88px;
           --desktop-buttons-height: 40px;
         }
-        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open])) .desktop-window {
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window {
           --desktop-header-region: no-drag;
         }
         .desktop-window:not(.desktop-wizard, :has(.left-nav-shell))::before {
