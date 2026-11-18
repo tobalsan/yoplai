@@ -28,17 +28,20 @@ describe("vite dev proxy", () => {
 
   it("adds the client address to X-Forwarded-For for a request and a socket upgrade", async () => {
     const seen: Array<string | string[] | undefined> = [];
+    let upgradeHeaders: http.IncomingHttpHeaders | undefined;
     const gateway = http.createServer((req, res) => {
       seen.push(req.headers["x-forwarded-for"]);
       res.end("ok");
     });
     gateway.on("upgrade", (req, socket) => {
+      upgradeHeaders = req.headers;
       seen.push(req.headers["x-forwarded-for"]);
       socket.destroy();
     });
     await new Promise<void>((resolve) => gateway.listen(0, "127.0.0.1", resolve));
     closers.push(() => new Promise((resolve) => { gateway.closeAllConnections(); gateway.close(() => resolve()); }));
-    vi.stubEnv("YOPLAI_GATEWAY_PORT", String((gateway.address() as AddressInfo).port));
+    const gatewayPort = (gateway.address() as AddressInfo).port;
+    vi.stubEnv("YOPLAI_GATEWAY_PORT", String(gatewayPort));
     const ui = await createServer({
       configFile: new URL("../vite.config.ts", import.meta.url).pathname,
       logLevel: "silent",
@@ -57,6 +60,7 @@ describe("vite dev proxy", () => {
         headers: {
           connection: "Upgrade",
           upgrade: "websocket",
+          origin: `http://127.0.0.1:${uiPort}`,
           "sec-websocket-version": "13",
           "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
           "x-forwarded-for": "10.0.0.5",
@@ -67,6 +71,10 @@ describe("vite dev proxy", () => {
       upgrade.end();
     });
     expect(seen).toEqual(["10.0.0.5,127.0.0.1", "10.0.0.5,127.0.0.1"]);
+    expect(upgradeHeaders).toMatchObject({
+      host: `127.0.0.1:${gatewayPort}`,
+      origin: `http://127.0.0.1:${uiPort}`,
+    });
   });
 
   it("keeps a viewer grant out of the proxy error log when the gateway connection fails", async () => {

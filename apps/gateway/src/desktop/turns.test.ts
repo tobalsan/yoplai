@@ -91,7 +91,7 @@ async function boot() {
       ws.once("open", () => ws.send(JSON.stringify({ type: "send", agentId: "alpha", message: "Hello", ...payload })));
       ws.on("message", (raw) => {
         const event = JSON.parse(raw.toString());
-        if (event.type === "error" || event.type === "done" && !event.meta?.queued) {
+        if (event.type === "turn_exists" || event.type === "error" || event.type === "done" && !event.meta?.queued) {
           resolve(event);
           ws.close();
         }
@@ -115,19 +115,19 @@ it("starts one run for parallel sends and refuses the same ID after a restart", 
   const first = app.send({ sessionId, turnId });
   const second = app.send({ sessionId, turnId: turnId.toUpperCase() });
   try {
-    expect(await Promise.race([first, second])).toMatchObject({ type: "error", code: "turn_exists" });
+    expect(await Promise.race([first, second])).toMatchObject({ type: "turn_exists" });
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(await app.state(sessionId, turnId)).toEqual({ state: "running" });
   } finally {
     release();
   }
   expect(await Promise.all([first, second])).toEqual(expect.arrayContaining([expect.objectContaining({ type: "done" })]));
-  expect(await app.send({ sessionId, turnId })).toMatchObject({ code: "turn_exists" });
+  expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "turn_exists" });
   expect(await app.state(sessionId, turnId)).toEqual({ state: "answered" });
   await stop();
   vi.resetModules();
   app = await boot();
-  expect(await app.send({ sessionId, turnId })).toMatchObject({ code: "turn_exists" });
+  expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "turn_exists" });
   expect(await app.state(sessionId, turnId)).toEqual({ state: "answered" });
   expect(await app.history(sessionId)).toMatchObject({ messages: [{ role: "user", content: "Hello" }, { role: "assistant", content: "Ready" }] });
   expect(run).toHaveBeenCalledTimes(1);
@@ -141,10 +141,15 @@ it("reports a failed turn and refuses invalid or untrusted sends", async () => {
   expect(await app.send({ sessionId, turnId }, "http://localhost:9999")).toMatchObject({ code: "invalid_turn" });
   expect(await app.send({ turnId })).toMatchObject({ message: "Supply a valid session ID with the turn ID." });
   expect(await app.send({ sessionId, turnId: "invalid" })).toMatchObject({ message: "Check the chat request. The turn ID must be a UUID." });
+  for (const message of ["/think", "  /abort", "/new"]) {
+    expect(await app.send({ sessionId, turnId, message })).toMatchObject({
+      type: "error", code: "invalid_turn", message: "Send a message without a slash command when you use a turn ID.",
+    });
+  }
   expect(await app.state(sessionId, turnId)).toEqual({ state: "none" });
   expect(run).not.toHaveBeenCalled();
   expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "error", message: "Something went wrong, please try again." });
   expect(await app.state(sessionId, turnId)).toEqual({ state: "failed" });
-  expect(await app.send({ sessionId, turnId })).toMatchObject({ code: "turn_exists" });
+  expect(await app.send({ sessionId, turnId })).toMatchObject({ type: "turn_exists" });
   expect(run).toHaveBeenCalledTimes(1);
 });

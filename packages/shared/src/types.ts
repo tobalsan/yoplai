@@ -2577,6 +2577,8 @@ export type WsHistoryUpdatedEvent = {
   sessionId: string;
 };
 
+export type WsTurnExistsEvent = { type: "turn_exists" };
+
 export type WsSessionResetEvent = {
   type: "session_reset";
   sessionId: string;
@@ -2649,6 +2651,7 @@ export type WsServerMessage =
   | StreamEvent
   | WsHistoryUpdatedEvent
   | WsSessionResetEvent
+  | WsTurnExistsEvent
   | WsStatusEvent
   | WsFileChangedEvent
   | WsAgentChangedEvent

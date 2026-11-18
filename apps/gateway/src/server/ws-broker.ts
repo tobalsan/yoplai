@@ -382,7 +382,7 @@ export class WsBroker {
         const { claimDesktopTurn } = await import("../desktop/turns.js");
         finish = await claimDesktopTurn(CONFIG_DIR, agent.id, sessionId, turnId);
         if (!finish) {
-          this.send(ws, { type: "error", code: "turn_exists", message: "The turn already exists." });
+          this.send(ws, { type: "turn_exists" });
           return;
         }
         normalized.params.onDeferredResult = finish;

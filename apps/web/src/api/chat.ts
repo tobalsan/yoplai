@@ -280,9 +280,13 @@ export function streamMessage(
   ws.onmessage = (e) => {
     if (terminated) return;
     const event = JSON.parse(e.data) as WsStreamEvent;
-    if (event.type === "done" || event.type === "error") {
+    if (event.type === "done" || event.type === "error" || event.type === "turn_exists") {
       terminated = true;
       closeApprovals();
+    }
+    if (event.type === "turn_exists") {
+      callbacks?.onTurnExists?.();
+      return;
     }
     const approval = event as unknown as { type: string };
     if (approval.type === "device_approval_request") {
@@ -291,10 +295,6 @@ export function streamMessage(
     }
     if (approval.type === "device_approval_resolved") {
       callbacks?.onDeviceApprovalResolved?.(event as unknown as WsDeviceApprovalResolved);
-      return;
-    }
-    if (event.type === "error" && event.code === "turn_exists" && options?.turnId && callbacks?.onTurnExists) {
-      callbacks.onTurnExists();
       return;
     }
     dispatchWsEvent(event, {

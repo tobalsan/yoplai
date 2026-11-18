@@ -196,6 +196,7 @@ export default defineConfig({
       },
       "/ws": {
         target: gatewayTarget,
+        changeOrigin: true,
         ws: true,
         xfwd: true,
       },
