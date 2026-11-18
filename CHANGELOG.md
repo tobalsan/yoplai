@@ -63,6 +63,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - A desktop key check uses the same model endpoint as chat.
+- The desktop model picker respects the model list for the signed-in account.
 - Threadit isolates agent sessions by top-level message so a failed turn cannot carry its saved history into other branches of the thread.
 - Gateway `send_file` finishes when a file in `/workspace/data` shrinks during delivery and cleans up incomplete copies on cancellation.
 - Extension catalogs mask channel credentials and display non-secret environment references by name. Agent extension blocks can use names from their workspace `.env` or `extensionEnvAllowlist` in `yoplai.json`.

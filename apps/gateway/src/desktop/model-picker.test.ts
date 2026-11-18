@@ -156,3 +156,21 @@ it("sends the submitted key only to the endpoint in the chat model config", asyn
     server.closeAllConnections();
   }
 });
+
+it("lists only the Copilot models that the owned account can use", async () => {
+  const allowed = "claude-fable-5";
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ "github-copilot": {
+    type: "oauth", access: "fake-copilot-access", refresh: "fake-copilot-refresh",
+    expires: Date.now() + 3_600_000, availableModelIds: [allowed],
+  } }));
+  const call = vi.fn(async () => new Response(null, { status: 500 }));
+  vi.stubGlobal("fetch", call);
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const response = await createModelAccessRoutes(home).request("/models");
+  expect(response.status).toBe(200);
+  const body = await response.json() as { models: Array<{ provider: string }> };
+  expect(body.models.filter((model) => model.provider === "github-copilot")).toEqual([
+    expect.objectContaining({ model: allowed, source: "owned", default: true, ready: false }),
+  ]);
+  expect(call).not.toHaveBeenCalled();
+});

@@ -113,9 +113,10 @@ export function createModelAccessRoutes(home: string, deps: {
     const { runtime } = await getAuth();
     const owned = await runtime.listCredentials();
     const externalStatus = await external.status();
-    const models = runtime.getProviders().flatMap((provider) => {
+    const groups = await Promise.all(runtime.getProviders().map(async (provider) => {
       const own = owned.find((credential) => credential.providerId === provider.id);
-      const included = runtime.getModels(provider.id).filter(pickerModel);
+      const catalog = own ? await runtime.getAvailable(provider.id) : runtime.getModels(provider.id);
+      const included = catalog.filter(pickerModel);
       const rows = included.flatMap((model) => {
         let source: string | undefined;
         if (own) {
@@ -134,8 +135,8 @@ export function createModelAccessRoutes(home: string, deps: {
         if (row) row.default = true;
       }
       return rows;
-    });
-    return c.json({ models });
+    }));
+    return c.json({ models: groups.flat() });
   });
   routes.post("/models/check", async (c) => {
     const body = modelSchema.safeParse(await c.req.json().catch(() => undefined));
