@@ -1861,7 +1861,7 @@ describe("ChatView abort handling", () => {
   it("shows the default avatar of an agent with no avatar in both the header and the hero", async () => {
     fetchAgentSuggestionsMock.mockResolvedValue([]);
     const { container, dispose } = renderView();
-    await waitFor(() => expect(queryByRole(container, "link", { name: /settings$/ })).not.toBeNull());
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
     // The header and the hero each show one image of the same agent.
     await waitFor(() => expect(defaultAvatarSources(container)).toEqual([defaultAvatarUrl("agent-1"), defaultAvatarUrl("agent-1")]));
     dispose();
