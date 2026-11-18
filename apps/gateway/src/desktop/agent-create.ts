@@ -6,7 +6,7 @@ import { AgentYamlConfigSchema } from "@yoplai/shared";
 import { Hono } from "hono";
 import yaml from "js-yaml";
 import { z } from "zod";
-import { allowsDesktopAgentDiscovery, getActiveAgents, getConfigPath, isAgentActive, loadConfig, setLoadedConfig } from "../config/index.js";
+import { allowsDesktopAgentDiscovery, desktopDiscoveryCaseAliases, getActiveAgents, getConfigPath, isAgentActive, loadConfig, setLoadedConfig } from "../config/index.js";
 import { reloadAfterExtensionWrite } from "../extensions/reload.js";
 import type { createInstructionWriter } from "./agent-instructions.js";
 import type { createModelAccess } from "./model-access.js";
@@ -46,17 +46,15 @@ async function findRequest(parent: string, requestId: string): Promise<FoundAgen
 async function pickSlug(parent: string, name: string): Promise<string> {
   const base = name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase().replace(/^-|-$/g, "") || "agent";
   const config = loadConfig(getConfigPath());
-  const ids = new Set([...config.agents, ...(config.pool ?? [])].map((agent) => agent.id));
+  const taken = new Set([
+    ...(await fs.readdir(parent)).map((entry) => entry.toLowerCase()),
+    ...[...config.agents, ...(config.pool ?? [])].map((agent) => agent.id.toLowerCase()),
+    ...desktopDiscoveryCaseAliases(parent),
+  ]);
   for (let i = 1; ; i++) {
     const slug = i === 1 ? base : `${base}-${i}`;
     if (!slugPattern.test(slug)) throw new Error("The agent ID is invalid.");
-    if (ids.has(slug)) continue;
-    try {
-      await fs.lstat(path.join(parent, slug));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return slug;
-      throw error;
-    }
+    if (!taken.has(slug)) return slug;
   }
 }
 
@@ -112,16 +110,24 @@ class AgentCreateError extends Error {
   }
 }
 
-function listed(parent: string, id: string): boolean {
-  return getActiveAgents().some((agent) => agent.id === id && path.resolve(agent.workspace) === path.join(parent, id));
+async function listed(parent: string, id: string): Promise<boolean> {
+  const agent = getActiveAgents().find((candidate) => candidate.id === id);
+  if (!agent) return false;
+  try {
+    const [workspace, target] = await Promise.all([fs.realpath(agent.workspace), fs.realpath(path.join(parent, id))]);
+    return workspace === target;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function recoverAgent(parent: string, found: FoundAgent, needsReload: boolean) {
-  if (!needsReload && listed(parent, found.id)) return found;
+  if (!needsReload && await listed(parent, found.id)) return found;
   const prior = loadConfig();
   try {
     await reloadAfterExtensionWrite();
-    if (!listed(parent, found.id)) throw new AgentCreateError("reload_failed");
+    if (!(await listed(parent, found.id))) throw new AgentCreateError("reload_failed");
     return found;
   } catch {
     setLoadedConfig(prior);

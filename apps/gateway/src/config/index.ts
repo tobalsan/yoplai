@@ -116,18 +116,40 @@ function projectDirectories(dirs: string[], configDir: string) {
 
 const DEFAULT_AGENT_DISCOVERY = "$YOPLAI_HOME/agents/*";
 
-export function allowsDesktopAgentDiscovery(finalDir: string, stagingDir: string): boolean {
+function readDesktopDiscoveryRules() {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
   const config = GatewayRootConfigSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8")));
   const agents = config.agents ?? (config.pool === undefined ? DEFAULT_AGENT_DISCOVERY : []);
+  return { configDir, agents, pool: config.pool };
+}
+
+export function desktopDiscoveryCaseAliases(parent: string): string[] {
+  const { configDir, agents, pool } = readDesktopDiscoveryRules();
+  const realParent = fs.realpathSync(parent);
+  return [agents, pool ?? []].flat().flatMap((rule) => {
+    if (hasGlobMagic(rule)) return [];
+    const resolved = path.resolve(resolvePathFromConfig(rule, configDir));
+    const name = path.basename(resolved);
+    if (name === name.toLowerCase()) return [];
+    try {
+      return fs.realpathSync(path.dirname(resolved)) === realParent ? [name.toLowerCase()] : [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  });
+}
+
+export function allowsDesktopAgentDiscovery(finalDir: string, stagingDir: string): boolean {
+  const { configDir, agents, pool } = readDesktopDiscoveryRules();
   const { identity, identities: [final, staging], files } = projectDirectories([finalDir, stagingDir], configDir);
   function matches(patterns: string | string[] = []) {
     return [patterns].flat().flatMap((pattern) => globToDirs(pattern, configDir, files))
       .map((dir) => identity(path.resolve(dir)));
   }
   const agentDirs = matches(agents);
-  const poolDirs = matches(config.pool);
+  const poolDirs = matches(pool);
   return agentDirs.filter((dir) => dir === final).length === 1 && !poolDirs.includes(final) &&
     !agentDirs.includes(staging) && !poolDirs.includes(staging);
 }

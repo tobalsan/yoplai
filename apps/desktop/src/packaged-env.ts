@@ -67,8 +67,15 @@ export const SEED_CONFIG = {
 
 const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
 
-function migrateAgentDiscovery(configPath: string): void {
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+function migrateAgentDiscovery(file: string): void {
+  const configPath = fs.realpathSync(file);
+  const raw = fs.readFileSync(configPath, "utf8");
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch {
+    throw new Error("Correct the JSON in the desktop config. Select Restart.");
+  }
   if (!Array.isArray(config?.agents) || config.agents.length !== 0) return;
   config.agents = SEED_CONFIG.agents;
   const temp = `${configPath}.${randomBytes(8).toString("hex")}.tmp`;
