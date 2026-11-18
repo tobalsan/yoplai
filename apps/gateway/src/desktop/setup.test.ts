@@ -96,6 +96,8 @@ it("applies every refusal to every desktop route before it reads state", async (
     { headers: { "x-forwarded-for": "127.0.0.1, ::ffff:::1" } },
     { headers: { "x-real-ip": "::ffff:::1" } },
     { headers: { forwarded: 'for="[::ffff:::1]:4000"' } },
+    { headers: { forwarded: 'for="[127.0.0.1]:4000"' } },
+    { headers: { "x-forwarded-for": "[127.0.0.1]" } },
     { headers: { forwarded: "for=127.0.0.1,broken" } }, { headers: { "sec-fetch-site": "cross-site" } }, { flag: "0" },
     { relay: ["127.0.0.1", true, false, "127.0.0.1"] }, { relay: ["127.0.0.1", false, true, "127.0.0.1"] },
     { relay: ["127.0.0.1", false, false, "0.0.0.0"] }, { relay: ["0.0.0.0", false, false, "127.0.0.1"] },
@@ -114,7 +116,7 @@ it("applies every refusal to every desktop route before it reads state", async (
     vi.stubEnv("YOPLAI_DESKTOP", "1");
     state.configureRelay("127.0.0.1", false);
     const allowed = await app.request("http://127.0.0.1:4000/api/desktop-setup", {
-      headers: { host: "127.0.0.1:4000", "x-forwarded-for": "127.0.0.1, ::ffff:127.0.0.1", forwarded: 'for="[::ffff:127.0.0.1]:4000"' },
+      headers: { host: "127.0.0.1:4000", "x-forwarded-for": "127.0.0.1, ::ffff:127.0.0.1", forwarded: 'for="[::ffff:127.0.0.1]:4000", for="[::1]:4000"' },
     }, { incoming: { socket: { remoteAddress: "::ffff:127.0.0.1" } } });
     expect(allowed.status).toBe(200);
     expect(logged.mock.calls.filter(([line]) => String(line).includes("/api/model-access")).every(([line]) => !String(line).includes("fake-secret-for-log-test"))).toBe(true);

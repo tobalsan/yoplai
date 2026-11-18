@@ -17,7 +17,9 @@ function loopbackNode(raw: string): boolean {
   const node = value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
   if (isDesktopLoopbackAddress(node)) return true;
   const parts = /^(?:\[([\da-f:.]+)\]|([\d.]+))(?::(\d{1,5}))?$/i.exec(node);
-  return Boolean(parts && (!parts[3] || (+parts[3] > 0 && +parts[3] < 65536)) && isDesktopLoopbackAddress(parts[1] ?? parts[2]));
+  if (!parts || (parts[3] && (+parts[3] === 0 || +parts[3] > 65535))) return false;
+  if (parts[1] && isIP(parts[1]) !== 6) return false;
+  return isDesktopLoopbackAddress(parts[1] ?? parts[2]);
 }
 
 function loopbackForwarding(headers: Headers): boolean {
