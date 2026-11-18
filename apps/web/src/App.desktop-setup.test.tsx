@@ -454,3 +454,55 @@ it("opens the original chat after create succeeds but the setup exit save fails"
   expect(drafts).toEqual([drafts[0], drafts[0]]);
   expect(exits).toBe(2);
 });
+
+it.each(["Back", "Skip"])("sends a new cancellation after a timeout on %s", async (action) => {
+  const requests: ReturnType<typeof holdReply>[] = [];
+  overrides = (path) => {
+    if (path.endsWith("/start")) return pendingLink();
+    if (path.endsWith("/cancel")) {
+      const request = holdReply();
+      requests.push(request);
+      return request.pending;
+    }
+  };
+  await startServerLink();
+  await findByRole(root, "link", { name: "Open the sign-in page" });
+  const exit = await button(action);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    fireEvent.click(exit);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(getByRole(root, "alert").textContent).toBe("The gateway did not reply. Try again.");
+    fireEvent.click(exit);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toHaveLength(2);
+    requests[0].reply(linked());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getByRole(root, "heading", { name: "Connect to a Yoplai server" })).toBeTruthy();
+    expect(setupWrites).toHaveLength(0);
+    requests[1].reply(response({ status: "cancelled" }));
+    await vi.advanceTimersByTimeAsync(0);
+  } finally {
+    vi.useRealTimers();
+  }
+  if (action === "Back") await heading("Where do your agents run?");
+  else await waitFor(() => expect(location.pathname).toBe("/agents"));
+});
+
+it("shows the late consent link when cancellation fails without opening a tab", async () => {
+  const start = holdReply();
+  overrides = (path) => {
+    if (path.endsWith("/start")) return start.pending;
+    if (path.endsWith("/cancel")) return response({ message: "Try to cancel again." }, 503);
+  };
+  await startServerLink();
+  await click("Back");
+  start.reply(pendingLink());
+  expect((await findByRole(root, "alert")).textContent).toBe("Try to cancel again.");
+  const link = await findByRole(root, "link", { name: "Open the sign-in page" });
+  expect(link.getAttribute("href")).toBe("https://remote.example.test/consent");
+  expect(window.open).not.toHaveBeenCalled();
+  expect(setupWrites).toHaveLength(0);
+});
