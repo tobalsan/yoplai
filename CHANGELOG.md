@@ -70,6 +70,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop setup keeps agent creation and server consent available after a reload. It discards old key confirmations and offers Retry if setup cannot load.
+
 - The desktop dev proxy accepts first chat turns. The gateway reports duplicates with `turn_exists` and refuses known slash commands with a turn ID. File paths still work.
 
 - The desktop gateway lists open sign-ins and returns the same attempt on retry.

@@ -14,7 +14,7 @@ let wizardExited: boolean;
 let firstChat: object | null;
 let setupReads: number;
 let setupWrites: unknown[];
-let overrides: (path: string, method: string, body: Record<string, unknown>) => Response | undefined;
+let overrides: (path: string, method: string, body: Record<string, unknown>) => Response | Promise<Response> | undefined;
 
 const models = [
   { provider: "google", model: "environment", name: "Environment", source: "environment", default: true, ready: false },
@@ -43,12 +43,13 @@ beforeEach(() => {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     if (path === "/api/capabilities") return auth ? response({}, 401) : response({ desktopSetup: mode, multiUser: false, extensions: {}, agents: [], version: 2, relayLink: { available } });
+    const overridden = overrides(path, method, body);
     if (path === "/api/desktop-setup") {
+      if (method === "GET") setupReads += 1;
+      if (overridden) return overridden;
       if (method === "PUT") { setupWrites.push(body); wizardExited = body.wizardExited; }
-      else setupReads += 1;
       return response({ version: 1, wizardExited, skipped: body.skipped ?? [], firstChat, completed: false });
     }
-    const overridden = overrides(path, method, body);
     if (overridden) return overridden;
     if (path === "/api/model-access") return response({
       owned: [{ providerId: "openai", type: "api_key" }], external: [{ source: "codex", detected: true, enabled: true, denied: false }],
@@ -225,4 +226,126 @@ it("creates the agent after retry with the same request ID and does not send a g
   expect(drafts).toEqual([drafts[0], drafts[0]]);
   expect(drafts[0]).toMatchObject({ model: { provider: "openai", model: "owned" }, name: original });
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
+});
+
+function holdReply() {
+  let reply!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { reply = resolve; });
+  return { pending, reply };
+}
+
+it("retries the same submission after a reload with no models", async () => {
+  const lost = holdReply();
+  const drafts: Record<string, unknown>[] = [];
+  overrides = (path, method, body) => {
+    if (path.endsWith("/model-access/models") && drafts.length) return response({ models: [] });
+    if (path === "/api/agents" && method === "POST") {
+      drafts.push(body);
+      return drafts.length === 1 ? lost.pending : response({ id: "alpha" }, 200);
+    }
+  };
+  boot("/setup");
+  await modelScreen();
+  await click("Continue");
+  const name = await findByRole(root, "textbox", { name: "Name" });
+  fireEvent.input(name, { target: { value: "Saved agent" } });
+  await click("Create agent");
+  await waitFor(() => expect(drafts).toHaveLength(1));
+  dispose?.();
+  boot("/setup");
+  expect((await findByRole(root, "textbox", { name: "Name" }) as HTMLInputElement).value).toBe("Saved agent");
+  await click("Retry");
+  await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
+  expect(drafts).toEqual([drafts[0], drafts[0]]);
+  lost.reply(response({ id: "alpha" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(setupWrites).toHaveLength(1);
+});
+
+const pendingLink = () => response({
+  attemptId: "test", controlToken: "fake-control", expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  consentUrl: "https://remote.example.test/consent",
+});
+const linked = () => response({ status: "linked", name: "work", remote: "https://remote.example.test" });
+async function startServerLink() {
+  boot("/setup");
+  await linkScreen();
+  fireEvent.input(await findByRole(root, "textbox", { name: "Remote gateway address" }), { target: { value: "https://remote.example.test" } });
+  await click("Link gateway");
+}
+
+it.each(["pending start", "linked start", "linked status"])("ignores a late %s reply after Back", async (step) => {
+  const { pending, reply } = holdReply();
+  const requested = vi.fn();
+  overrides = (path) => {
+    if (path.endsWith("/start")) {
+      if (step === "linked status") return pendingLink();
+      requested();
+      return pending;
+    }
+    if (path.endsWith("/status/test")) { requested(); return pending; }
+  };
+  await startServerLink();
+  await waitFor(() => expect(requested).toHaveBeenCalled(), { timeout: 2500 });
+  await click("Back");
+  reply(step === "pending start" ? pendingLink() : linked());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await heading("Where do your agents run?");
+  expect(window.open).toHaveBeenCalledTimes(step === "linked status" ? 1 : 0);
+  expect(setupWrites).toHaveLength(0);
+  expect(location.pathname).toBe("/setup");
+});
+
+it("resumes the link in the same tab without opening consent twice", async () => {
+  overrides = (path) => {
+    if (path.endsWith("/start")) return pendingLink();
+    if (path.endsWith("/status/test")) return linked();
+  };
+  await startServerLink();
+  await findByRole(root, "link", { name: "Open the sign-in page" });
+  dispose?.();
+  boot("/setup");
+  await heading("Connect to a Yoplai server");
+  expect(queryByRole(root, "link", { name: "Open the sign-in page" })).toBeNull();
+  await waitFor(() => expect(location.pathname).toBe("/agents"), { timeout: 2500 });
+  expect(window.open).toHaveBeenCalledTimes(1);
+  expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
+});
+
+it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel before reply"])("discards a key confirmation after %s", async (action) => {
+  const old = holdReply();
+  const calls: unknown[] = [];
+  const replacement = () => response({ error: "replacement_required" }, 409);
+  overrides = (path, _method, body) => {
+    if (path.endsWith("/api-key")) { calls.push(body.replace); return action.endsWith("before reply") ? old.pending : replacement(); }
+  };
+  boot("/setup");
+  await modelScreen();
+  await click("Add a key");
+  const form = await findByRole(root, "form", { name: "Add an API key" });
+  const key = within(form).getByLabelText("API key");
+  const provider = within(form).getByRole("combobox");
+  fireEvent.change(provider, { target: { value: "openai" } });
+  fireEvent.input(key, { target: { value: "fake-old-key" } });
+  await click("Save key", form);
+  if (!action.endsWith("before reply")) await findByRole(root, "alertdialog");
+  if (action.startsWith("Cancel")) await click("Cancel", form);
+  else if (action === "Edit provider") fireEvent.change(provider, { target: { value: "" } });
+  else fireEvent.input(key, { target: { value: "fake-new-key" } });
+  old.reply(replacement());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(queryByRole(root, "alertdialog")).toBeNull();
+  expect(calls).toEqual([false]);
+});
+
+it.each(["/setup", "/agents"])("blocks %s until setup read succeeds", async (path) => {
+  overrides = (url) => url === "/api/desktop-setup" ? response({ message: "Internal error detail." }, 500) : undefined;
+  boot(path);
+  expect((await findByRole(root, "alert")).textContent).toBe("Yoplai could not read the setup state.");
+  expect(queryByRole(root, "heading", { name: "All your agents. One app." })).toBeNull();
+  expect(queryByRole(root, "navigation")).toBeNull();
+  overrides = () => undefined;
+  await click("Retry");
+  await heading("All your agents. One app.");
+  expect(setupReads).toBe(2);
 });

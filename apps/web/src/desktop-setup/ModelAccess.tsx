@@ -28,7 +28,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     catch (cause) { setError(errorText(cause)); return undefined; }
   });
   const [busy, setBusy] = createSignal(false);
-  const [confirm, setConfirm] = createSignal<{ message: string; accept: () => Promise<void> }>();
+  const [confirm, setConfirm] = createSignal<{ message: string; accept: () => Promise<void>; keyForm?: true }>();
   const [entry, setEntry] = createSignal(false);
   const [search, setSearch] = createSignal("");
   const [provider, setProvider] = createSignal("");
@@ -94,12 +94,29 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     try { await request(sourcePath(id), "POST", { enabled, warningAccepted }); await reload(); }
     catch (cause) { confirmError(cause, "warning_required", "", () => toggle(id, enabled, true)); }
   };
-  const saveKey = async (id: string, value: string, replace = false): Promise<void> => {
+  let keyRevision = 0;
+  const invalidateKey = () => {
+    keyRevision += 1;
+    if (confirm()?.keyForm) setConfirm(undefined);
+  };
+  const closeKey = () => {
+    invalidateKey();
+    setEntry(false);
+    setKey("");
+    setSearch("");
+  };
+  const saveKey = async (id: string, value: string, revision = keyRevision, replace = false): Promise<void> => {
+    const current = () => !disposed && entry() && keyRevision === revision;
+    if (!current()) return;
     try {
       await request("model-access/api-key", "POST", { provider: id, key: value, replace });
-      setKey(""); setEntry(false);
-      await reload();
-    } catch (cause) { confirmError(cause, "replacement_required", "Replace the current credential for this provider?", () => saveKey(id, value, true)); }
+      if (current()) closeKey();
+      if (!disposed) await reload();
+    } catch (cause) {
+      if (!current()) return;
+      if (!(cause instanceof SetupError) || cause.code !== "replacement_required") throw cause;
+      setConfirm({ keyForm: true, message: "Replace the current credential for this provider?", accept: () => saveKey(id, value, revision, true) });
+    }
   };
   const modelList = () => info()?.models ?? [];
   const ownedReady = (type: string, provider?: string) => modelList().some((model) => model.source === "owned" &&
@@ -158,14 +175,14 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
         event.preventDefault(); void perform(() => saveKey(provider(), key()));
       }}>
         <label>Search providers<input value={search()} onInput={(event) => setSearch(event.currentTarget.value)} /></label>
-        <label>Provider<select required value={provider()} onChange={(event) => setProvider(event.currentTarget.value)}>
+        <label>Provider<select required value={provider()} onChange={(event) => { invalidateKey(); setProvider(event.currentTarget.value); }}>
           <option value="">Select a provider</option>
           <For each={providers()}>{(row) => <option value={row.id} selected={provider() === row.id}>{row.name}</option>}</For>
         </select></label>
-        <label>API key<input type="password" autocomplete="off" required value={key()} onInput={(event) => setKey(event.currentTarget.value)} /></label>
+        <label>API key<input type="password" autocomplete="off" required value={key()} onInput={(event) => { invalidateKey(); setKey(event.currentTarget.value); }} /></label>
         <div class="setup-actions">
           <button class="setup-outline" type="submit" disabled={busy() || !provider()}>Save key</button>
-          <button class="setup-outline" type="button" disabled={busy()} onClick={() => { setEntry(false); setKey(""); setSearch(""); }}>Cancel</button>
+          <button class="setup-outline" type="button" onClick={closeKey}>Cancel</button>
         </div>
       </form>
     </Show>
