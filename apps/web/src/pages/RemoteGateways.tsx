@@ -211,7 +211,7 @@ export function GatewayLinkPanel(props: {
       }
       const attempt = { attemptId: started.attemptId, controlToken: started.controlToken, expiresAt: started.expiresAt };
       if (props.onLinked) sessionStorage.setItem(pendingSetupKey, JSON.stringify(attempt));
-      const next: Pending = round === polling ? { ...attempt, consentUrl: started.consentUrl } : attempt;
+      const next: Pending = { ...attempt, consentUrl: started.consentUrl };
       if (round !== polling && !leaving()) setPaused(true);
       setPending(next);
       if (round !== polling) return;
@@ -232,8 +232,12 @@ export function GatewayLinkPanel(props: {
   };
 
   const cancelAttempt = (attempt: Pending) => {
-    cancelling ??= cancelLink(attempt.attemptId, attempt.controlToken).finally(() => { cancelling = undefined; });
-    return cancelling;
+    if (cancelling) return cancelling;
+    const request = cancelLink(attempt.attemptId, attempt.controlToken).finally(() => {
+      if (cancelling === request) cancelling = undefined;
+    });
+    cancelling = request;
+    return request;
   };
   const cancel = async () => {
     const attempt = pending();
@@ -241,24 +245,27 @@ export function GatewayLinkPanel(props: {
     setError(undefined);
     setBusy(true);
     stopPolling();
+    const round = polling;
     try {
       const view = await cancelAttempt(attempt);
-      if (unmounted || leaving()) return;
+      if (unmounted || round !== polling) return;
       clearPending();
       setResult(view);
       if (view.status === "linked") await props.onLinked?.();
     } catch (cause) {
-      if (unmounted || leaving()) return;
+      if (unmounted || round !== polling) return;
       if (unknownAttempt(cause)) clearPending();
       else if (pending()) setPaused(true);
       setError(errorText(cause));
-    } finally { setBusy(false); }
+    } finally { if (!unmounted && round === polling) setBusy(false); }
   };
 
   props.registerLeave?.(async () => {
     setLeaving(true);
+    if (cancelling) setBusy(false);
     setError(undefined);
     stopPolling();
+    let cancellation: Promise<LinkAttemptView> | undefined;
     let deadline: ReturnType<typeof setTimeout>;
     const waitLimit = new Promise<never>((_, reject) => {
       deadline = setTimeout(() => reject(new RelayLinkApiError("wait_timeout", 408, "The gateway did not reply. Try again.")), LEAVE_WAIT_MS);
@@ -268,7 +275,8 @@ export function GatewayLinkPanel(props: {
       await Promise.race([starting, waitLimit]);
       const attempt = pending();
       if (attempt) {
-        await Promise.race([cancelAttempt(attempt), waitLimit]);
+        cancellation = cancelAttempt(attempt);
+        await Promise.race([cancellation, waitLimit]);
         clearPending();
       }
       return true;
@@ -277,7 +285,11 @@ export function GatewayLinkPanel(props: {
       setPaused(true);
       setError(errorText(cause));
       return false;
-    } finally { clearTimeout(deadline!); setLeaving(false); }
+    } finally {
+      if (cancelling === cancellation) cancelling = undefined;
+      clearTimeout(deadline!);
+      setLeaving(false);
+    }
   });
 
   const disconnect = async (row: LinkRow, localOnly: boolean) => {
