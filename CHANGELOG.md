@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- The desktop gateway lists available models and marks a model Ready after a successful call.
 - The desktop gateway can use local CLI credentials with consent. It does not save or refresh them.
 - The desktop gateway checks API keys and opens the system browser for model sign-in.
 - The local desktop gateway reports setup access and saves setup state.

@@ -450,7 +450,7 @@ export const piAdapter: SdkAdapter = {
         );
       }
       const authMode = params.model ? undefined : agent.auth?.mode;
-      const { runtime: modelRuntime, resolveModelAuth } = await createModelAuth({
+      const { runtime: modelRuntime, requireModelAuth } = await createModelAuth({
         primaryProvider: effectiveModel.provider,
         mode: authMode === "proxy" ? undefined : authMode,
       });
@@ -465,9 +465,7 @@ export const piAdapter: SdkAdapter = {
         );
       }
 
-      if (!await resolveModelAuth(model)) {
-        throw new Error(`No credentials for provider: ${model.provider}`);
-      }
+      await requireModelAuth(model);
 
       // Load configured system files
       const systemFiles = await resolveSystemFiles({
@@ -571,7 +569,7 @@ export const piAdapter: SdkAdapter = {
         extensionFactories: [
           (pi) => {
             pi.on("after_provider_response", (event, ctx) => {
-              captureClaudeQuota(ctx.model?.provider ?? "", event.headers, authMode ?? (modelRuntime.isUsingOAuth(effectiveModel.provider!) ? "oauth" : undefined));
+              captureClaudeQuota(ctx.model?.provider ?? "", event.headers, authMode);
             });
           },
           ...(agent.toolDeferral?.enabled !== false
@@ -992,7 +990,7 @@ export const piAdapter: SdkAdapter = {
           );
         }
         try {
-          if (!await resolveModelAuth(fallback)) throw new Error("No credentials for the fallback model.");
+          await requireModelAuth(fallback);
           await agentSession.setModel(fallback);
           await resumeAfterFailedTurn(agentSession, () =>
             agentSession.prompt(messageWithAttachments, promptOptions)

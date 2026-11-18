@@ -1,3 +1,4 @@
+import { stubDesktopTestEnv } from "../test-utils/desktop-test-env.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,12 +16,7 @@ beforeEach(async () => {
   configHome = path.join(home, "yoplai");
   await fs.mkdir(configHome);
   await fs.writeFile(path.join(configHome, "yoplai.json"), '{"version":3,"agents":[]}');
-  for (const key of Object.keys(process.env)) {
-    if (/^(?:YOPLAI_|AIHUB_|PI_|CODEX_|CLAUDE_|XDG_)|(?:_API_KEY|_AUTH_TOKEN)$/.test(key)) vi.stubEnv(key, undefined);
-  }
-  vi.stubEnv("HOME", home);
-  vi.stubEnv("YOPLAI_HOME", configHome);
-  vi.stubEnv("YOPLAI_DESKTOP", "1");
+  stubDesktopTestEnv(home, configHome);
 });
 
 afterEach(async () => {
@@ -81,4 +77,40 @@ it("refuses untrusted requests and keeps state when version one lacks fields", a
   expect((await put({ completed: true })).status).toBe(400);
   const response = await put({ completed: true, firstChat: { agentId: "a", sessionId: "s", turnId: "t" } });
   expect(await response.json()).toMatchObject({ wizardExited: true, completed: true, completedAt: expect.any(String) });
+});
+
+it("applies every refusal to every desktop route before it reads state", async () => {
+  const { app } = await import("../server/index.js");
+  const state = await import("../relay/state.js");
+  const paths = [
+    ["GET", "desktop-setup"], ["PUT", "desktop-setup"], ["GET", "model-access"],
+    ["POST", "model-access/oauth/anthropic"], ["GET", "model-access/oauth/attempts/test"],
+    ["POST", "model-access/oauth/attempts/test/answer"], ["POST", "model-access/oauth/attempts/test/cancel"],
+    ["POST", "model-access/api-key"], ["POST", "model-access/external/pi"], ["DELETE", "model-access/openai"],
+    ["GET", "model-access/models"], ["POST", "model-access/models/check"],
+  ];
+  state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
+  const variants: Array<{ headers?: Record<string, string>; peer?: string; flag?: string; relay?: [string, boolean, boolean, string] }> = [
+    { peer: "192.0.2.4" }, { headers: { host: "localhost:3000" } }, { headers: { origin: "https://localhost:3000" } },
+    { headers: { "x-forwarded-for": "127.0.0.1, 192.0.2.4" } }, { headers: { "x-forwarded-for": "127.0.0.1," } },
+    { headers: { forwarded: "for=127.0.0.1,broken" } }, { headers: { "sec-fetch-site": "cross-site" } }, { flag: "0" },
+    { relay: ["127.0.0.1", true, false, "127.0.0.1"] }, { relay: ["127.0.0.1", false, true, "127.0.0.1"] },
+    { relay: ["127.0.0.1", false, false, "0.0.0.0"] }, { relay: ["0.0.0.0", false, false, "127.0.0.1"] },
+  ];
+  const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  try {
+    for (const variant of variants) {
+      vi.stubEnv("YOPLAI_DESKTOP", variant.flag ?? "1");
+      state.configureRelay(...(variant.relay ?? ["127.0.0.1", false, false, "127.0.0.1"]));
+      for (const [method, route] of paths) {
+        const url = `http://127.0.0.1:4000/api/${route}?secret=fake-secret-for-log-test`;
+        const response = await app.request(url, { method, headers: { host: "127.0.0.1:4000", ...variant.headers } }, { incoming: { socket: { remoteAddress: variant.peer ?? "127.0.0.1" } } });
+        expect(response.status, `${method} ${route}`).toBe(403);
+      }
+    }
+    expect(logged.mock.calls.filter(([line]) => String(line).includes("/api/model-access")).every(([line]) => !String(line).includes("fake-secret-for-log-test"))).toBe(true);
+    await expect(fs.access(path.join(configHome, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    logged.mockRestore();
+  }
 });

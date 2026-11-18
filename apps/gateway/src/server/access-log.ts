@@ -92,6 +92,7 @@ function redactLinkTarget(message: string): string {
   const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
   if (!parts) return message;
   const path = parts[2].split("?")[0];
+  if (path === "/api/desktop-setup") return `${parts[1]}${path}${parts[3]}`;
   if (/^\/api\/model-access(?:[/?]|$)/i.test(path)) return `${parts[1]}/api/model-access/[redacted]${parts[3]}`;
   if (ownsLinkPath(path)) return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
   if (ownsRemoteLinkPath(path)) return `${parts[1]}${REMOTE_LINK_NAMESPACE}/[redacted]${parts[3]}`;
