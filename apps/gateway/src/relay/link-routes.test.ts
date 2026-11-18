@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RelayLinkService } from "./link.js";
 import { relayLinkApi } from "./link-routes.js";
-import { configureRelay, getLinkCallbackPort, setGatewayListener } from "./state.js";
+import { configureRelay, getLinkCallbackPort, isLoopbackAddress, isLoopbackForwardedFor, setGatewayListener } from "./state.js";
 import { createFileRemoteGatewayStore, type RemoteGatewayStore } from "./store.js";
 
 /** The remote is a scripted fake. Every key and code is synthetic. */
@@ -108,6 +108,26 @@ async function startWithState() {
 const complete = (body: unknown, init: Init = {}) =>
   call("/api/relay/link/complete", { origin: GATEWAY_ORIGIN, body, ...init });
 
+describe("loopback address checks", () => {
+  it.each(["::ffff:::1", "::ffff:", "127.0.0.256", "localhost", "unknown", "203.0.113.9"])("refuses %s", (address) => {
+    expect(isLoopbackAddress(address)).toBe(false);
+    expect(isLoopbackForwardedFor(address)).toBe(false);
+  });
+
+  it.each(["127.0.0.1", "::1", "::ffff:127.0.0.1", "::FFFF:127.0.0.1"])("accepts %s", (address) => {
+    expect(isLoopbackAddress(address)).toBe(true);
+    expect(isLoopbackForwardedFor(address)).toBe(true);
+  });
+
+  it.each([undefined, null, "", "127.0.0.1, ::1, ::ffff:127.0.0.2"])("accepts a forwarded value of %s", (value) => {
+    expect(isLoopbackForwardedFor(value)).toBe(true);
+  });
+
+  it.each(["[::1]:1234", "127.0.0.1, 203.0.113.9"])("refuses a forwarded value of %s", (value) => {
+    expect(isLoopbackForwardedFor(value)).toBe(false);
+  });
+});
+
 describe("route policy", () => {
   it("answers 403 while the relay is off", async () => {
     enabled = false;
@@ -115,7 +135,7 @@ describe("route policy", () => {
     expect((await call("/api/relay/link/callback")).status).toBe(403);
   });
 
-  it.each(["192.0.2.7", "::ffff:192.0.2.7", "2001:db8::1"])("refuses a socket peer of %s", async (peer) => {
+  it.each(["192.0.2.7", "::ffff:192.0.2.7", "2001:db8::1", "::ffff:", "127.0.0.256"])("refuses a socket peer of %s", async (peer) => {
     const response = await call("/api/relay/link/metadata", { origin: UI_ORIGIN, body: {}, env: peerEnv(peer) });
     expect(response.status).toBe(403);
   });
@@ -136,13 +156,25 @@ describe("route policy", () => {
     ["forwarded", "for=203.0.113.9;proto=https"],
     ["forwarded", 'for="[2001:db8::1]:4711"'],
     ["x-forwarded-for", "unknown"],
-  ])("refuses a forwarded address in %s", async (header, value) => {
+    ["x-forwarded-for", "localhost"],
+    ["x-forwarded-for", "127.0.0.256"],
+    ["x-forwarded-for", ""],
+    ["x-real-ip", "::ffff:"],
+  ])("refuses %s with value %j", async (header, value) => {
     const response = await call("/api/relay/link/metadata", { origin: UI_ORIGIN, body: {}, headers: { [header]: value } });
     expect(response.status).toBe(403);
   });
 
-  it("accepts a loopback forwarded address from the UI proxy", async () => {
-    const response = await call("/api/relay/link/metadata", { origin: UI_ORIGIN, body: {}, headers: { "x-forwarded-for": "127.0.0.1" } });
+  it.each([
+    ["x-forwarded-for", "127.0.0.1"],
+    ["x-forwarded-for", "::1"],
+    ["x-forwarded-for", "::ffff:127.0.0.1"],
+    ["x-forwarded-for", "[::1]:1234"],
+    ["x-forwarded-for", "127.0.0.1, ::1, ::ffff:127.0.0.2"],
+    ["x-real-ip", "127.0.0.1:1234"],
+    ["forwarded", 'for="[::1]:1234";proto=https'],
+  ])("accepts %s with value %j", async (header, value) => {
+    const response = await call("/api/relay/link/metadata", { origin: UI_ORIGIN, body: {}, headers: { [header]: value } });
     expect(response.status).toBe(200);
   });
 

@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { getAgent } from "../config/index.js";
 import { removeGatewaySuffix } from "./agent-id.js";
 import { createFileRemoteGatewayStore, type RemoteGateway } from "./store.js";
@@ -11,6 +12,12 @@ const LOOPBACK_IPV4_RE = /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 function isLoopbackHost(host: string): boolean {
   return host === "localhost" || host === "::1" || LOOPBACK_IPV4_RE.test(host);
+}
+
+export function isLoopbackAddress(address: string): boolean {
+  if (isIP(address) === 0) return false;
+  const value = address.replace(/^::ffff:/i, "");
+  return value === "::1" || LOOPBACK_IPV4_RE.test(value);
 }
 
 function isTrustedOrigin(origin: string | null | undefined): boolean {
@@ -27,7 +34,7 @@ export function isLoopbackForwardedFor(forwardedFor: string | null | undefined):
   if (!forwardedFor) return true;
   return forwardedFor
     .split(",")
-    .every((entry) => isLoopbackHost(entry.trim().replace(/^::ffff:/i, "")));
+    .every((entry) => isLoopbackAddress(entry.trim()));
 }
 
 /**

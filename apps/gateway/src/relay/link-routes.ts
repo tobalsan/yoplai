@@ -4,7 +4,7 @@ import { allowedCorsOrigins } from "../server/origins.js";
 import { LINK_NAMESPACE, ownsLinkPath } from "@yoplai/shared/secret-paths";
 import { RelayLinkService, defaultDeviceLabel, type LinkResult } from "./link.js";
 import { getDeviceLinkStates } from "./device-links.js";
-import { getGatewayListener, getLinkCallbackPort, getRemoteGatewayStore, isRelayEnabled } from "./state.js";
+import { getGatewayListener, getLinkCallbackPort, getRemoteGatewayStore, isLoopbackAddress, isRelayEnabled } from "./state.js";
 
 /**
  * The local routes of the browser link. Each route enforces its own policy, in this order: the relay is on, the
@@ -16,7 +16,6 @@ import { getGatewayListener, getLinkCallbackPort, getRemoteGatewayStore, isRelay
 
 const BODY_LIMIT_BYTES = 4096;
 const CONTROL_HEADER = "x-link-control";
-const LOOPBACK_V4_RE = /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const BASE64URL_RE = /^[A-Za-z0-9_-]{43}$/;
 
 export type LinkRoutesDeps = {
@@ -51,11 +50,6 @@ const defaultDeps: LinkRoutesDeps = {
   configuredOrigins: allowedCorsOrigins,
   peerAddress: (c) => (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress,
 };
-
-function isLoopbackAddress(address: string): boolean {
-  const value = address.replace(/^::ffff:/i, "");
-  return value === "::1" || LOOPBACK_V4_RE.test(value);
-}
 
 /** A forwarded value without quotes, brackets, or a port. */
 function forwardedHost(raw: string): string {

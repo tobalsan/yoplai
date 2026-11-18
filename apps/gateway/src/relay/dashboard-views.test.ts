@@ -237,6 +237,19 @@ describe("snapshots", () => {
     expect(calls).toEqual([]);
   });
 
+  it("refuses an invalid address in the forwarded header", async () => {
+    const response = await prepare(undefined, { "x-forwarded-for": "127.0.0.256" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "relay_unavailable" });
+    expect(calls).toEqual([]);
+  });
+
+  it("accepts a mapped loopback address in the forwarded header", async () => {
+    const response = await prepare(undefined, { "x-forwarded-for": "::ffff:127.0.0.1" });
+    expect(response.status).toBe(201);
+    expect(calls).toHaveLength(1);
+  });
+
   it.each([
     ["an unknown gateway", { gateway: "nowhere", dashboardId: ID }, 404, "unknown_gateway"],
     ["a version identifier", { gateway: "ams", dashboardId: "abc-0123456789ab" }, 400, "invalid_dashboard_id"],
