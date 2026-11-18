@@ -619,6 +619,47 @@ it.each(["answered", "failed"] as const)("resumes an active greeting and reloads
   expect(GreetingSocket.wires).toHaveLength(0);
 });
 
+it.each([false, true])("stops the old turn after a completion conflict (refresh fails: %s)", async (refreshFails) => {
+  enableGreetingSocket();
+  wizardExited = true; firstChat = oldChat;
+  const conflict = holdReply();
+  const refresh = holdReply();
+  const writes: unknown[] = [];
+  const oldTurnPath = "/api/desktop-setup/turns/alpha/old-session/old-turn";
+  let oldChecks = 0;
+  overrides = (path, method, body) => {
+    if (path === oldTurnPath) { oldChecks++; return response({ state: "answered" }); }
+    if (path === "/api/desktop-setup" && method === "PUT") { writes.push(body); return conflict.pending; }
+    if (path === "/api/desktop-setup" && method === "GET" && setupReads === 1) return refresh.pending;
+    if (path.endsWith("/history")) return response({ messages: [message("user", FIRST_GREETING, 1), message("assistant", answer, 3)] });
+  };
+  boot("/chat/alpha?session=old-session");
+  await waitFor(() => expect(writes).toEqual([{ completed: true, firstChat: oldChat }]));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    conflict.reply(response({ error: "turn_conflict" }, 409));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(setupReads).toBe(2);
+    const nextChat = { ...oldChat, sessionId: "new-session", turnId: "new-turn" };
+    refresh.reply(refreshFails ? response({}, 500) : response({ wizardExited: true, firstChat: nextChat, completed: false }));
+    await vi.advanceTimersByTimeAsync(1500);
+    if (refreshFails) {
+      expect(within(root).getAllByRole("alert").map((alert) => alert.textContent)).toContain("Yoplai could not refresh the setup state.");
+      fireEvent.click(getByRole(root, "button", { name: "Retry setup refresh" }));
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(setupReads).toBe(3);
+      expect(root.textContent).not.toContain("Yoplai could not refresh the setup state.");
+    }
+    expect(transcript().getByText(answer)).toBeDefined();
+    expect(root.textContent).not.toContain("Yoplai could not check the first turn.");
+    expect(oldChecks).toBe(1);
+    expect(writes).toHaveLength(1);
+    expect(GreetingSocket.wires).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("does not show a raw error from the tagged socket", async () => {
   enableGreetingSocket();
   wizardExited = true; firstChat = oldChat;

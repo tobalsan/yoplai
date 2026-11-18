@@ -12,6 +12,8 @@ const updateSchema = DesktopSetupStateSchema.partial().strict();
 const turnIdSchema = z.string().uuid();
 const validTurn = (sessionId: string, turnId: string) =>
   isSafeSessionId(sessionId) && turnIdSchema.safeParse(turnId).success;
+const sameFirstChat = (a: DesktopSetupState["firstChat"], b: DesktopSetupState["firstChat"]) =>
+  a?.agentId === b?.agentId && a?.sessionId === b?.sessionId && a?.turnId === b?.turnId;
 
 export function createDesktopSetupRoutes(home: string) {
   const routes = new Hono();
@@ -58,12 +60,13 @@ export function createDesktopSetupRoutes(home: string) {
       const previous = await read();
       if (completed === true && firstChat) {
         const saved = previous.firstChat;
-        if (!saved || saved.agentId !== firstChat.agentId || saved.sessionId !== firstChat.sessionId || saved.turnId !== firstChat.turnId ||
+        if (!saved || !sameFirstChat(saved, firstChat) ||
             !getAgent(saved.agentId) || await desktopTurnState(home, saved.agentId, saved.sessionId, saved.turnId.toLowerCase()) !== "answered") {
           return "turn_conflict" as const;
         }
       }
-      const state = DesktopSetupStateSchema.parse({ ...previous, ...body.data, ...(completed === true ? { firstChat: previous.firstChat } : {}) });
+      const state = DesktopSetupStateSchema.parse({ ...previous, ...body.data });
+      if (!sameFirstChat(previous.firstChat, state.firstChat)) state.completed = false;
       if (state.completed && !state.firstChat) return null;
       state.completedAt = state.completed ? previous.completedAt ?? new Date().toISOString() : null;
       await writeJsonAtomic(file, state);

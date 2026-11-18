@@ -1,4 +1,4 @@
-import { Show, createContext, createEffect, createResource, useContext, type JSX } from "solid-js";
+import { Show, createContext, createEffect, createResource, createSignal, useContext, type JSX } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import type { DesktopSetupState } from "@yoplai/shared/types";
 import { capabilities } from "../lib/capabilities";
@@ -9,6 +9,7 @@ const Setup = createContext<{
   state: () => DesktopSetupState | undefined;
   models: () => Model[] | undefined;
   save: (update: Partial<DesktopSetupState>, when?: () => boolean) => Promise<void>;
+  refresh: () => Promise<void>;
 }>();
 export const useOptionalSetup = () => useContext(Setup);
 export const useSetup = () => useOptionalSetup()!;
@@ -34,23 +35,39 @@ export function SetupGate(props: { children: JSX.Element }) {
   });
   const exited = () => enabled() && !onSetup() && state()?.wizardExited === true;
   const [models] = createResource(exited, () => readModels().catch(() => undefined));
-  let saving = Promise.resolve();
+  let pending = Promise.resolve();
+  const enqueue = (action: () => Promise<void>) => {
+    const result = pending.then(async () => { if (enabled()) await action(); });
+    pending = result.catch(() => undefined);
+    return result;
+  };
+  const [refreshError, setRefreshError] = createSignal(false);
+  const refresh = () => enqueue(async () => {
+    try {
+      mutate(await readSetup());
+      setRefreshError(false);
+    } catch {
+      setRefreshError(true);
+    }
+  });
   const show = () => enabled()
     ? !state.loading && !!state() && (onSetup() || state()?.wizardExited === true || pendingChat())
     : !onSetup();
   return <Setup.Provider value={{ state: () => enabled() ? state() : undefined, models: () => exited() ? models() : undefined,
-    save(update, when) {
-      const result = saving.then(async () => {
-        if (enabled() && (!when || when())) mutate(await saveSetup(update));
-      });
-      saving = result.catch(() => undefined);
-      return result;
-    },
+    save: (update, when) => enqueue(async () => {
+      if (!when || when()) mutate(await saveSetup(update));
+    }),
+    refresh,
   }}>
     <Show when={enabled() && !state.loading && !state()}>
       <main><p role="alert">Yoplai could not read the setup state.</p>
         <button onClick={() => void refetch()}>Retry</button>
       </main>
+    </Show>
+    <Show when={enabled() && refreshError()}>
+      <div><p role="alert">Yoplai could not refresh the setup state.</p>
+        <button onClick={() => void refresh()}>Retry setup refresh</button>
+      </div>
     </Show>
     <Show when={show()}>{props.children}</Show>
   </Setup.Provider>;

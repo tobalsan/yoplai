@@ -15,7 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload.
+- Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload. A different first chat clears completion. A stale tab refreshes setup without checking its old turn again.
 - Desktop setup shows missing items and links to model access. The app menu can start setup again.
 - The desktop window uses a hidden title bar with a strip for window movement.
 - Desktop setup guides the user through model access or a server link. It can create the first local agent.
