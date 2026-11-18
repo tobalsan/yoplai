@@ -52,7 +52,11 @@ function attemptMessage(view: LinkAttemptView): string {
 
 /** The saved remote gateways of this computer, and the controls to link, link again, and disconnect. */
 export function RemoteGateways() {
-  const [rows, { refetch }] = createResource(fetchLinkRows);
+  return <LeftNavShell><GatewayLinkPanel /></LeftNavShell>;
+}
+
+export function GatewayLinkPanel(props: { onLinked?: () => Promise<void> }) {
+  const [rows, { refetch }] = createResource(() => !props.onLinked, fetchLinkRows);
   const [remote, setRemote] = createSignal("");
   const [name, setName] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -141,6 +145,7 @@ export function RemoteGateways() {
         if (TERMINAL.includes(view.status)) {
           setPending(undefined);
           setResult(view);
+          if (view.status === "linked" && props.onLinked) { await props.onLinked(); return; }
           await readRows();
           if (view.status === "linked" && view.name) startRefresh([view.name]);
           return;
@@ -165,6 +170,7 @@ export function RemoteGateways() {
     try {
       const started = await startLink(remoteAddress, gatewayName);
       if (started.kind === "linked") {
+        if (props.onLinked) { setResult({ status: "linked", name: started.name, remote: remoteAddress }); await props.onLinked(); return; }
         setNotice(`Linked ${started.name}. This gateway needs no sign-in.`);
         await readRows();
         startRefresh([started.name]);
@@ -215,11 +221,12 @@ export function RemoteGateways() {
   };
 
   return (
-    <LeftNavShell>
-      <main class="remote-gateways">
+      <section class="remote-gateways">
         <style>{REMOTE_GATEWAYS_STYLES}</style>
-        <h1>Linked gateways</h1>
-        <p>Link a remote gateway to use its agents here. You sign in on the remote gateway, and this computer keeps a key for it.</p>
+        <Show when={!props.onLinked}>
+          <h1>Linked gateways</h1>
+          <p>Link a remote gateway to use its agents here. You sign in on the remote gateway, and this computer keeps a key for it.</p>
+        </Show>
 
         <Show
           when={capabilities.relayLink?.available === true}
@@ -277,6 +284,10 @@ export function RemoteGateways() {
         <Show when={notice()}>{(text) => <p role="status">{text()}</p>}</Show>
         <Show when={error()}>{(text) => <p role="alert">{text()}</p>}</Show>
 
+        <Show when={props.onLinked && result()?.status === "linked" && error()}>
+          <button type="button" onClick={() => void props.onLinked?.().catch((cause) => setError(errorText(cause)))}>Retry</button>
+        </Show>
+        <Show when={!props.onLinked}>
         <h2>Saved links</h2>
         <Switch>
           <Match when={rows.loading}>
@@ -328,8 +339,8 @@ export function RemoteGateways() {
             )}
           </Match>
         </Switch>
-      </main>
-    </LeftNavShell>
+        </Show>
+      </section>
   );
 }
 
