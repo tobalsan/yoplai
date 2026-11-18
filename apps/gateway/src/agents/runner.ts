@@ -1,3 +1,4 @@
+import { findChatCommand } from "./chat-command.js";
 import * as viewContext from "../mcp-apps/view-context.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -289,8 +290,7 @@ export async function runAgent(
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
   const reviewers = await extensionRuntime?.getReplyReviewers(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
   const heldReply = reviewers.length ? new HeldReply(agent.id, sessionId, reviewers) : undefined;
-  const commands = await extensionRuntime?.getChatCommands(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
-  const command = commands.find((command) => command.command === message.trim());
+  const command = await findChatCommand(extensionRuntime, agent, actorConfig, sessionId, params, message);
   if (command) {
     const text = await command.run({ agent, config: actorConfig, workspaceDir, sessionId, run: { ...params, sessionId } });
     emit({ type: "text", data: text });

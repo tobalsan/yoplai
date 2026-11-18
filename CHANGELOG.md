@@ -67,7 +67,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- The desktop dev proxy accepts first chat turns. The gateway reports duplicates with `turn_exists` and refuses slash commands with a turn ID.
+- The desktop dev proxy accepts first chat turns. The gateway reports duplicates with `turn_exists` and refuses known slash commands with a turn ID. File paths still work.
 
 - The desktop gateway lists open sign-ins and returns the same attempt on retry.
 - The desktop proxy accepts model access cancellation and deletion without a body.
