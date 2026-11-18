@@ -50,6 +50,7 @@ export async function createModelAuth(options: {
     },
   } : { authPath, modelsPath });
   const nativeAuth = runtime.getAuth.bind(runtime);
+  const checkedModels = new Map<string, Model<Api>>();
   const request = new AsyncLocalStorage<{ external: boolean; source?: string }>();
 
   async function resolveModelAuth(target: string | AnyModel, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined> {
@@ -113,7 +114,10 @@ export async function createModelAuth(options: {
       }
     } else {
       const auth = await resolveModelAuth(model);
-      if (auth?.auth.apiKey || Object.keys(auth?.auth.headers ?? {}).length || Object.keys(auth?.env ?? {}).length) return;
+      if (auth?.auth.apiKey || Object.keys(auth?.auth.headers ?? {}).length || Object.keys(auth?.env ?? {}).length) {
+        checkedModels.set(provider, model);
+        return;
+      }
     }
     if (mode === "oauth" && readStoredCredential(provider, authPath)?.type !== "oauth") {
       throw new Error(`No OAuth credentials for provider: ${provider}. Run 'yoplai auth login ${provider}' first.`);
@@ -126,6 +130,18 @@ export async function createModelAuth(options: {
   }
   if (!desktopEnabled() && !options.submitted) return { runtime, resolveModelAuth, requireModelAuth };
   runtime.getAuth = resolveModelAuth;
+  if (readExternal && !options.submitted) {
+    const nativeCheck = runtime.checkAuth.bind(runtime);
+    runtime.checkAuth = async (provider, checkOptions) => {
+      const native = await nativeCheck(provider, checkOptions);
+      const model = checkedModels.get(provider);
+      if (native || !model || !desktopEnabled() || checkOptions?.signal?.aborted) return native;
+      // Pi checks the provider before a prompt or a model switch. Check the selected model again.
+      const mode = provider === options.primaryProvider ? options.mode : undefined;
+      const external = await readExternal(provider, model, mode);
+      return external && { type: external.type, source: external.source };
+    };
+  }
   const stream = runtime.streamSimple.bind(runtime);
   runtime.streamSimple = (model, context, requestOptions) => {
     const scope: { external: boolean; source?: string } = { external: false };
