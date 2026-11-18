@@ -1,3 +1,4 @@
+import { createModelAuth } from "../../desktop/model-auth.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -79,21 +80,6 @@ function runFailureError(message: string): Error {
 }
 
 const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
-// Provider names whose Pi API-key environment variable differs from the id.
-const PROVIDER_API_KEY_ENV_VARS = new Map([
-  ["opencode", "OPENCODE_API_KEY"],
-  ["opencode-go", "OPENCODE_API_KEY"],
-  ["github-copilot", "COPILOT_GITHUB_TOKEN"],
-  ["google", "GEMINI_API_KEY"],
-  ["huggingface", "HF_TOKEN"],
-  ["moonshotai", "MOONSHOT_API_KEY"],
-  ["moonshotai-cn", "MOONSHOT_API_KEY"],
-  ["kimi-coding", "KIMI_API_KEY"],
-  ["vercel-ai-gateway", "AI_GATEWAY_API_KEY"],
-  ["azure", "AZURE_OPENAI_API_KEY"],
-  ["cloudflare-workers-ai", "CLOUDFLARE_API_KEY"],
-  ["cloudflare-ai-gateway", "CLOUDFLARE_API_KEY"],
-]);
 let piEnvLock: Promise<void> = Promise.resolve();
 
 async function ensureSessionsDir() {
@@ -445,11 +431,8 @@ export const piAdapter: SdkAdapter = {
         createToolSearchExtension,
         SessionManager,
         SettingsManager,
-        ModelRuntime,
-        readStoredCredential,
         DefaultResourceLoader,
       } = await import("@earendil-works/pi-coding-agent");
-      const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
 
       // Resolve model
       await fs.mkdir(CONFIG_DIR, { recursive: true });
@@ -460,17 +443,17 @@ export const piAdapter: SdkAdapter = {
       if (!agent) {
         throw new Error(`Agent not found: ${params.agentId}`);
       }
-      const authPath = path.join(CONFIG_DIR, "auth.json");
-      const modelRuntime = await ModelRuntime.create({
-        authPath,
-        modelsPath: path.join(CONFIG_DIR, "models.json"),
-      });
       const effectiveModel = params.model ?? agent.model;
       if (!effectiveModel.provider) {
         throw new Error(
           `Pi SDK requires model.provider to be set for agent: ${agent.id}`
         );
       }
+      const authMode = params.model ? undefined : agent.auth?.mode;
+      const { runtime: modelRuntime, resolveModelAuth } = await createModelAuth({
+        primaryProvider: effectiveModel.provider,
+        mode: authMode === "proxy" ? undefined : authMode,
+      });
       const model = modelRuntime.getModel(
         effectiveModel.provider,
         effectiveModel.model
@@ -482,47 +465,8 @@ export const piAdapter: SdkAdapter = {
         );
       }
 
-      // Explicit model overrides infer auth from that provider's stored
-      // credential; ordinary runs preserve the agent's configured auth mode.
-      const storedCredential = readStoredCredential(model.provider, authPath);
-      const authMode = params.model ? storedCredential?.type : agent.auth?.mode;
-      let apiKey: string | null = null;
-
-      if (authMode === "oauth") {
-        // OAuth mode: require OAuth credentials
-        if (!storedCredential || storedCredential.type !== "oauth") {
-          throw new Error(
-            `No OAuth credentials for provider: ${model.provider}. Run 'yoplai auth login ${model.provider}' first.`
-          );
-        }
-        const auth = await modelRuntime.getAuth(model);
-        apiKey = auth?.auth.apiKey ?? null;
-      } else if (authMode === "api_key") {
-        // API key mode: only use API key credentials or env vars, skip OAuth
-        if (storedCredential?.type === "api_key" && storedCredential.key) {
-          apiKey = storedCredential.key;
-        } else {
-          apiKey = getEnvApiKey(model.provider) ?? null;
-        }
-        if (!apiKey) {
-          const envVar = PROVIDER_API_KEY_ENV_VARS.get(model.provider)
-            ?? `${model.provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
-          throw new Error(
-            `No API key for provider: ${model.provider}. Set ${envVar} env var.`
-          );
-        }
-      } else {
-        const auth = await modelRuntime.getAuth(model);
-        apiKey = auth?.auth.apiKey ?? null;
-      }
-
-      if (!apiKey) {
-        throw new Error(`No API key for provider: ${model.provider}`);
-      }
-      // Runtime-resolved auth must retain its credential type (especially OAuth).
-      // Only explicit API-key mode needs an override to exclude stored OAuth.
-      if (authMode === "api_key") {
-        await modelRuntime.setRuntimeApiKey(model.provider, apiKey);
+      if (!await resolveModelAuth(model)) {
+        throw new Error(`No credentials for provider: ${model.provider}`);
       }
 
       // Load configured system files
@@ -627,7 +571,7 @@ export const piAdapter: SdkAdapter = {
         extensionFactories: [
           (pi) => {
             pi.on("after_provider_response", (event, ctx) => {
-              captureClaudeQuota(ctx.model?.provider ?? "", event.headers, authMode);
+              captureClaudeQuota(ctx.model?.provider ?? "", event.headers, authMode ?? (modelRuntime.isUsingOAuth(effectiveModel.provider!) ? "oauth" : undefined));
             });
           },
           ...(agent.toolDeferral?.enabled !== false
@@ -1048,7 +992,7 @@ export const piAdapter: SdkAdapter = {
           );
         }
         try {
-          await modelRuntime.getAuth(fallback);
+          if (!await resolveModelAuth(fallback)) throw new Error("No credentials for the fallback model.");
           await agentSession.setModel(fallback);
           await resumeAfterFailedTurn(agentSession, () =>
             agentSession.prompt(messageWithAttachments, promptOptions)
