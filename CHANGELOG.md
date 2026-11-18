@@ -15,6 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.
 - The desktop gateway creates agents with a selected avatar and model. A retry with the same request ID returns the same agent.
 
 - The desktop gateway lists available models and marks a model Ready after a successful call.

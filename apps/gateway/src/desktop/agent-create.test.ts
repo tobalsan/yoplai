@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import { createServer, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,8 @@ const base = "http://127.0.0.1:4000";
 const stop: (() => void)[] = [];
 let root: string;
 let home: string;
+let reply: (res: ServerResponse, prompt: string) => void;
+let providerCalls: string[];
 let app: typeof import("../server/index.js")["app"];
 
 async function start() {
@@ -61,6 +64,16 @@ function config(rules: { agents?: string | string[]; pool?: string | string[] } 
   return fs.writeFile(path.join(home, "yoplai.json"), JSON.stringify({ version: 3, ...rules }));
 }
 
+function sendModelText(res: ServerResponse, text: string) {
+  const item = { id: "fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] };
+  const events = [
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response: { id: "fixture", status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
+  ];
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  res.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+}
+
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "desktop-agent-"));
   home = path.join(root, "yoplai");
@@ -68,6 +81,21 @@ beforeEach(async () => {
   stubDesktopTestEnv(root, home);
   await config();
   await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-agent-key" } }));
+  providerCalls = [];
+  reply = (res) => sendModelText(res, " ");
+  const provider = createServer((req, res) => {
+    let prompt = "";
+    req.setEncoding("utf8");
+    req.on("data", (data: string) => { prompt += data; });
+    req.on("end", () => {
+      providerCalls.push(prompt);
+      reply(res, prompt);
+    });
+  });
+  stop.push(() => { provider.close(); provider.closeAllConnections(); });
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", resolve));
+  const port = (provider.address() as AddressInfo).port;
+  await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { openai: { baseUrl: `http://127.0.0.1:${port}/v1` } } }));
   await start();
 });
 
@@ -312,4 +340,56 @@ it.each([
   expect(await res.json()).toEqual({ error: "discovery_refused", message: "The discovery rules do not allow this agent." });
   await expectNoWrite();
   expect(await list()).toEqual([]);
+});
+
+
+it("writes model instructions from the agent name and purpose", async () => {
+  reply = (res) => sendModelText(res, "# Duties\n\nSort the tasks.");
+  const input = { ...body("Planner"), purpose: "Sort tasks by date." };
+  const res = await create(input);
+  expect(res.status).toBe(201);
+  expect(await res.json()).toEqual({ id: "planner", instructions: "model" });
+  expect(providerCalls).toHaveLength(1);
+  expect(providerCalls[0]).toContain("Planner");
+  expect(providerCalls[0]).toContain("Sort tasks by date.");
+  expect(await fs.readFile(path.join(dir("planner"), "AGENTS.md"), "utf8")).toBe("# Duties\n\nSort the tasks.\n");
+  expect(await fs.readFile(path.join(dir("planner"), "agent.yaml"), "utf8")).not.toContain("system_files");
+  expect(await (await create(input)).json()).toEqual({ id: "planner", instructions: "model" });
+  expect(providerCalls).toHaveLength(1);
+});
+
+it.each(["empty", "failure", "timeout"])("uses the template when the model returns %s", async (outcome) => {
+  const closed = deferred();
+  if (outcome === "failure") reply = (res) => { res.writeHead(400); res.end("Fake provider detail."); };
+  if (outcome === "timeout") {
+    const wait = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => wait(ms === 30_000 ? 80 : ms));
+    reply = (res) => { res.on("close", closed.resolve); };
+  }
+  const res = await create({ ...body("Planner"), purpose: "Sort tasks by date." });
+  expect(res.status).toBe(201);
+  expect(await res.json()).toEqual({ id: "planner", instructions: "template" });
+  expect(providerCalls).toHaveLength(1);
+  expect(await fs.readFile(path.join(dir("planner"), "AGENTS.md"), "utf8")).toContain("Your purpose is: Sort tasks by date.");
+  if (outcome === "timeout") await closed.promise;
+});
+
+it("creates a second agent while the first model call waits", async () => {
+  const entered = deferred();
+  let pending: ServerResponse | undefined;
+  reply = (res, prompt) => {
+    if (prompt.includes("Slow Agent")) { pending = res; entered.resolve(); }
+    else sendModelText(res, "# Instructions");
+  };
+  const first = create(body("Slow Agent"));
+  await entered.promise;
+  try {
+    const second = await create(body("Fast Agent"));
+    expect(second.status).toBe(201);
+    expect(await list()).toEqual([expect.objectContaining({ id: "fast-agent" })]);
+  } finally {
+    if (pending) sendModelText(pending, "# Instructions");
+  }
+  expect((await first).status).toBe(201);
+  expect((await list()).map(({ id }: { id: string }) => id)).toEqual(["fast-agent", "slow-agent"]);
 });
