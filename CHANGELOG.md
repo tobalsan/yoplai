@@ -43,6 +43,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.
 - The setup wordmark shows YOPLAI with no period. The splash keeps its period.
 
 - Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.

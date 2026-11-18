@@ -79,6 +79,40 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           overflow-x: hidden;
         }
 
+        .desktop-window .left-nav-main {
+          --desktop-main-clearance: 0px;
+        }
+
+        .desktop-window .agent-sidebar.collapsed ~ .left-nav-main {
+          --desktop-main-clearance: calc(var(--desktop-buttons-width) - 50px);
+        }
+
+        .desktop-window .left-nav-shell.zen-mode .left-nav-main {
+          --desktop-main-clearance: var(--desktop-buttons-width);
+        }
+
+        .desktop-window .left-nav-main:not(:has(> :is(.chat-view, .agent-catalog)))::before {
+          content: "";
+          display: block;
+          height: 8px;
+          margin-inline-start: var(--desktop-main-clearance);
+          -webkit-app-region: drag;
+        }
+
+        .desktop-window :is(.agent-sidebar.collapsed ~ .left-nav-main, .zen-mode .left-nav-main):not(:has(> :is(.chat-view, .agent-catalog)))::before {
+          height: var(--desktop-buttons-height);
+        }
+
+        @media (max-width: 768px) {
+          .desktop-window .left-nav-shell .left-nav-main {
+            --desktop-main-clearance: var(--desktop-buttons-width);
+          }
+
+          .desktop-window .left-nav-main:not(:has(> :is(.chat-view, .agent-catalog)))::before {
+            height: var(--desktop-buttons-height);
+          }
+        }
+
         .left-nav-shell.zen-mode .left-nav-main {
           width: 100%;
         }

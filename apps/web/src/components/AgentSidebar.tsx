@@ -1661,6 +1661,22 @@ export function AgentSidebar(props: AgentSidebarProps) {
           justify-content: unset;
         }
 
+        .desktop-window .agent-sidebar .agent-sidebar-shell .sidebar-header {
+          box-sizing: border-box;
+          height: 36px;
+          flex-shrink: 0;
+          padding: 4px 10px 4px var(--desktop-buttons-width);
+          -webkit-app-region: drag;
+        }
+
+        .desktop-window .agent-sidebar.collapsed:not(:hover, .menu-open) .sidebar-header {
+          padding: 0;
+        }
+
+        .desktop-window .agent-sidebar.collapsed:not(:hover, .menu-open) .sidebar-logo {
+          display: none;
+        }
+
         @media (max-width: 768px) {
           .agent-sidebar {
             position: fixed;
@@ -1673,6 +1689,10 @@ export function AgentSidebar(props: AgentSidebarProps) {
             z-index: 850;
             transform: translateX(0);
             transition: transform 0.2s ease;
+          }
+
+          .desktop-window .agent-sidebar .sidebar-header {
+            margin-bottom: 58px;
           }
 
           .agent-sidebar-shell {

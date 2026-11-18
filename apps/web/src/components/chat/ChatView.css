@@ -220,6 +220,27 @@
           z-index: 10;
         }
 
+        .desktop-window .chat-main > .header {
+          padding-inline-start: max(18px, var(--desktop-main-clearance, 0px), calc((100% - var(--transcript-width)) / 2 + 18px));
+          -webkit-app-region: drag;
+        }
+
+        .desktop-window .chat-main > .header .device-panel {
+          -webkit-app-region: no-drag;
+        }
+
+        @media (max-width: 768px) {
+          .desktop-window .desktop-chat-repair {
+            padding-inline-start: 64px;
+          }
+        }
+
+        @container chat-main (max-width: 860px) {
+          .desktop-window .chat-main > .header {
+            padding-inline-start: max(12px, var(--desktop-main-clearance, 0px));
+          }
+        }
+
         .back-btn,
         .notification-sound-btn,
         .taskboard-btn {
