@@ -45,6 +45,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Opening chat settings no longer flashes the page while sharing or default-agent preferences load. The menu matches sidebar context menus in both themes, with icons and Agent settings first, Set as default agent hidden for the current default, then Share link.
+
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
 - In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.

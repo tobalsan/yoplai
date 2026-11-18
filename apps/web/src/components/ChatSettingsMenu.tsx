@@ -18,7 +18,8 @@ export function ChatSettingsMenu(props: {
   const location = useLocation();
   const [open, setOpen] = createSignal(false);
   const [preference, { mutate: setPreference }] = createResource(() => !props.projectId && props.agentId, () => fetchMainAgentPreference().catch(() => null));
-  const isMain = () => preference()?.accessible === true && preference()?.mainAgentId === props.agentId;
+  const currentPreference = () => preference.state === "ready" || preference.state === "refreshing" ? preference.latest : undefined;
+  const isMain = () => currentPreference()?.accessible === true && currentPreference()?.mainAgentId === props.agentId;
   const [agents, setAgents] = createSignal<Agent[] | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
@@ -31,6 +32,8 @@ export function ChatSettingsMenu(props: {
       return null;
     })
   );
+  // Reading a pending resource directly would replace the chat with its Suspense fallback.
+  const currentShare = () => share.state === "ready" || share.state === "refreshing" ? share.latest : undefined;
   let root: HTMLDivElement | undefined;
   let button: HTMLButtonElement | undefined;
   let menu: HTMLDivElement | undefined;
@@ -39,7 +42,7 @@ export function ChatSettingsMenu(props: {
     const currentScope = scope();
     setSharing(true);
     try {
-      const result = !revoke && share()?.token ? share() : await chatShare(props.agentId, props.sessionId, revoke ? "DELETE" : "PUT");
+      const result = !revoke && currentShare()?.token ? currentShare() : await chatShare(props.agentId, props.sessionId, revoke ? "DELETE" : "PUT");
       if (currentScope !== scope()) return;
       if (!result) throw new Error("This chat is not available for sharing.");
       setShare(result);
@@ -100,13 +103,13 @@ export function ChatSettingsMenu(props: {
         }}><i class="fa-solid fa-gear" aria-hidden="true" /></button>
         <Show when={open()}>
           <div ref={menu} class="chat-settings-menu" role="menu" onKeyDown={menuKeydown}>
-            <Show when={!props.projectId}>
-              <button type="button" role="menuitem" disabled={loading()} onClick={() => void openPicker()}>Default agent…<Show when={isMain()}><span class="chat-settings-current"> current</span></Show></button>
+            <Show when={props.settingsAgentId}>{(id) => <A role="menuitem" href={`/agents/${encodeURIComponent(id())}/edit`} state={{ backTo: `${location.pathname}${location.search}` }} onClick={() => setOpen(false)}><i class="fa-solid fa-gear" aria-hidden="true" />Agent settings</A>}</Show>
+            <Show when={!props.projectId && !isMain()}>
+              <button type="button" role="menuitem" disabled={loading()} onClick={() => void openPicker()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>Set as default agent</button>
             </Show>
-            <Show when={props.settingsAgentId}>{(id) => <A role="menuitem" href={`/agents/${encodeURIComponent(id())}/edit`} state={{ backTo: `${location.pathname}${location.search}` }} onClick={() => setOpen(false)}>Agent settings</A>}</Show>
             <Show when={canShare()}>
-              <button type="button" role="menuitem" disabled={sharing() || share.loading || !share()} onClick={() => void shareAction(false)}>{share()?.shared ? "Copy link" : "Share link"}</button>
-              <Show when={share()?.shared}><button type="button" role="menuitem" disabled={sharing() || share.loading} onClick={() => void shareAction(true)}>Revoke link</button></Show>
+              <button type="button" role="menuitem" disabled={sharing() || share.loading || !currentShare()} onClick={() => void shareAction(false)}><i class="fa-solid fa-link" aria-hidden="true" />{currentShare()?.shared ? "Copy link" : "Share link"}</button>
+              <Show when={currentShare()?.shared}><button type="button" role="menuitem" disabled={sharing() || share.loading} onClick={() => void shareAction(true)}><i class="fa-solid fa-link-slash" aria-hidden="true" />Revoke link</button></Show>
             </Show>
           </div>
         </Show>
@@ -121,11 +124,12 @@ export function ChatSettingsMenu(props: {
     </Portal>}</Show>
     <style>{`
       .chat-settings { position: relative; }
-      .chat-settings-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; min-width: 208px; padding: 4px; border: 1px solid var(--surface-2); border-radius: 12px; background: var(--bg-raised); }
-      .chat-settings-menu > button, .chat-settings-menu > a { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px; border: none; border-radius: 8px; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; text-decoration: none; text-align: left; cursor: pointer; }
-      .chat-settings-menu > :hover, .chat-settings-menu > :focus-visible { background: var(--surface-1); outline: 2px solid var(--tone-user); outline-offset: -2px; }
+      .chat-settings-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; min-width: 208px; padding: 4px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); box-shadow: 0 4px 12px var(--shadow-md); }
+      .chat-settings-menu > button, .chat-settings-menu > a { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-decoration: none; text-align: left; cursor: pointer; }
+      .chat-settings-menu > :hover { background: var(--bg-raised); color: var(--text-primary); }
+      .chat-settings-menu > :focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+      .chat-settings-menu i, .chat-settings-menu svg { flex: 0 0 16px; width: 16px; text-align: center; }
       .chat-settings-menu > :disabled { opacity: .5; cursor: wait; }
-      .chat-settings-current { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
     `}</style>
   </>;
 }
