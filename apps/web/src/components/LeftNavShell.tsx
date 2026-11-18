@@ -83,8 +83,10 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           --desktop-main-clearance: 0px;
         }
 
-        .desktop-window .agent-sidebar.collapsed ~ .left-nav-main {
-          --desktop-main-clearance: calc(var(--desktop-buttons-width) - 50px);
+        @media (width > 768px) {
+          .desktop-window .agent-sidebar.collapsed ~ .left-nav-main {
+            --desktop-main-clearance: calc(var(--desktop-buttons-width) - 50px);
+          }
         }
 
         .desktop-window .left-nav-shell.zen-mode .left-nav-main {
