@@ -60,7 +60,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- Desktop setup requires the Claude warning for external Claude subscriptions, even if a file labels the subscription token as an API key.
+- Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
 - Desktop setup lists only providers that need no input other than the API key.
 - A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
 - The desktop guard rejects IPv4 forwarding addresses in brackets.

@@ -51,11 +51,11 @@ const systemKeychain: Keychain = {
   },
 };
 
-type Entry = { provider: string; type: ExternalCredential["type"]; key?: string; expires?: number; supported: boolean };
+type Entry = { provider: string; type: ExternalCredential["type"]; key?: string; expires?: number; supported: boolean; message?: string };
 type ConsentState = "enabled" | "warning-accepted" | "denied";
 type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
-export const CLAUDE_WARNING_REQUIRED = "Accept the Claude warning in Model Access before you use this login.";
+const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude Code source";
 export const CLAUDE_LOGIN_UNAVAILABLE = "This Claude login cannot be used. Sign in with Claude here, or use an API key.";
 
 function isAnthropicOAuthToken(value: unknown): value is string {
@@ -63,12 +63,16 @@ function isAnthropicOAuthToken(value: unknown): value is string {
   return typeof value === "string" && value.includes("sk-ant-oat");
 }
 
-function isAnthropicOAuthRecord(credential: ObjectValue | undefined): boolean {
-  return credential?.type === "oauth" || isAnthropicOAuthToken(credential?.key);
-}
-
-function isAnthropicOAuth(entry: Entry): boolean {
-  return entry.provider === "anthropic" && entry.type === "oauth";
+function containsAnthropicOAuthToken(value: unknown): boolean {
+  const pending = [value];
+  while (pending.length > 0) {
+    const item = pending.pop();
+    if (isAnthropicOAuthToken(item)) return true;
+    if (item && typeof item === "object") {
+      for (const child of Object.values(item)) pending.push(child);
+    }
+  }
+  return false;
 }
 
 function oauthEntry(provider: string, value: unknown, expires: unknown, account?: unknown): Entry {
@@ -107,10 +111,10 @@ function parseSource(source: ExternalSource, raw: string): Entry[] {
   return entries(data).flatMap(([provider, value]): Entry[] => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(provider)) return [];
     const cred = object(value);
-    if (!cred) return [];
-    if (provider === "anthropic" && isAnthropicOAuthRecord(cred)) {
-      return [source === "pi" ? oauthEntry(provider, cred.type === "oauth" ? cred.access : cred.key, cred.expires) : { provider, type: "oauth", supported: false }];
+    if ((provider === "anthropic" && cred?.type === "oauth") || containsAnthropicOAuthToken(value)) {
+      return [{ provider, type: "oauth", supported: false, message: FILE_CLAUDE_LOGIN }];
     }
+    if (!cred) return [];
     if (cred.type === "api" || cred.type === "api_key") return [{ provider, type: "api_key", supported: true, key: isLiteralKey(cred.key) ? cred.key : undefined }];
     if (cred.type === "oauth") return [source === "pi" ? oauthEntry(provider, cred.access, cred.expires, cred.accountId) : { provider, type: "oauth", supported: false }];
     return [];
@@ -153,18 +157,6 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     return write;
   }
 
-  async function requiresWarning(source: ExternalSource): Promise<boolean> {
-    if (source === "claude-code") return true;
-    if (source === "codex") return false;
-    try {
-      const data = object(JSON.parse((await fs.readFile(externalPath(source), "utf8")).replace(/^\uFEFF/, "")));
-      return isAnthropicOAuthRecord(object(data?.anthropic));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
-  }
-
   async function read(source: ExternalSource, enabled: Consent): Promise<Entry[]> {
     const state = enabled[source];
     if (state !== "enabled" && state !== "warning-accepted") return [];
@@ -197,14 +189,14 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     const detected = source === "claude-code"
       ? await keychain.exists()
       : await fs.access(externalPath(source)).then(() => true, () => false);
-    const providers = detected ? (await read(source, enabled)).filter((entry) => enabled[source] === "warning-accepted" || !isAnthropicOAuth(entry)) : [];
+    const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
     return {
       source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
       ...(denied ? { message: "Access denied" } : {}),
-      providers: providers.map(({ provider, type, supported, key, expires }) => ({
+      providers: providers.map(({ provider, type, supported, key, expires, message }) => ({
         provider, type, available: Boolean(key) && (expires === undefined || expires > Date.now()),
-        ...(!supported ? { message: "Not supported yet" } : {}),
+        ...(!supported ? { message: message ?? "Not supported yet" } : {}),
       })),
     };
   }
@@ -215,28 +207,21 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       return Promise.all(EXTERNAL_SOURCES.map((source) => statusOf(source, enabled)));
     },
     async enable(source: ExternalSource, enabled: boolean, warningAccepted = false) {
-      if (enabled && !warningAccepted && await requiresWarning(source)) return { warningRequired: true } as const;
+      if (enabled && source === "claude-code" && !warningAccepted) return { warningRequired: true } as const;
       if (source === "claude-code") keychainDenied = false;
-      await update(source, enabled ? (warningAccepted ? "warning-accepted" : "enabled") : undefined);
+      await update(source, enabled ? (source === "claude-code" ? "warning-accepted" : "enabled") : undefined);
       return enabled ? statusOf(source, await consent()) : { source, enabled: false };
     },
     async resolve(provider: string, model: AnyModel | undefined, mode?: ExternalCredential["type"]): Promise<ExternalCredential | undefined> {
       const enabled = await consent();
-      let warningRequired = false;
       let claudeUnavailable = false;
       for (const source of EXTERNAL_SOURCES) {
         if (source === "codex" && provider !== "openai-codex" || source === "claude-code" && provider !== "anthropic") continue;
         const row = (await read(source, enabled)).find((entry) => entry.provider === provider);
         if (!row) continue;
-        if (isAnthropicOAuth(row)) {
-          if (enabled[source] !== "warning-accepted") {
-            warningRequired = true;
-            continue;
-          }
-          if (row.supported && mode !== "api_key" && (!row.key || !model || !isTrustedExternalOAuthModel(model) || !row.expires || row.expires <= Date.now())) {
-            claudeUnavailable = true;
-            continue;
-          }
+        if (source === "claude-code" && mode !== "api_key" && (!row.key || !model || !isTrustedExternalOAuthModel(model) || !row.expires || row.expires <= Date.now())) {
+          claudeUnavailable = true;
+          continue;
         }
         if (!row.key || (mode && row.type !== mode)) continue;
         if (row.type === "oauth") {
@@ -248,7 +233,6 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
         }
         return { type: row.type, key: row.key, source };
       }
-      if (warningRequired) throw new Error(CLAUDE_WARNING_REQUIRED);
       if (claudeUnavailable) throw new Error(CLAUDE_LOGIN_UNAVAILABLE);
       return undefined;
     },

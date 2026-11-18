@@ -6,7 +6,7 @@ import type { ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent"
 import { CONFIG_DIR } from "../config/index.js";
 import { desktopEnabled } from "./guard.js";
 import { isRelayEnabled } from "../relay/state.js";
-import { CLAUDE_LOGIN_UNAVAILABLE, CLAUDE_WARNING_REQUIRED, getExternalSources } from "./external-sources.js";
+import { CLAUDE_LOGIN_UNAVAILABLE, getExternalSources } from "./external-sources.js";
 import { modelReadiness } from "./model-picker.js";
 import { CODEX_EXPIRED, isLiteralKey } from "./literal-key.js";
 export { isLiteralKey } from "./literal-key.js";
@@ -17,7 +17,7 @@ type ReadExternal = (provider: string, model: AnyModel | undefined, mode?: AuthM
 const EXTERNAL_FAILURE = "The external login failed. Check the login in its app.";
 
 export function isSafeModelAccessError(message: string | undefined): message is string {
-  return message === CODEX_EXPIRED || message === CLAUDE_WARNING_REQUIRED || message === CLAUDE_LOGIN_UNAVAILABLE;
+  return message === CODEX_EXPIRED || message === CLAUDE_LOGIN_UNAVAILABLE;
 }
 
 function safeExternalError(provider: string, message?: string): string {
