@@ -87,7 +87,8 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   const { createExternalSources } = await import("./external-sources.js");
   const { createModelAuth } = await import("./model-auth.js");
   const { CODEX_EXPIRED } = await import("./literal-key.js");
-  const external = createExternalSources(home);
+  const { createAgentSession, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
+  const external = createExternalSources(home, { keychain: { exists: async () => false, read: async () => "{}" } });
   const crt = (account: string, minutes: number) => {
     const payload = { exp: Math.floor(Date.now() / 1000) + minutes * 60, "https://api.openai.com/auth": { chatgpt_account_id: account } };
     const token = `fake.${Buffer.from(JSON.stringify(payload)).toString("base64")}.sig`;
@@ -96,7 +97,7 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   const initial = crt("account-one", 30);
   const file = await fixture("codex", initial);
   await external.enable("codex", true);
-  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  const { runtime, requireModelAuth } = await createModelAuth({ readExternal: external.resolve });
   const owned = path.join(home, "auth.json");
   const ownedBefore = await fs.readFile(owned, "utf8");
   const model = runtime.getModels("openai-codex")[0];
@@ -134,27 +135,53 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
       throw new Error("Unexpected WebSocket request.");
     }
   });
-  const chat = () => runtime.completeSimple(model, { messages: [{ role: "user", content: "Test.", timestamp: Date.now() }] }, { sessionId: "test-codex-session" });
-  expect((await chat()).stopReason).toBe("stop");
-  const near = crt("account-two", 2);
-  await fixture("codex", near);
-  expect((await chat()).stopReason).toBe("stop");
-  await fixture("codex", crt("account-two", -1));
-  expect((await chat()).errorMessage).toBe(CODEX_EXPIRED);
-  expect(observed).toHaveLength(2);
-  await fixture("codex", near);
-  revoked = true;
-  expect((await chat()).errorMessage).toBe(CODEX_EXPIRED);
-  revoked = false;
-  const replacement = crt("account-two", 45);
-  await fixture("codex", replacement);
-  expect((await chat()).stopReason).toBe("stop");
-  expect(observed.map(({ account }) => account)).toEqual(["account-one", "account-two", "account-two", "account-two"]);
-  expect(observed[3].auth === `Bearer ${replacement.tokens.access_token}`).toBe(true);
-  expect((await fs.readFile(file, "utf8")) === JSON.stringify(replacement)).toBe(true);
-  expect((await fs.readFile(owned, "utf8")) === ownedBefore).toBe(true);
-  expect(refresh).not.toHaveBeenCalled();
-  expect(socketAttempt).not.toHaveBeenCalled();
+  expect(await runtime.listCredentials()).toEqual([]);
+  await requireModelAuth(model);
+  const { session } = await createAgentSession({
+    cwd: home,
+    agentDir: home,
+    modelRuntime: runtime,
+    model,
+    tools: [],
+    settingsManager: SettingsManager.inMemory({}),
+    sessionManager: SessionManager.inMemory(home),
+  });
+  const chat = async () => {
+    await session.prompt("Test.");
+    const result = session.messages.at(-1);
+    if (result?.role !== "assistant") throw new Error("The model did not answer.");
+    return result;
+  };
+  try {
+    expect((await chat()).stopReason).toBe("stop");
+    const near = crt("account-two", 2);
+    await fixture("codex", near);
+    expect((await chat()).stopReason).toBe("stop");
+    await fixture("codex", crt("account-two", -1));
+    await expect(chat()).rejects.toThrow(CODEX_EXPIRED);
+    expect(observed).toHaveLength(2);
+    await fixture("codex", near);
+    revoked = true;
+    expect((await chat()).errorMessage).toBe(CODEX_EXPIRED);
+    revoked = false;
+    const replacement = crt("account-two", 45);
+    await fixture("codex", replacement);
+    const fallback = runtime.getModels("openai-codex").find((candidate) => candidate.id !== model.id)!;
+    await requireModelAuth(fallback);
+    await session.setModel(fallback);
+    expect((await chat()).stopReason).toBe("stop");
+    expect(observed.map(({ account }) => account)).toEqual(["account-one", "account-two", "account-two", "account-two"]);
+    expect(observed[3].auth === `Bearer ${replacement.tokens.access_token}`).toBe(true);
+    expect((await fs.readFile(file, "utf8")) === JSON.stringify(replacement)).toBe(true);
+    expect((await fs.readFile(owned, "utf8")) === ownedBefore).toBe(true);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(socketAttempt).not.toHaveBeenCalled();
+    await external.enable("codex", false);
+    await expect(chat()).rejects.toThrow("No API key");
+    expect(observed).toHaveLength(4);
+  } finally {
+    session.dispose();
+  }
 });
 
 it.each([

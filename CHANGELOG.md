@@ -66,6 +66,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop chat accepts an enabled Codex CLI login without an owned credential.
+
 - Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
 - Desktop setup keeps config links during migration. Restart works after you correct a config error.
 
