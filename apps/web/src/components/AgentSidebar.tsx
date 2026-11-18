@@ -16,6 +16,7 @@ import {
 import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { theme, toggleTheme } from "../theme";
+import { isDesktopWindow } from "../lib/desktop-window";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { openConnectPrompt, restartTour } from "../onboarding/state";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
@@ -99,6 +100,7 @@ function groupLabel(timestamp: number, currentTime: number): string {
 }
 
 export function AgentSidebar(props: AgentSidebarProps) {
+  const desktopWindow = isDesktopWindow();
   const location = useLocation();
   const navigate = useNavigate();
   // "Connect tools" only makes sense once a superadmin starred something;
@@ -446,25 +448,27 @@ export function AgentSidebar(props: AgentSidebarProps) {
       )}</Show>
       <div class="agent-sidebar-shell">
         <div class="sidebar-header">
-          <A class="sidebar-logo" href="/">
-            <Show
-              when={capabilities.branding?.name || capabilities.branding?.logo}
-              fallback={
-                <>
-                  <span class="logo-full">Yoplai</span>
-                  <span class="logo-short">Yo</span>
-                </>
-              }
-            >
-              <Show when={capabilities.branding?.logo}>
-                <img class="sidebar-brand-logo" src={capabilities.branding!.logo} alt="" />
+          <Show when={!desktopWindow || capabilities.branding?.logo}>
+            <A class="sidebar-logo" href="/" aria-label={desktopWindow ? capabilities.branding?.name ?? "Yoplai" : undefined}>
+              <Show
+                when={capabilities.branding?.name || capabilities.branding?.logo}
+                fallback={
+                  <>
+                    <span class="logo-full">Yoplai</span>
+                    <span class="logo-short">Yo</span>
+                  </>
+                }
+              >
+                <Show when={capabilities.branding?.logo}>
+                  <img class="sidebar-brand-logo" src={capabilities.branding!.logo} alt="" />
+                </Show>
+                <Show when={!desktopWindow && capabilities.branding?.name}>
+                  <span class="logo-full">{capabilities.branding!.name}</span>
+                  <span class="logo-short">{capabilities.branding!.name!.substring(0, 2).toUpperCase()}</span>
+                </Show>
               </Show>
-              <Show when={capabilities.branding?.name}>
-                <span class="logo-full">{capabilities.branding!.name}</span>
-                <span class="logo-short">{capabilities.branding!.name!.substring(0, 2).toUpperCase()}</span>
-              </Show>
-            </Show>
-          </A>
+            </A>
+          </Show>
           <Show when={import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true"}>
             <span class="dev-badge">DEV</span>
           </Show>
