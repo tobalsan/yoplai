@@ -17,12 +17,18 @@ const API_KEY_LOGIN_REQUIRES_MORE_INPUT = new Set([
 ]);
 const modelSchema = z.object({ provider: z.string(), model: z.string() }).strict();
 
-export function createModelAccessRoutes(home: string, deps: {
+type ModelAccessDeps = {
   createAuth?: typeof createModelAuth;
   checkKey?: typeof checkLiteralModelKey;
   open?: typeof openDesktopBrowser;
   external?: ReturnType<typeof getExternalSources>;
-} = {}) {
+};
+
+export function createModelAccessRoutes(home: string, deps?: ModelAccessDeps) {
+  return createModelAccess(home, deps).routes;
+}
+
+export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
   const routes = new Hono();
   const makeAuth = deps.createAuth ?? createModelAuth;
   const external = deps.external ?? getExternalSources(home);
@@ -117,7 +123,7 @@ export function createModelAccessRoutes(home: string, deps: {
     modelReadiness.clear(source);
     return c.json(result);
   });
-  routes.get("/models", async (c) => {
+  const listModels = async () => {
     const { runtime } = await getAuth();
     const owned = await runtime.listCredentials();
     const externalStatus = await external.status();
@@ -144,8 +150,9 @@ export function createModelAccessRoutes(home: string, deps: {
       }
       return rows;
     }));
-    return c.json({ models: groups.flat() });
-  });
+    return groups.flat();
+  };
+  routes.get("/models", async (c) => c.json({ models: await listModels() }));
   routes.post("/models/check", async (c) => {
     const body = modelSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
@@ -175,5 +182,5 @@ export function createModelAccessRoutes(home: string, deps: {
       locks.delete(provider);
     }
   });
-  return routes;
+  return { routes, getAuth, listModels };
 }

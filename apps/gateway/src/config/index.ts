@@ -44,7 +44,7 @@ function hasGlobMagic(input: string): boolean {
   return /[*?[\]{}]/.test(input);
 }
 
-function globToDirs(pattern: string, configDir: string): string[] {
+function globToDirs(pattern: string, configDir: string, files?: fg.Options["fs"]): string[] {
   const resolved = resolvePathFromConfig(pattern, configDir);
   if (!hasGlobMagic(pattern)) return [resolved];
   return fg
@@ -53,8 +53,83 @@ function globToDirs(pattern: string, configDir: string): string[] {
       dot: true,
       onlyDirectories: true,
       unique: true,
+      fs: files,
     })
     .filter((dir) => !dir.split(path.sep).includes(".git"));
+}
+
+// Give discovery a view of the new directories without making them on disk.
+function projectDirectories(dirs: string[], configDir: string) {
+  const children = new Map<string, Set<string>>();
+  const projected = new Set<string>();
+  function project(dir: string): string {
+    try {
+      return fs.realpathSync(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = project(path.dirname(dir));
+      const name = path.basename(dir);
+      const names = children.get(parent) ?? new Set<string>();
+      names.add(name);
+      children.set(parent, names);
+      const result = path.join(parent, name);
+      projected.add(result);
+      return result;
+    }
+  }
+  const identities = dirs.map(project);
+  function identity(dir: string): string {
+    try {
+      return fs.realpathSync(dir);
+    } catch (error) {
+      const parent = path.dirname(dir);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === dir) throw error;
+      return path.join(identity(parent), path.basename(dir));
+    }
+  }
+  const stat = fs.statSync(configDir);
+  function readdirSync(dir: string, options: { withFileTypes: true }): fs.Dirent[];
+  function readdirSync(dir: string): string[];
+  function readdirSync(dir: string, options?: { withFileTypes: true }): fs.Dirent[] | string[] {
+    const key = identity(path.resolve(dir));
+    const existing = projected.has(key) ? [] : fs.readdirSync(dir, { withFileTypes: true });
+    const added = [...(children.get(key) ?? [])].map((name) => ({
+      name, parentPath: dir, path: dir,
+      isDirectory: () => true,
+      isBlockDevice: () => false,
+      isCharacterDevice: () => false,
+      isFIFO: () => false,
+      isFile: () => false,
+      isSocket: () => false,
+      isSymbolicLink: () => false,
+    }));
+    const all = [...existing, ...added];
+    return options ? all : all.map((entry) => entry.name);
+  }
+  const files = {
+    readdirSync,
+    lstatSync: (dir: string) => projected.has(identity(path.resolve(dir))) ? stat : fs.lstatSync(dir),
+    statSync: (dir: string) => projected.has(identity(path.resolve(dir))) ? stat : fs.statSync(dir),
+  };
+  return { identity, identities, files };
+}
+
+const DEFAULT_AGENT_DISCOVERY = "$YOPLAI_HOME/agents/*";
+
+export function allowsDesktopAgentDiscovery(finalDir: string, stagingDir: string): boolean {
+  const configPath = getConfigPath();
+  const configDir = path.dirname(configPath);
+  const config = GatewayRootConfigSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8")));
+  const agents = config.agents ?? (config.pool === undefined ? DEFAULT_AGENT_DISCOVERY : []);
+  const { identity, identities: [final, staging], files } = projectDirectories([finalDir, stagingDir], configDir);
+  function matches(patterns: string | string[] = []) {
+    return [patterns].flat().flatMap((pattern) => globToDirs(pattern, configDir, files))
+      .map((dir) => identity(path.resolve(dir)));
+  }
+  const agentDirs = matches(agents);
+  const poolDirs = matches(config.pool);
+  return agentDirs.filter((dir) => dir === final).length === 1 && !poolDirs.includes(final) &&
+    !agentDirs.includes(staging) && !poolDirs.includes(staging);
 }
 
 function discoverAgents(
@@ -265,7 +340,7 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
   const extensionEnvAllowlist = new Set(parsed.extensionEnvAllowlist);
   const hasPoolConfig = Object.prototype.hasOwnProperty.call(json, "pool");
   const agentDiscovery =
-    parsed.agents ?? (hasPoolConfig ? undefined : "$YOPLAI_HOME/agents/*");
+    parsed.agents ?? (hasPoolConfig ? undefined : DEFAULT_AGENT_DISCOVERY);
   const poolEmptyMessage =
     "[config] pool is configured but no valid agents were found. Remove pool for single-folder mode, or point pool at directories containing agent.yaml.";
   const result: GatewayConfig = {
