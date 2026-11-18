@@ -34,6 +34,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.
+
 - The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
 - After you link a gateway, the row reads "Device connecting…" until the device connects. "Device not connected" shows only when the device stays offline after the check ends.
 - Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
