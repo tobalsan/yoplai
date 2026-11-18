@@ -1,3 +1,4 @@
+import { stubDesktopTestEnv } from "../test-utils/desktop-test-env.js";
 import fs from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -13,10 +14,7 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "desktop-external-"));
   home = path.join(root, "yoplai");
   await fs.mkdir(home);
-  vi.stubEnv("HOME", root);
-  vi.stubEnv("YOPLAI_HOME", home);
-  vi.stubEnv("YOPLAI_DESKTOP", "1");
-  vi.stubEnv("YOPLAI_DEV", "1");
+  stubDesktopTestEnv(root, home);
 });
 afterEach(async () => {
   server?.close();
@@ -103,6 +101,7 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   const ownedBefore = await fs.readFile(owned, "utf8");
   const model = runtime.getModels("openai-codex")[0];
   expect(model).toBeDefined();
+  expect(await external.resolve("openai-codex", { ...model, baseUrl: "http://127.0.0.1:4000" })).toBeUndefined();
   const observed: Array<{ auth: string | undefined; account: string | string[] | undefined }> = [];
   const item = { id: "fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK", annotations: [] }] };
   const sse = [

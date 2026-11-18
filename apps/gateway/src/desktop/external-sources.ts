@@ -27,6 +27,11 @@ function knownOAuthProvider(provider: string): provider is typeof EXTERNAL_OAUTH
   return EXTERNAL_OAUTH_PROVIDERS.some((id) => id === provider);
 }
 
+export function isTrustedExternalOAuthModel(model: AnyModel): boolean {
+  if (!knownOAuthProvider(model.provider) || model.baseUrl.replace(/\/$/, "") !== TRUSTED_OAUTH_ENDPOINTS[model.provider]) return false;
+  return model.provider === "openai-codex" ? model.api === "openai-codex-responses" : model.api === "anthropic-messages";
+}
+
 type Keychain = { exists(): Promise<boolean>; read(): Promise<string> };
 const run = promisify(execFile);
 const systemKeychain: Keychain = {
@@ -185,7 +190,7 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
         const row = (await read(source, enabled)).find((entry) => entry.provider === provider && (!mode || entry.type === mode));
         if (!row?.key) continue;
         if (row.type === "oauth") {
-          if (!knownOAuthProvider(provider) || !model || model.baseUrl.replace(/\/$/, "") !== TRUSTED_OAUTH_ENDPOINTS[provider]) continue;
+          if (!model || !isTrustedExternalOAuthModel(model)) continue;
           if (row.expires === undefined || row.expires <= Date.now()) {
             if (provider === "openai-codex") throw new Error(CODEX_EXPIRED);
             continue;

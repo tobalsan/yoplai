@@ -1,3 +1,4 @@
+import { stubDesktopTestEnv } from "../test-utils/desktop-test-env.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,10 +12,7 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "model-access-"));
   home = path.join(root, "yoplai");
   await fs.mkdir(home);
-  vi.stubEnv("HOME", root);
-  vi.stubEnv("YOPLAI_HOME", home);
-  vi.stubEnv("YOPLAI_DESKTOP", "1");
-  vi.stubEnv("YOPLAI_DEV", "1");
+  stubDesktopTestEnv(root, home);
 });
 afterEach(async () => {
   vi.useRealTimers();

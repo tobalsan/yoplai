@@ -1,9 +1,10 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { CODEX_EXPIRED } from "./literal-key.js";
+import { defaultModel, modelReadiness, pickerModel } from "./model-picker.js";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getExternalSources, isExternalSource } from "./external-sources.js";
-import { checkLiteralModelKey, createModelAuth, isLiteralKey } from "./model-auth.js";
-import { createOAuthAttempts, isOAuthProvider, type openDesktopBrowser } from "./oauth-attempts.js";
+import { getExternalSources, isExternalSource, isTrustedExternalOAuthModel } from "./external-sources.js";
+import { checkLiteralModelKey, completeModelOnce, createModelAuth, isLiteralKey } from "./model-auth.js";
+import { createOAuthAttempts, isOAuthProvider, OAUTH_HOSTS, type openDesktopBrowser } from "./oauth-attempts.js";
 
 export const CLAUDE_WARNING = "Anthropic terms do not allow a Claude subscription in third-party apps. Anthropic can limit or close your account. Use an API key to stay inside the terms.";
 const confirm = { replace: z.boolean().optional() };
@@ -11,7 +12,7 @@ const startSchema = z.object({ ...confirm, warningAccepted: z.boolean().optional
 const keySchema = z.object({ ...confirm, provider: z.string(), key: z.string().max(8192), checkOnly: z.boolean().optional() }).strict();
 const consentSchema = z.object({ enabled: z.boolean(), warningAccepted: z.boolean().optional() }).strict();
 const codeSchema = z.object({ code: z.string().min(1).max(8192) }).strict();
-export const defaultModel = (models: readonly Model<Api>[]) => models.find((model) => !model.id.endsWith("-free") && Object.values(model.cost).some((cost) => typeof cost === "number" && cost > 0));
+const modelSchema = z.object({ provider: z.string(), model: z.string() }).strict();
 
 export function createModelAccessRoutes(home: string, deps: {
   createAuth?: typeof createModelAuth;
@@ -25,17 +26,22 @@ export function createModelAccessRoutes(home: string, deps: {
   const checkKey = deps.checkKey ?? checkLiteralModelKey;
   let auth: ReturnType<typeof createModelAuth> | undefined;
   const getAuth = () => {
-    auth ??= makeAuth({ home }).catch((error: unknown) => { auth = undefined; throw error; });
+    auth ??= makeAuth({ home, readExternal: external.resolve }).catch((error: unknown) => { auth = undefined; throw error; });
     return auth;
   };
   const attempts = createOAuthAttempts(async (provider, interaction) => {
     await (await getAuth()).runtime.login(provider, "oauth", interaction);
+    modelReadiness.clear("owned", provider);
   }, deps.open);
   const locks = new Set<string>();
   routes.onError((_error, c) => c.json({ error: "model_access_failed", message: "The model access request failed." }, 500));
   routes.get("/", async (c) => {
     const { runtime } = await getAuth();
-    return c.json({ external: await external.status(), owned: (await runtime.listCredentials()).filter((entry) => runtime.getProvider(entry.providerId)), oauthProviders: Object.keys({ "openai-codex": true, anthropic: true }), apiKeyProviders: runtime.getProviders().filter((provider) => provider.auth.apiKey && defaultModel(runtime.getModels(provider.id))).map(({ id, name }) => ({ id, name })) });
+    const owned = (await runtime.listCredentials()).filter((entry) => runtime.getProvider(entry.providerId));
+    const apiKeyProviders = runtime.getProviders()
+      .filter((provider) => provider.auth.apiKey?.login && defaultModel(runtime.getModels(provider.id)))
+      .map(({ id, name }) => ({ id, name }));
+    return c.json({ external: await external.status(), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders });
   });
   routes.post("/oauth/:provider", async (c) => {
     const provider = c.req.param("provider");
@@ -76,7 +82,7 @@ export function createModelAccessRoutes(home: string, deps: {
     try {
       const { runtime } = await getAuth();
       const model = defaultModel(runtime.getModels(provider));
-      if (!model || !runtime.getProvider(provider)?.auth.apiKey) return c.json({ error: "unknown_provider" }, 404);
+      if (!model || !runtime.getProvider(provider)?.auth.apiKey?.login) return c.json({ error: "unknown_provider" }, 404);
       if (!checkOnly && !replace && (await runtime.listCredentials()).some((entry) => entry.providerId === provider)) return c.json({ error: "replacement_required", provider }, 409);
       if (!await checkKey(provider, key, model.id)) return c.json({ error: "key_check_failed", message: "The API key check failed." }, 422);
       if (!checkOnly) await runtime.login(provider, "api_key", {
@@ -85,6 +91,10 @@ export function createModelAccessRoutes(home: string, deps: {
           return key;
         }, notify() {},
       });
+      if (!checkOnly) {
+        modelReadiness.clear("owned", provider);
+        modelReadiness.record("owned", provider, model.id, true);
+      }
       return c.json({ provider, model: model.id, ready: true, saved: !checkOnly });
     } finally {
       locks.delete(provider);
@@ -96,7 +106,51 @@ export function createModelAccessRoutes(home: string, deps: {
     const body = consentSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
     if (source === "claude-code" && body.data.enabled && body.data.warningAccepted !== true) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
+    modelReadiness.clear(source);
     return c.json(await external.enable(source, body.data.enabled));
+  });
+  routes.get("/models", async (c) => {
+    const { runtime } = await getAuth();
+    const owned = await runtime.listCredentials();
+    const externalStatus = await external.status();
+    const models = runtime.getProviders().flatMap((provider) => {
+      const own = owned.find((credential) => credential.providerId === provider.id);
+      const included = runtime.getModels(provider.id).filter(pickerModel);
+      const rows = included.flatMap((model) => {
+        let source: string | undefined;
+        if (own) {
+          if (own.type === "oauth" ? provider.auth.oauth : provider.auth.apiKey) source = "owned";
+        } else {
+          source = externalStatus.find((row) => row.enabled && row.providers.some((entry) => entry.available && entry.provider === provider.id && (
+            entry.type === "oauth" ? isTrustedExternalOAuthModel(model) : Boolean(provider.auth.apiKey)
+          )))?.source;
+          if (!source && runtime.getProviderAuthStatus(provider.id).configured) source = "environment";
+        }
+        return source ? [{ provider: provider.id, model: model.id, name: model.name, source, ready: modelReadiness.isReady(source, provider.id, model.id), default: false }] : [];
+      });
+      for (const source of new Set(rows.map((row) => row.source))) {
+        const choice = defaultModel(included.filter((model) => rows.some((row) => row.source === source && row.model === model.id)));
+        const row = rows.find((row) => row.source === source && row.model === choice?.id);
+        if (row) row.default = true;
+      }
+      return rows;
+    });
+    return c.json({ models });
+  });
+  routes.post("/models/check", async (c) => {
+    const body = modelSchema.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) return c.json({ error: "invalid_request" }, 400);
+    const { provider, model: id } = body.data;
+    const { runtime } = await getAuth();
+    const model = runtime.getModel(provider, id);
+    if (!model || !pickerModel(model)) return c.json({ error: "unknown_model" }, 404);
+    try {
+      const text = await completeModelOnce(runtime, model, "Reply with OK.", undefined, 16);
+      if (text.trim()) return c.json({ provider, model: id, ready: true });
+    } catch (error) {
+      if (error instanceof Error && error.message === CODEX_EXPIRED) return c.json({ provider, model: id, ready: false, message: CODEX_EXPIRED }, 422);
+    }
+    return c.json({ provider, model: id, ready: false, message: "The model check failed." }, 422);
   });
   routes.delete("/:provider", async (c) => {
     const provider = c.req.param("provider");
@@ -106,6 +160,7 @@ export function createModelAccessRoutes(home: string, deps: {
       const { runtime } = await getAuth();
       if (!runtime.getProvider(provider)) return c.json({ error: "unknown_provider" }, 404);
       await runtime.logout(provider);
+      modelReadiness.clear("owned", provider);
       return c.body(null, 204);
     } finally {
       locks.delete(provider);

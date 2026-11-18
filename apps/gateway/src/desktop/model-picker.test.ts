@@ -1,0 +1,121 @@
+import { stubDesktopTestEnv } from "../test-utils/desktop-test-env.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+let root: string;
+let home: string;
+beforeEach(async () => {
+  vi.resetModules();
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "desktop-picker-"));
+  home = path.join(root, "yoplai");
+  await fs.mkdir(home);
+  stubDesktopTestEnv(root, home);
+});
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+function successfulCall() {
+  const item = { id: "fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK", annotations: [] }] };
+  const events = [
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response: { id: "fixture", status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
+  ];
+  return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+}
+
+it("lists a default without calling the model and marks it ready after a successful check", async () => {
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-picker-key" } }));
+  const call = vi.fn(async () => successfulCall());
+  vi.stubGlobal("fetch", call);
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const routes = createModelAccessRoutes(home);
+  const list = async () => (await (await routes.request("/models")).json()).models;
+  expect(await list()).toEqual(expect.arrayContaining([expect.objectContaining({ provider: "openai", model: "gpt-4.1-mini", ready: false, default: true })]));
+  expect(call).not.toHaveBeenCalled();
+  const res = await routes.request("/models/check", { method: "POST", body: '{"provider":"openai","model":"gpt-4.1-mini"}' });
+  expect(await res.json()).toMatchObject({ ready: true });
+  expect(await list()).toEqual(expect.arrayContaining([expect.objectContaining({ provider: "openai", model: "gpt-4.1-mini", ready: true, default: true })]));
+  expect(call).toHaveBeenCalledTimes(1);
+  expect((await routes.request("/openai", { method: "DELETE" })).status).toBe(204);
+  expect(await list()).toEqual([]);
+});
+
+it("does not use the old key when a provider rejects the submitted key", async () => {
+  const file = path.join(home, "auth.json");
+  const before = JSON.stringify({ openai: { type: "api_key", key: "fake-old-key" } });
+  await fs.writeFile(file, before);
+  const call = vi.fn(async (_input: unknown, init?: RequestInit) => new Headers(init?.headers).get("authorization") === "Bearer fake-new-key" ? successfulCall() : new Response('{"error":{"message":"fake-private-error"}}', { status: 401 }));
+  vi.stubGlobal("fetch", call);
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const routes = createModelAccessRoutes(home);
+  const check = (key: string) => routes.request("/api-key", { method: "POST", body: JSON.stringify({ provider: "openai", checkOnly: true, key }) });
+  const bad = await check("fake-bad-key");
+  expect(bad.status).toBe(422);
+  expect((await bad.text()).includes("fake-private-error")).toBe(false);
+  expect((await check("fake-new-key")).status).toBe(200);
+  expect(call).toHaveBeenCalledTimes(2);
+  expect((await fs.readFile(file, "utf8")) === before).toBe(true);
+});
+
+function providerStream(events: Array<{ type?: string; [key: string]: unknown }>) {
+  return new Response(events.map((event) => `${event.type ? `event: ${event.type}\n` : ""}data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+}
+
+it("checks the default for each external source with a fake provider", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const create = async (location: string, record: unknown) => {
+    const file = path.join(root, location);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(record));
+  };
+  const payload = { exp: Math.floor(Date.now() / 1000) + 3600, "https://api.openai.com/auth": { chatgpt_account_id: "fake-account" } };
+  const token = `fake.${Buffer.from(JSON.stringify(payload)).toString("base64")}.sig`;
+  await create(".codex/auth.json", { tokens: { access_token: token, account_id: "fake-account" } });
+  await create(".local/share/opencode/auth.json", { "opencode-go": { type: "api", key: "fake-go" } });
+  await create(".pi/agent/auth.json", { openai: { type: "api_key", key: "fake-pi-openai" } });
+  const external = createExternalSources(home, { keychain: {
+    exists: async () => true,
+    read: async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt: Date.now() + 60_000 } }),
+  } });
+  for (const source of ["codex", "claude-code", "opencode", "pi"] as const) await external.enable(source, true);
+  const call = vi.fn(async (input: string | Request | URL) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    if (url.hostname === "api.anthropic.com") return providerStream([
+      { type: "message_start", message: { id: "fake", type: "message", role: "assistant", content: [], stop_reason: null, model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 0 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+      { type: "message_stop" },
+    ]);
+    if (url.hostname === "opencode.ai") return providerStream([
+      { id: "fake", choices: [{ index: 0, delta: { role: "assistant", content: "OK" }, finish_reason: null }] },
+      { id: "fake", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    ]);
+    if (url.hostname === "api.openai.com" || url.hostname === "chatgpt.com") return successfulCall();
+    throw new Error("Unexpected provider call.");
+  });
+  vi.stubGlobal("fetch", call);
+  const routes = createModelAccessRoutes(home, { external });
+  const list = async () => (await (await routes.request("/models")).json()).models;
+  const defaults = [
+    { source: "codex", provider: "openai-codex", model: "gpt-6-astra" },
+    { source: "claude-code", provider: "anthropic", model: "claude-haiku-5-5" },
+    { source: "opencode", provider: "opencode-go", model: "deepseek-v4.1-flash" },
+    { source: "pi", provider: "openai", model: "gpt-4.1-mini" },
+  ];
+  expect(await list()).toEqual(expect.arrayContaining(defaults.map((row) => expect.objectContaining({ ...row, default: true, ready: false }))));
+  expect(call).not.toHaveBeenCalled();
+  for (const { provider, model } of defaults) {
+    const res = await routes.request("/models/check", { method: "POST", body: JSON.stringify({ provider, model }) });
+    expect(await res.json()).toMatchObject({ model, ready: true });
+  }
+  expect(await list()).toEqual(expect.arrayContaining(defaults.map((row) => expect.objectContaining({ ...row, default: true, ready: true }))));
+  expect(call).toHaveBeenCalledTimes(4);
+});
