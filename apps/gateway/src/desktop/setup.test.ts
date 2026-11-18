@@ -101,7 +101,8 @@ it("refuses untrusted requests and keeps state when version one lacks fields", a
   expect((await put({ version: 2 })).status).toBe(400);
   expect((await put({ completed: true })).status).toBe(400);
   const response = await put({ completed: true, firstChat: { agentId: "a", sessionId: "s", turnId: "t" } });
-  expect(await response.json()).toMatchObject({ wizardExited: true, completed: true, completedAt: expect.any(String) });
+  expect(response.status).toBe(400);
+  expect(await (await read()).json()).toMatchObject({ wizardExited: true, completed: false, firstChat: null });
 });
 
 it("applies every refusal to every desktop route before it reads state", async () => {
