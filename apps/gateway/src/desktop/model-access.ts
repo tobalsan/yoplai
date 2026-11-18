@@ -12,6 +12,10 @@ const startSchema = z.object({ ...confirm, warningAccepted: z.boolean().optional
 const keySchema = z.object({ ...confirm, provider: z.string(), key: z.string().max(8192), checkOnly: z.boolean().optional() }).strict();
 const consentSchema = z.object({ enabled: z.boolean(), warningAccepted: z.boolean().optional() }).strict();
 const codeSchema = z.object({ code: z.string().min(1).max(8192) }).strict();
+// Pi does not expose the prompts that each API key login needs.
+const API_KEY_LOGIN_REQUIRES_MORE_INPUT = new Set([
+  "amazon-bedrock", "cloudflare-ai-gateway", "cloudflare-workers-ai", "google-vertex",
+]);
 const modelSchema = z.object({ provider: z.string(), model: z.string() }).strict();
 
 export function createModelAccessRoutes(home: string, deps: {
@@ -39,7 +43,7 @@ export function createModelAccessRoutes(home: string, deps: {
     const { runtime } = await getAuth();
     const owned = (await runtime.listCredentials()).filter((entry) => runtime.getProvider(entry.providerId));
     const apiKeyProviders = runtime.getProviders()
-      .filter((provider) => provider.auth.apiKey?.login && defaultModel(runtime.getModels(provider.id)))
+      .filter((provider) => !API_KEY_LOGIN_REQUIRES_MORE_INPUT.has(provider.id) && provider.auth.apiKey?.login && defaultModel(runtime.getModels(provider.id)))
       .map(({ id, name }) => ({ id, name }));
     return c.json({ external: await external.status(), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders });
   });
@@ -77,6 +81,9 @@ export function createModelAccessRoutes(home: string, deps: {
     const body = keySchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success || !isLiteralKey(body.data.key)) return c.json({ error: "invalid_key", message: "Enter a literal API key." }, 400);
     const { provider, key, checkOnly, replace } = body.data;
+    if (API_KEY_LOGIN_REQUIRES_MORE_INPUT.has(provider)) {
+      return c.json({ error: "unsupported_provider", message: "This provider needs more than an API key. Use another provider." }, 422);
+    }
     if (locks.has(provider) || attempts.busy(provider)) return c.json({ error: "provider_busy" }, 409);
     locks.add(provider);
     try {
