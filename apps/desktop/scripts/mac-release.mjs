@@ -2,6 +2,16 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+export function checkBuilderEnv(builderDir) {
+  try {
+    fs.lstatSync(path.join(builderDir, "electron-builder.env"));
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error("Move apps/desktop/electron-builder.env before you build a release.");
+}
+
 export function releaseOptions(sourceEnv) {
   const fingerprint = sourceEnv.YOPLAI_MAC_IDENTITY?.trim().toUpperCase();
   const profile = sourceEnv.APPLE_KEYCHAIN_PROFILE?.trim();

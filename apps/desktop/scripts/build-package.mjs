@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { releaseOptions, stapleRelease } from "./mac-release.mjs";
+import { checkBuilderEnv, releaseOptions, stapleRelease } from "./mac-release.mjs";
 
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopDir, "../..");
@@ -55,7 +55,9 @@ function pruneStage(stage) {
 
 if (process.platform !== "darwin") throw new Error("The packaged app builds on macOS only.");
 
-const release = process.argv.includes("--release") ? releaseOptions(process.env) : undefined;
+const isRelease = process.argv.includes("--release");
+if (isRelease) checkBuilderEnv(desktopDir);
+const release = isRelease ? releaseOptions(process.env) : undefined;
 const buildEnv = release?.env ?? process.env;
 
 fs.rmSync(buildDir, { recursive: true, force: true });
@@ -90,6 +92,7 @@ run("pnpm", [
 ]);
 
 const builderArgs = ["--filter", "@yoplai/desktop", "exec", "electron-builder", "--config", "electron-builder.yml"];
+if (release) checkBuilderEnv(desktopDir);
 run("pnpm", [...builderArgs, ...(release?.args ?? [])], { cwd: desktopDir });
 
 const releaseDir = path.join(desktopDir, release ? "release/signed" : "release");
