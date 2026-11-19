@@ -1670,7 +1670,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           height: 36px;
           flex-shrink: 0;
           padding: 4px 10px 4px var(--desktop-buttons-width);
-          -webkit-app-region: var(--desktop-header-region, drag);
+          -webkit-app-region: drag;
         }
 
         .desktop-window .agent-sidebar.collapsed:not(:hover, .menu-open) .sidebar-header {

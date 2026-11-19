@@ -222,7 +222,7 @@
 
         .desktop-window .chat-main > .header {
           padding-inline-start: max(18px, var(--desktop-main-clearance, 0px), calc((100% - var(--transcript-width)) / 2 + 18px));
-          -webkit-app-region: var(--desktop-header-region, drag);
+          -webkit-app-region: drag;
         }
 
         .desktop-window .chat-main > .header .device-panel {

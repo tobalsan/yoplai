@@ -276,7 +276,7 @@ export function AgentCatalog() {
           margin-inline: -24px;
           padding: 12px 24px 0;
           padding-inline-start: max(24px, var(--desktop-main-clearance, 0px));
-          -webkit-app-region: var(--desktop-header-region, drag);
+          -webkit-app-region: drag;
         }
 
         @media (max-width: 768px) {

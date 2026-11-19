@@ -112,7 +112,7 @@ export function LeftNavShell(props: { children?: JSX.Element }) {
           flex: none;
           height: 8px;
           margin-inline-start: var(--desktop-main-clearance);
-          -webkit-app-region: var(--desktop-header-region, drag);
+          -webkit-app-region: drag;
         }
 
         .desktop-window :is(.agent-sidebar.collapsed ~ .left-nav-main, .zen-mode .left-nav-main):not(:has(> .left-nav-scroll > :is(.chat-view, .agent-catalog)))::before {
