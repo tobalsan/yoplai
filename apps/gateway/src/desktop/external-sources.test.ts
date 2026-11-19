@@ -4,6 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 let root: string;
@@ -46,6 +47,39 @@ it("detects each source without reading a credential before consent", async () =
   for (const file of paths) expect(read.mock.calls.some(([target]) => target === file)).toBe(false);
   expect(fake.exists).toHaveBeenCalledTimes(1);
   expect(fake.read).not.toHaveBeenCalled();
+});
+
+it("discovers synthetic Codex and Claude credentials only with the dev Keychain opt-in for Claude", async () => {
+  const mac = vi.spyOn(os, "platform").mockReturnValue("darwin");
+  const stdout = JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt: Date.now() + 60_000 } });
+  const security = vi.fn(async () => ({ stdout }));
+  vi.doMock("node:child_process", async (load) => ({
+    ...await load<typeof import("node:child_process")>(),
+    execFile: Object.assign(vi.fn(), { [promisify.custom]: security }),
+  }));
+  try {
+    const { createExternalSources } = await import("./external-sources.js");
+    const payload = { exp: Math.floor(Date.now() / 1000) + 60, "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } };
+    await fixture("codex", { tokens: { access_token: `fake.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`, account_id: "fixture" } });
+    const sources = createExternalSources(home);
+    expect(await sources.enable("codex", true)).toMatchObject({ detected: true, providers: [{ available: true }] });
+    expect(await sources.enable("claude-code", true, true)).toMatchObject({ detected: false, providers: [] });
+    expect(security).not.toHaveBeenCalled();
+    vi.stubEnv("YOPLAI_DESKTOP_KEYCHAIN", "0");
+    expect((await sources.status()).find((item) => item.source === "claude-code")).toMatchObject({ detected: false });
+    expect(security).not.toHaveBeenCalled();
+    vi.stubEnv("YOPLAI_DESKTOP_KEYCHAIN", "1");
+    expect((await sources.status()).find((item) => item.source === "claude-code")).toMatchObject({
+      detected: true, providers: [{ provider: "anthropic", type: "oauth", available: true }],
+    });
+    expect(security.mock.calls).toEqual([
+      ["/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials"], { timeout: 5000 }],
+      ["/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], { timeout: 60_000 }],
+    ]);
+  } finally {
+    vi.doUnmock("node:child_process");
+    mac.mockRestore();
+  }
 });
 
 it("asks for the Claude warning, records a denial, and does not read on disable", async () => {

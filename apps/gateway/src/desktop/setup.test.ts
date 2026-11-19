@@ -25,7 +25,13 @@ afterEach(async () => {
   await fs.rm(home, { recursive: true, force: true });
 });
 
-it("reports the capability and reads and writes setup through the UI proxy", async () => {
+it.each([false, true])("serves setup through the loopback UI proxy with completed=%s", async (completed) => {
+  const config = '{\n  "version":3, "agents":"agents/*", "gateway":{"bind":"loopback"}, "ui":{"bind":"loopback"}\n}';
+  const configFile = path.join(configHome, "yoplai.json");
+  await fs.writeFile(configFile, config);
+  const setupFile = path.join(configHome, "desktop-setup.json");
+  const saved = '{"version":1,"wizardExited":true,"completed":true,"completedAt":"2026-01-01T00:00:00.000Z","firstChat":{"agentId":"sample","sessionId":"old","turnId":"9d250352-07af-4204-a50c-53c4bb3bebef"}}';
+  if (completed) await fs.writeFile(setupFile, saved);
   const { createModelAuth } = await import("./model-auth.js");
   const auth = await createModelAuth({ home: configHome });
   vi.spyOn(auth.runtime, "login").mockImplementation(async (_provider, _type, io) => {
@@ -57,7 +63,16 @@ it("reports the capability and reads and writes setup through the UI proxy", asy
   vi.stubEnv("YOPLAI_UI_PORT", String(uiPort));
   expect(await (await fetch(`${base}/api/capabilities`)).json()).toMatchObject({ desktopSetup: true });
   const url = `${base}/api/desktop-setup`;
-  expect(await (await fetch(url)).json()).toMatchObject({ version: 1, wizardExited: false });
+  const response = await fetch(url);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ version: 1, wizardExited: completed, completed });
+  expect(await fs.readFile(configFile, "utf8")).toBe(config);
+  if (completed) {
+    expect(await fs.readFile(setupFile, "utf8")).toBe(saved);
+    expect((await fetch(`${base}/api/model-access`)).status).toBe(200);
+    return;
+  }
+  await expect(fs.access(setupFile)).rejects.toMatchObject({ code: "ENOENT" });
   const res = await fetch(url, { method: "PUT", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify({ wizardExited: true, skipped: ["model"] }) });
   expect(res.status).toBe(200);
   expect(await res.json()).toMatchObject({ wizardExited: true, skipped: ["model"] });

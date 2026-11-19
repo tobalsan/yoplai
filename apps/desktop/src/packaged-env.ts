@@ -43,8 +43,8 @@ export function buildPackagedEnv(input: PackagedEnvInput): NodeJS.ProcessEnv {
 }
 
 /** A leading `~` means the user home, as for YOPLAI_HOME in `packages/shared/src/config-path.ts`. */
-function expandHomePath(rawPath: string): string {
-  return rawPath.startsWith("~") ? path.join(os.homedir(), rawPath.slice(1)) : path.resolve(rawPath);
+export function expandHomePath(rawPath: string, userHome = os.homedir()): string {
+  return rawPath.startsWith("~") ? path.join(userHome, rawPath.slice(1)) : path.resolve(rawPath);
 }
 
 /** YOPLAI_HOME wins. Else the app support folder of the user. */
@@ -65,7 +65,7 @@ export const SEED_CONFIG = {
   oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
 } as const;
 
-const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
+export const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
 
 function migrateAgentDiscovery(file: string): void {
   const configPath = fs.realpathSync(file);

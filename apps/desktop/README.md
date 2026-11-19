@@ -26,3 +26,21 @@ pnpm --filter @yoplai/desktop dist:release
 
 Find `Yoplai.app` and the disk image (DMG) in `apps/desktop/release/signed`.
 The release command signs the app and DMG, submits them to Apple, and staples their tickets.
+
+## Run the desktop app from source
+
+`pnpm desktop` uses `~/.yoplai` by default. To use a different home, set `YOPLAI_HOME` on the same line:
+
+```sh
+YOPLAI_HOME='~/some/dir' pnpm desktop
+```
+
+The desktop app expands a leading `~`. The gateway keeps your `HOME` so it can find your Codex CLI and Claude Code logins. On macOS, Claude Code uses the Keychain. The desktop app asks for consent before it reads the login.
+
+Use `pnpm desktop --fresh` or `YOPLAI_DESKTOP_FRESH=1 pnpm desktop` for a new temporary home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder. Fresh mode uses a temporary `HOME` and does not use the Keychain. Each home has separate Electron storage.
+
+**CAUTION:** Do not run a second gateway on the same home. Both gateways can write to the same state files.
+
+The desktop seed creates a config only if neither `yoplai.json` nor `aihub.json` exists. It adds `OAUTH_ENCRYPTION_KEY` to `.env` only if the file lacks the key. The seed does not change agent or session files. If the config lacks agent discovery rules or a usable `oauth.encryptionKey`, the desktop app warns but does not change the config.
+
+The gateway makes separate writes at start. The dashboard registry migration writes `canvas/schema.json` and can update `canvas/registry.json`. The gateway also resets `run/active-turns.json` to an empty turn list.
