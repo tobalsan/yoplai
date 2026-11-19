@@ -1,4 +1,4 @@
-import { defaultModel, modelReadiness, pickerModel } from "./model-picker.js";
+import { defaultModel, freeModel, modelReadiness, pickerModel } from "./model-picker.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getExternalSources, isExternalSource, isTrustedExternalOAuthModel } from "./external-sources.js";
@@ -125,11 +125,11 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
     modelReadiness.clear(source);
     return c.json(result);
   });
-  const listModels = async () => {
+  const listModels = async (onlyProvider?: string) => {
     const { runtime } = await getAuth();
     const owned = await runtime.listCredentials();
     const externalStatus = await external.status();
-    const groups = await Promise.all(runtime.getProviders().map(async (provider) => {
+    const groups = await Promise.all(runtime.getProviders().filter((provider) => !onlyProvider || provider.id === onlyProvider).map(async (provider) => {
       const own = owned.find((credential) => credential.providerId === provider.id);
       const catalog = own ? await runtime.getAvailable(provider.id) : runtime.getModels(provider.id);
       const included = catalog.filter(pickerModel);
@@ -143,7 +143,7 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
           )))?.source;
           if (!source && runtime.getProviderAuthStatus(provider.id).configured) source = "environment";
         }
-        return source ? [{ provider: provider.id, model: model.id, name: model.name, source, ready: modelReadiness.isReady(source, provider.id, model.id), default: false }] : [];
+        return source ? [{ provider: provider.id, model: model.id, name: model.name, source, ready: modelReadiness.isReady(source, provider.id, model.id), default: false, free: freeModel(model) }] : [];
       });
       for (const source of new Set(rows.map((row) => row.source))) {
         const choice = defaultModel(included.filter((model) => rows.some((row) => row.source === source && row.model === model.id)));
@@ -162,6 +162,7 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
     const { runtime } = await getAuth();
     const model = runtime.getModel(provider, id);
     if (!model || !pickerModel(model)) return c.json({ error: "unknown_model" }, 404);
+    if (!(await listModels(provider)).some((row) => row.model === id)) return c.json({ error: "unknown_model" }, 404);
     try {
       const text = await completeModelOnce(runtime, model, "Reply with OK.", undefined, 16);
       if (text.trim()) return c.json({ provider, model: id, ready: true });

@@ -45,6 +45,30 @@ it("lists a default without calling the model and marks it ready after a success
   expect(await list()).toEqual([]);
 });
 
+it("does not set a default or probe an API key for a free-only catalog", async () => {
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-picker-key" } }));
+  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const auth = await createModelAuth({ home });
+  const base = auth.runtime.getModel("openai", "gpt-4.1-mini")!;
+  const free = { ...base, id: "fixture:free", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  const read = auth.runtime.getModels.bind(auth.runtime);
+  vi.spyOn(auth.runtime, "getModels").mockImplementation((provider) => provider === "openai" ? [free] : read(provider));
+  const available = auth.runtime.getAvailable.bind(auth.runtime);
+  vi.spyOn(auth.runtime, "getAvailable").mockImplementation(async (provider) => provider === "openai" ? [free] : available(provider));
+  const checkKey = vi.fn(async () => true as const);
+  const routes = createModelAccessRoutes(home, { createAuth: async () => auth, checkKey });
+  expect(await (await routes.request("/models")).json()).toEqual({ models: [
+    expect.objectContaining({ provider: "openai", model: free.id, default: false, free: true, ready: false }),
+  ] });
+  const status = await (await routes.request("/")).json();
+  expect(status.apiKeyProviders).not.toContainEqual(expect.objectContaining({ id: "openai" }));
+  const probe = await routes.request("/api-key", { method: "POST", body: JSON.stringify({ provider: "openai", key: "fake-new-key" }) });
+  expect(probe.status).toBe(404);
+  expect(checkKey).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
+});
+
 it("does not use the old key when a provider rejects the submitted key", async () => {
   const file = path.join(home, "auth.json");
   const before = JSON.stringify({ openai: { type: "api_key", key: "fake-old-key" } });

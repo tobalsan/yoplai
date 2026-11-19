@@ -1,3 +1,4 @@
+import { SearchPicker } from "../components/SearchPicker";
 import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { errorText, readAccess, readModels, request, SetupError, type Attempt, type Model } from "./api";
 
@@ -30,16 +31,18 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
   const [busy, setBusy] = createSignal(false);
   const [confirm, setConfirm] = createSignal<{ message: string; accept: () => Promise<void>; keyForm?: true }>();
   const [entry, setEntry] = createSignal(false);
-  const [search, setSearch] = createSignal("");
   const [provider, setProvider] = createSignal("");
   const [key, setKey] = createSignal("");
   const [codes, setCodes] = createSignal<Record<string, string>>({});
-  const providers = createMemo(() => {
-    const all = info()?.access.apiKeyProviders ?? [];
-    const query = search().trim().toLowerCase();
-    return query ? all.filter((row) => `${row.id} ${row.name}`.toLowerCase().includes(query))
-      : shortList.flatMap((id) => all.filter((row) => row.id === id));
-  });
+  const providers = createMemo(() => [...(info()?.access.apiKeyProviders ?? [])].sort((a, b) => {
+    const order = (id: string) => shortList.includes(id) ? shortList.indexOf(id) : shortList.length;
+    return order(a.id) - order(b.id) || a.name.localeCompare(b.name);
+  }));
+  const providerName = () => providers().find((row) => row.id === provider())?.name;
+  const matchingProviders = (search: string) => {
+    const query = search.trim().toLowerCase();
+    return providers().filter((row) => `${row.id} ${row.name}`.toLowerCase().includes(query));
+  };
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const updateAttempt = (attempt: Attempt) => setAttempts((rows) => {
@@ -100,8 +103,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     if (confirm()?.keyForm) setConfirm(undefined);
   };
   const changeSearch = (query: string) => {
-    setSearch(query);
-    if (provider() && !providers().some((row) => row.id === provider())) {
+    if (provider() && !matchingProviders(query).some((row) => row.id === provider())) {
       invalidateKey();
       setProvider("");
     }
@@ -110,7 +112,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     invalidateKey();
     setEntry(false);
     setKey("");
-    changeSearch("");
+    setProvider("");
   };
   const saveKey = async (id: string, value: string, revision = keyRevision, replace = false): Promise<void> => {
     const current = () => !disposed && entry() && keyRevision === revision;
@@ -139,7 +141,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     <div class="setup-model-rows">
       <For each={rows()}>{(row) => {
         const attempt = () => attempts().find((active) => active.provider === row.id);
-        return <section class="setup-model-row" aria-label={row.name} classList={{ "setup-row-ready": ready(row.id) }}>
+        return <><section class="setup-model-row" aria-label={row.name} classList={{ "setup-row-ready": ready(row.id) }}>
           <div class="setup-model-line">
             <div class="setup-row-label"><strong>{row.name}</strong>
               <Show when={external(row.id)}><span>Found on this Mac</span></Show>
@@ -174,25 +176,28 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
               setCodes((values) => ({ ...values, [row.id]: "" }));
             })}>Cancel</button>
           </div>}</Show>
-        </section>;
+        </section>
+          <Show when={row.id === "key" && entry()}>
+            <form class="setup-interaction setup-key-form" aria-label="Add an API key" onSubmit={(event) => {
+              event.preventDefault(); void perform(() => saveKey(provider(), key()));
+            }}>
+              <SearchPicker focusOnMount label="Provider" searchLabel="Search providers" placeholder="Select a provider"
+                selected={provider()} summary={providerName()} selectionLabel={providerName()}
+                groups={(query) => [{ id: "providers", rows: matchingProviders(query).map((row) => ({ id: row.id, value: row.id, content: row.name })) }]}
+                onQuery={changeSearch} onSelect={(value) => {
+                  if (value !== provider()) invalidateKey();
+                  setProvider(value);
+                }} />
+              <label>API key<input type="password" name="api-key" autocomplete="off" required value={key()} onInput={(event) => { invalidateKey(); setKey(event.currentTarget.value); }} /></label>
+              <div class="setup-actions">
+                <button class="setup-outline" type="submit" disabled={busy() || !provider()}>Save key</button>
+                <button class="setup-outline" type="button" onClick={closeKey}>Cancel</button>
+              </div>
+            </form>
+          </Show>
+        </>;
       }}</For>
     </div>
-    <Show when={entry()}>
-      <form class="setup-interaction" aria-label="Add an API key" onSubmit={(event) => {
-        event.preventDefault(); void perform(() => saveKey(provider(), key()));
-      }}>
-        <label>Search providers<input value={search()} onInput={(event) => changeSearch(event.currentTarget.value)} /></label>
-        <label>Provider<select required value={provider()} onChange={(event) => { invalidateKey(); setProvider(event.currentTarget.value); }}>
-          <option value="">Select a provider</option>
-          <For each={providers()}>{(row) => <option value={row.id} selected={provider() === row.id}>{row.name}</option>}</For>
-        </select></label>
-        <label>API key<input type="password" autocomplete="off" required value={key()} onInput={(event) => { invalidateKey(); setKey(event.currentTarget.value); }} /></label>
-        <div class="setup-actions">
-          <button class="setup-outline" type="submit" disabled={busy() || !provider()}>Save key</button>
-          <button class="setup-outline" type="button" onClick={closeKey}>Cancel</button>
-        </div>
-      </form>
-    </Show>
     <Show when={confirm()}>{(choice) => <section class="setup-interaction" role="alertdialog" aria-label="Confirm model access">
       <p>{choice().message}</p>
       <div class="setup-actions">

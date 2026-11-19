@@ -20,7 +20,7 @@ export async function request<T>(path: string, method = "GET", body?: unknown): 
 export const readSetup = () => request<DesktopSetupState>("desktop-setup");
 export const saveSetup = (body: Partial<DesktopSetupState>) => request<DesktopSetupState>("desktop-setup", "PUT", body);
 
-export type Model = { provider: string; model: string; name: string; source: string; default: boolean; ready: boolean };
+export type Model = { provider: string; model: string; name: string; source: string; default: boolean; ready: boolean; free: boolean };
 export type Attempt = { provider: string; handle: string; state: "waiting-browser" | "waiting-code" | "done" | "failed" | "cancelled"; message?: string };
 export type Source = { source: string; detected: boolean; enabled: boolean; denied: boolean; message?: string };
 export type Access = { owned: { providerId: string; type: string }[]; external: Source[]; attempts: Attempt[]; apiKeyProviders: { id: string; name: string }[] };

@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { ModelPicker } from "./ModelPicker";
 import { errorText, modelKey, request, type Model } from "./api";
 
 const names = ["Jarvis", "Samantha", "YoplaiBot", "AI Chief of Staff"];
@@ -90,10 +91,8 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string, ses
             <button type="button" class="setup-outline" aria-pressed={purpose() === text} disabled={!!creating()} onClick={() => { change(); setPurpose(text); }}>{title}</button>
           }</For></div>
         </div>
-        <label>Model<select required={!retry()} value={selected()} disabled={!!creating()} onChange={(event) => { change(); setSelected(event.currentTarget.value); }}>
-          <Show when={!defaultModel || (retry() && !model())}><option value="" selected={!model()}>Select a model</option></Show>
-          <For each={props.models}>{(option) => <option value={modelKey(option)} selected={selected() === modelKey(option)}>{option.name}{option.ready ? "     ● Ready" : ""}</option>}</For>
-        </select></label>
+        <ModelPicker models={props.models} selected={model()} suggested={defaultModel} disabled={!!creating()}
+          onSelect={(value) => { change(); setSelected(value); }} />
       </div>
     </div>
     <Show when={error()}><p role="alert">{error()}</p></Show>
