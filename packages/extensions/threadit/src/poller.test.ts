@@ -39,6 +39,7 @@ type Board = {
   unacknowledged: unknown[];
   processing: unknown[];
   getMessage: (id: number) => unknown;
+  contextMessages?: Record<number, { top_level: unknown[]; chain: unknown[] }>;
   onActivity: (body: Record<string, unknown>, n: number) => Response;
   onReply: (body: Record<string, unknown>, n: number) => Response;
   calls: Call[];
@@ -101,6 +102,7 @@ function fetchFor(board: Board) {
         target_id: id,
         top_level: [message(1)],
         chain: [message(id)],
+        ...board.contextMessages?.[id],
       });
     }
     m = /^\/api\/messages\/(\d+)$/.exec(p);
@@ -214,6 +216,56 @@ function abortable(params: RunAgentParams, aborted: RunAgentResult["meta"] = { d
 }
 
 describe("ThreaditPoller", () => {
+  it("uses one agent session per top-level message and keeps earlier top-level context", async () => {
+    const op = message(1, { body: "The release is on Thursday" });
+    const firstRoot = message(4);
+    const directReply = message(6);
+    const nestedReply = message(7);
+    const secondRoot = message(8);
+    const secondRootReply = message(9);
+    const { runAgent, poller } = setup({
+      unacknowledged: [directReply, nestedReply, secondRoot, secondRootReply],
+      contextMessages: {
+        6: { top_level: [op, firstRoot], chain: [directReply] },
+        7: { top_level: [op, firstRoot], chain: [directReply, nestedReply] },
+        8: { top_level: [op, firstRoot, secondRoot], chain: [] },
+        9: { top_level: [op, firstRoot, secondRoot], chain: [secondRootReply] },
+      },
+    }, async () => okResult("NO_REPLY"));
+    poller.start();
+    await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(4));
+    expect(runAgent.mock.calls.map(([params]) => (params as RunAgentParams).sessionKey)).toEqual([
+      "threadit:thread-40:root-4",
+      "threadit:thread-40:root-4",
+      "threadit:thread-40:root-8",
+      "threadit:thread-40:root-8",
+    ]);
+    const newRootPrompt = (runAgent.mock.calls[2]![0] as RunAgentParams).message;
+    expect(newRootPrompt).toContain("The release is on Thursday");
+    expect(newRootPrompt).toMatch(/\[#8\][^\n]+\[TARGET MESSAGE\]/);
+  });
+
+  it("fails a context without a top-level message and continues polling", async () => {
+    const { board, runAgent, poller } = setup({
+      unacknowledged: [message(3), message(4)],
+      contextMessages: { 3: { top_level: [], chain: [message(3)] } },
+    }, async () => okResult("NO_REPLY"));
+    board.onReply = () => {
+      board.unacknowledged = [];
+      return Response.json({ id: 900 });
+    };
+    poller.start();
+    await waitFor(() => expect(replies(board)).toEqual([
+      { body: "I could not finish this request.", parent_id: 3 },
+    ]));
+    await waitFor(() => expect(reactions(board)).toEqual(["👀", "👀", "✅"]));
+    expect(activities(board)).toContainEqual({ kind: "error", body: "Run failed" });
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(runAgent).toHaveBeenCalledWith(expect.objectContaining({
+      origin: { sink: "threadit", destination: { channel: "40:4" } },
+    }));
+  });
+
   it("replies to a human pairing command with a link without running the agent", async () => {
     const service = linkService();
     const { board, runAgent, poller } = setup({
@@ -243,10 +295,10 @@ describe("ThreaditPoller", () => {
     await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
     const first = runAgent.mock.calls[0]![0] as RunAgentParams;
     const second = runAgent.mock.calls[1]![0] as RunAgentParams;
-    expect(first).toMatchObject({ userId: "gateway-ann", requesterId: "threadit:http://board:1", sessionOwnerId: null, sessionKey: "threadit:thread-40" });
+    expect(first).toMatchObject({ userId: "gateway-ann", requesterId: "threadit:http://board:1", sessionOwnerId: null, sessionKey: "threadit:thread-40:root-1" });
     expect(second.requesterId).toBe("threadit:http://board:2");
     expect(second.userId).toBeUndefined();
-    expect(second.sessionKey).toBe("threadit:thread-40");
+    expect(second.sessionKey).toBe("threadit:thread-40:root-1");
     service.unlink("gateway-ann", service.list("gateway-ann")[0].id);
     board.unacknowledged = [message(6)];
     await waitFor(() => expect(runAgent).toHaveBeenCalledTimes(3));
@@ -311,7 +363,7 @@ describe("ThreaditPoller", () => {
     const params = runAgent.mock.calls[0]![0] as RunAgentParams;
     expect(params).toMatchObject({
       agentId: "main",
-      sessionKey: "threadit:thread-40",
+      sessionKey: "threadit:thread-40:root-1",
       source: "threadit",
       origin: { sink: "threadit", destination: { channel: "40:3" } },
       sessionOwnerId: null,
@@ -361,7 +413,7 @@ describe("ThreaditPoller", () => {
     expect(replies(board)).toEqual([]);
   });
 
-  it("runs a failed item again after a board retry in the same thread session", async () => {
+  it("runs a failed item again after a board retry in the same top-level session", async () => {
     let releaseError: () => void = () => {};
     const errorResponse = new Promise<void>((resolve) => (releaseError = resolve));
     let runs = 0;
@@ -394,7 +446,7 @@ describe("ThreaditPoller", () => {
     await settle();
     expect(runAgent).toHaveBeenCalledTimes(2);
     for (const [params] of runAgent.mock.calls) {
-      expect(params).toMatchObject({ sessionKey: "threadit:thread-40" });
+      expect(params).toMatchObject({ sessionKey: "threadit:thread-40:root-1" });
     }
     expect(activities(board)).toEqual([
       { kind: "thought", body: "Started" },
