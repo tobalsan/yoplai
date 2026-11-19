@@ -79,6 +79,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The macOS release command rejects `apps/desktop/electron-builder.env` so electron-builder uses the keychain profile for notarization.
 - The desktop chat repair button shows its label on one line. Dialogs stop header dragging. Full-height pages fit below the drag inset.
 
 - The desktop UI stays black until the first screen appears. A reload does not repeat the fade.

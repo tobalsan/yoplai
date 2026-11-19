@@ -19,6 +19,7 @@ xcrun notarytool store-credentials yoplai-notary --apple-id '<Apple Account>' --
 Get the SHA-1 fingerprint of the Developer ID Application certificate with `security find-identity -v -p codesigning`.
 Set `YOPLAI_MAC_IDENTITY` to that fingerprint.
 Set `APPLE_KEYCHAIN_PROFILE` to the profile name.
+If `apps/desktop/electron-builder.env` exists, move it before you build a release.
 
 ```sh
 pnpm --filter @yoplai/desktop dist:release
