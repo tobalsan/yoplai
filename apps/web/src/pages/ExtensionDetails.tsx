@@ -241,11 +241,14 @@ export function ExtensionDetails(props: {
                           disabled={
                             busy() ||
                             ext().managedAtRoot ||
+                            ext().canConfigureTeam === false ||
                             (!ext().enabled && ext().configurable === false)
                           }
                           title={
                             ext().managedAtRoot
                               ? "Configured in agent.yaml — edit the file to change."
+                              : ext().canConfigureTeam === false
+                              ? "Ask an agent manager"
                               : !ext().enabled && ext().configurable === false
                               ? "The agent must be assigned to a team to enable this extension"
                               : undefined

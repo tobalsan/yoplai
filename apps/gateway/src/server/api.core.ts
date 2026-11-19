@@ -16,6 +16,7 @@ import {
   resolveAgentEnv,
   resolveWorkspaceDir,
 } from "../config/index.js";
+import { isEnvRef } from "../config/secrets.js";
 import { reloadAfterExtensionWrite as reloadAfterConfigWrite } from "../extensions/reload.js";
 import {
   getExtensionRuntime,
@@ -352,12 +353,25 @@ async function canConfigureAgentExtensions(
 }
 
 /**
- * Whole-team credentials and OAuth require management of the owning agent.
+ * Team extension settings require management of the owning agent.
  */
 async function canConfigureTeamExtensions(c: Context, agentId: string): Promise<boolean> {
   if (!isExtensionLoaded("multiUser")) return true;
   const { canManageAgent } = await loadMultiUserApiDeps();
   return canManageAgent(await getRequestAuthContext(c), agentId);
+}
+
+function findExtensionConfigEnvRef(config: Record<string, unknown>): string | undefined {
+  const pending = Object.entries(config);
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    const [field, value] = next;
+    if (isEnvRef(value)) return field;
+    if (value === null || typeof value !== "object") continue;
+    for (const [key, child] of Object.entries(value)) {
+      pending.push([Array.isArray(value) ? `${field}[${key}]` : `${field}.${key}`, child]);
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -385,17 +399,19 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
   const auth = await getRequestAuthContext(c);
   const canConfigureTeam = await canConfigureTeamExtensions(c, agent.id);
   const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
-  const withOAuth = catalog.map((entry) => entry.oauth
-    ? { ...entry, canConfigureTeam, oauthConnected: hasOAuthConnection(agent.id, entry.oauth, auth?.user.id) }
-    : entry);
-  if (!auth) return withOAuth;
-  return withOAuth.map((entry) => {
+  return catalog.map((catalogEntry) => {
+    const entry = {
+      ...catalogEntry,
+      canConfigureTeam,
+      ...(catalogEntry.oauth ? { oauthConnected: hasOAuthConnection(agent.id, catalogEntry.oauth, auth?.user.id) } : {}),
+    };
+    if (!auth) return entry;
     const fields = extensionSecretFields(entry);
     const personal = getPersonalExtensionTokens(new CredentialStore(), agent.id, auth.user.id, entry.id);
     // OAuth extensions without credential fields still keep personal settings (e.g. Drive allowWrite).
     if (!fields.length) return entry.oauth ? { ...entry, personalConfigValues: personal ?? {} } : entry;
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
-    return { ...entry, canConfigureTeam, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
+    return { ...entry, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
 }
 
@@ -1059,8 +1075,7 @@ api.patch("/agents/:id/webhooks/:name", async (c) => {
 // so the change takes effect on the agent's next run.
 api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   const agentId = c.req.param("id");
-  // Server-side guard (not just UI hiding): only staff and same-team members
-  // can edit an agent's extension config.
+  // Both scopes require access to the agent.
   if (!(await canConfigureAgentExtensions(c, agentId))) {
     return c.json({ error: "forbidden" }, 403);
   }
@@ -1157,9 +1172,14 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
 
   const secretFields = targetExtension ? extensionSecretFields(targetExtension) : targetEntry?.requiredSecrets ?? [];
-  // Public chat access does not grant control of team credentials or OAuth.
-  if (!personalScope && (secretFields.length > 0 || targetEntry?.oauth) && !(await canConfigureTeamExtensions(c, agentId))) {
-    return c.json({ error: "team_requires_admin" }, 403);
+  if (!personalScope) {
+    if (!(await canConfigureTeamExtensions(c, agentId))) {
+      return c.json({ error: "team_requires_admin" }, 403);
+    }
+    const envRefField = findExtensionConfigEnvRef(patch.config ?? {});
+    if (envRefField !== undefined) {
+      return c.json({ error: `Environment references are not allowed in config field "${envRefField}"` }, 400);
+    }
   }
   if (Object.keys(patch.config ?? {}).some((field) => secretFields.includes(field))) {
     return c.json({ error: "Credential fields must be submitted as secrets" }, 400);
@@ -1209,22 +1229,26 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     return c.json({ agentId, extensionId, extensions });
   }
 
+  const undeclaredSecret = Object.keys(patch.secrets ?? {}).find((field) => !secretFields.includes(field));
+  if (undeclaredSecret !== undefined) {
+    return c.json({ error: `Unknown credential field "${undeclaredSecret}"` }, 400);
+  }
+
   const workspaceDir = resolveWorkspaceDir(
     agent.workspaceDir ?? agent.workspace
   );
   const env = resolveAgentEnv(agent, config);
   const rootExtensionConfig = config.extensions?.[extensionId];
-  const auditSecrets = [...secretFields, ...Object.keys(patch.secrets ?? {})];
   const before: Record<string, unknown> = {
     ...(typeof rootExtensionConfig === "object" && rootExtensionConfig !== null ? rootExtensionConfig : {}),
     ...agent.extensions?.[extensionId], enabled: targetEntry?.enabled ?? false,
   };
   for (const [field, value] of Object.entries(before)) {
-    if (auditSecrets.includes(field) && typeof value === "string" && value.startsWith("$env:")) before[field] = env[value.slice(5)];
+    if (secretFields.includes(field) && isEnvRef(value)) before[field] = env[value.slice(5)];
   }
   const after: Record<string, unknown> = { ...before, ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}), ...patch.config, ...patch.secrets };
   for (const [field, value] of Object.entries(after)) {
-    if (auditSecrets.includes(field) && typeof value === "string" && value.startsWith("$env:")) after[field] = env[value.slice(5)];
+    if (secretFields.includes(field) && isEnvRef(value)) after[field] = env[value.slice(5)];
   }
   try {
     await updateAgentExtensionConfig(workspaceDir, extensionId, patch, (nextConfig, pendingEnv) => {
@@ -1259,7 +1283,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
 
   recordSettingsChange({ ...await getAuditActor(c), action: "extension.update", agentId,
     targetType: "extension", targetId: extensionId, scope: "team",
-    changes: diffSettings(before, after, auditSecrets),
+    changes: diffSettings(before, after, secretFields),
   });
   const extensions = await reloadAfterExtensionWrite(c, agentId);
   return c.json({ agentId, extensionId, extensions });
