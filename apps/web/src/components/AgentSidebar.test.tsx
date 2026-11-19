@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getByRole, queryByRole } from "@testing-library/dom";
+import { fireEvent, getByRole, queryByRole, within } from "@testing-library/dom";
 import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
 import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 // matchMedia must exist before theme.ts module-level code runs
-window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+window.matchMedia = () => ({ matches: false }) as MediaQueryList;
 
 const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
@@ -97,6 +97,28 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
+  it("selects a theme by keyboard and cycles the theme when collapsed", () => {
+    const [collapsed, setCollapsed] = createSignal(false);
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={collapsed} />, container);
+    try {
+      const group = within(getByRole(container, "radiogroup", { name: "Theme" }));
+      group.getByRole("radio", { name: "Light" }).click();
+      const light = group.getByRole("radio", { name: "Light", checked: true });
+      light.focus();
+      fireEvent.keyDown(light, { key: "ArrowRight" });
+      expect(document.activeElement).toBe(group.getByRole("radio", { name: "Dark", checked: true }));
+      expect(localStorage.getItem("yoplai-theme")).toBe("dark");
+      setCollapsed(true);
+      getByRole(container, "button", { name: "Theme: Dark. Switch to System." }).click();
+      expect(getByRole(container, "button", { name: "Theme: System. Switch to Light." })).toBeTruthy();
+      expect(localStorage.getItem("yoplai-theme")).toBe("system");
+    } finally {
+      dispose();
+      container.remove();
+    }
+  });
+
   it("keeps one toolbar toggle in both sidebar states", () => {
     setSidebarCollapsedPersistent(false);
     const container = document.body.appendChild(document.createElement("div"));
@@ -394,56 +416,6 @@ describe("AgentSidebar", () => {
       expect(link?.querySelector(`.${iconClass}`)?.getAttribute("aria-hidden")).toBe("true");
     }
     expect(container.querySelector(".nav-short")).toBeNull();
-
-    dispose();
-  });
-
-  it("renders theme toggle button", () => {
-    setCapabilitiesForTests({
-      extensions: { projects: true },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const [collapsed] = createSignal(false);
-
-    const dispose = render(
-      () => (
-        <AgentSidebar
-          collapsed={collapsed}
-        />
-      ),
-      container
-    );
-
-    const toggle = container.querySelector(".theme-toggle");
-    expect(toggle).not.toBeNull();
-    expect(toggle!.textContent).toMatch(/Light|Dark/);
-
-    dispose();
-  });
-
-  it("toggles theme on click", () => {
-    setCapabilitiesForTests({
-      extensions: { projects: true },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const [collapsed] = createSignal(false);
-
-    const dispose = render(
-      () => (
-        <AgentSidebar
-          collapsed={collapsed}
-        />
-      ),
-      container
-    );
-
-    const toggle = container.querySelector(".theme-toggle") as HTMLButtonElement;
-    const initialTheme = document.documentElement.getAttribute("data-theme");
-    toggle.click();
-    const newTheme = document.documentElement.getAttribute("data-theme");
-    expect(newTheme).not.toBe(initialTheme);
 
     dispose();
   });

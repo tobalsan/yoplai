@@ -17,8 +17,11 @@
         try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
         if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
       }
-      var t = localStorage.getItem('yoplai-theme') || localStorage.getItem('aihub-theme');
-      if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      var t;
+      try { t = localStorage.getItem('yoplai-theme') ?? localStorage.getItem('aihub-theme'); } catch {}
+      if (t !== 'light' && t !== 'dark') {
+        t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
       document.documentElement.setAttribute('data-theme', t);
       document.cookie = 'yoplai-theme=' + t + '; Path=/; SameSite=Lax; Max-Age=31536000';
     </script>
