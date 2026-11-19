@@ -76,8 +76,11 @@ const webhooksExtension: Extension = {
     }
   },
   async stop() {
-    terminateRunningScripts(WEBHOOK_SCRIPT_OWNER);
-    clearWebhooksRuntime();
+    try {
+      await terminateRunningScripts(WEBHOOK_SCRIPT_OWNER);
+    } finally {
+      clearWebhooksRuntime();
+    }
   },
   capabilities() {
     return ["webhooks"];

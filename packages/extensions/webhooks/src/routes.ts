@@ -6,6 +6,7 @@ import type {
 } from "@yoplai/shared";
 import type { Hono } from "hono";
 import {
+  getScriptMounts,
   parseWakeAgent,
   resolveScriptPath,
   runScript,
@@ -189,14 +190,14 @@ async function runWebhookAgent(params: {
     let gateContext: string | undefined;
     if (options.script) {
       try {
-        await resolveScriptPath(workspaceDir, options.script);
+        await resolveScriptPath(workspaceDir, options.script, getScriptMounts(params.agent, params.ctx.getDataDir()));
       } catch (err) {
         if (err instanceof ScriptPathError)
           throw new WebhookPromptError(params.prompt, err);
         // A missing file is a gate failure; runScript supplies its spawn reason.
       }
       try {
-        const result = await runScript({
+        const input = {
           workspaceDir,
           script: options.script,
           timeoutMs: options.scriptTimeoutMs ?? 30_000,
@@ -209,7 +210,13 @@ async function runWebhookAgent(params: {
             WEBHOOK_ORIGIN_URL: params.originUrl,
             WEBHOOK_HEADERS: JSON.stringify(params.headers),
           },
-        });
+        };
+        if (!params.ctx.runAgentScript && params.agent.sandbox?.enabled) {
+          throw new ScriptExecutionError("Sandbox script runner is unavailable", "spawn", "");
+        }
+        const result = params.ctx.runAgentScript
+          ? await params.ctx.runAgentScript({ ...input, agentId: params.agent.id })
+          : await runScript(input);
         const gate = parseWakeAgent(result.finalStdoutLine);
         sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${gate.sessionScope ?? params.requestId}`;
         if (gate.abort) {
@@ -245,6 +252,8 @@ async function runWebhookAgent(params: {
         }
         gateContext = gate.context;
       } catch (err) {
+        const pathError = err instanceof ScriptExecutionError ? err.cause : err;
+        if (pathError instanceof ScriptPathError) throw new WebhookPromptError(params.prompt, pathError);
         const reason =
           err instanceof ScriptExecutionError ? err.reason : "spawn";
         params.ctx.logger.error(

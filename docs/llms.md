@@ -244,14 +244,20 @@ Scheduler script-only and gated jobs receive `YOPLAI_TOOL_URL`, `YOPLAI_TOOL_TOK
 `{ tool, args, agentId, agentToken, sessionId, runId }`. Tokens use the job's agent,
 owner credential identity (Team has no user), service actor, and a synthetic
 scheduler session; revoke signals cancellation when the script runner settles.
+Sandboxed scripts use the configured gateway transport. With socket transport,
+`YOPLAI_TOOL_SOCKET` supplies the Unix socket path for HTTP requests.
 Scheduler output and errors redact the exact token before persistence, logging
 or delivery. See [script tool examples](../packages/extensions/scheduler/README.md#calling-agent-tools-from-a-script).
 
 The `scheduler.create_job`/`update_job` agent tools check a supplied `script` at save time with
 the runner's own `resolveScriptLaunch` (containment, existence, exec bit for non-`.sh`/`.bash`)
-against `ctx.resolveWorkspaceDir(agent)` and return `{ ok: false }` with a host-vs-container
-hint; updates without a new `script` skip the check. Scripts run on the gateway host, cwd =
-agent workspace root, so container paths such as `/workspace/files` do not apply.
+against `ctx.resolveWorkspaceDir(agent)` and return `{ ok: false }` with a path hint.
+Updates without a new `script` skip the check. Save a workspace-relative path
+such as `scripts/check-status.sh`. Scheduler scripts and webhook gates for
+sandboxed agents run from `/workspace` in per-run Docker containers with the
+agent's sandbox policy and no session upload or conversation-file mounts.
+Agents without sandboxing use the gateway host and the agent workspace as cwd.
+See [script isolation](container-isolation.md#scheduler-scripts-and-webhook-gates).
 
 Root `enableCronMonitoring` defaults off. When enabled, scheduler runs have
 atomic per-run records at `<workspace>/cron/runs/<jobId>/<runId>.json` and

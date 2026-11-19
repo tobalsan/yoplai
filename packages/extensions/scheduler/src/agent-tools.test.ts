@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
+import { AgentSandboxConfigSchema } from "@yoplai/shared";
 import { schedulerExtension } from "./index.js";
 import { clearSchedulerContext, getScheduler, setSchedulerContext, stopScheduler } from "./service.js";
 
@@ -103,7 +104,7 @@ describe("scheduler agent tools", () => {
     }
   });
 
-  it("tells the agent in create and update tools that scripts run on the gateway host", async () => {
+  it("explains script locations, runtimes and the socket transport in create and update tools", async () => {
     const alpha = agent("alpha", "/tmp/fixture-agent");
     const tools = await schedulerExtension.getAgentTools!(alpha);
     for (const name of ["scheduler.create_job", "scheduler.update_job"]) {
@@ -111,9 +112,14 @@ describe("scheduler agent tools", () => {
       const scriptParameter = (tool.parameters as { properties: { script: { description: string } } }).properties.script.description;
       for (const text of [tool.description, scriptParameter]) {
         expect(text).toContain("gateway host");
+        expect(text).toContain("sandbox container");
+        expect(text).toContain("cwd = /workspace");
+        expect(text).toContain("scripts/check.sh");
+        expect(text).not.toContain("e.g. data/");
         expect(text).toContain("/workspace/files");
         expect(text).toContain("chmod +x");
       }
+      expect(tool.description).toContain("YOPLAI_TOOL_SOCKET");
     }
   });
 
@@ -392,6 +398,31 @@ describe("scheduler agent tools", () => {
     expect(result.error).toContain("run on the gateway host");
     const listed = await byName.get("scheduler.list_jobs")!.execute({}, { agent: alpha, config }) as { jobs: Array<{ name: string; payload: { script?: string } }> };
     expect(listed.jobs).toMatchObject([{ name: "Ticket gate", payload: { script: "data/ticket-monitor/gate.sh" } }]);
+  });
+
+  it("saves a sandbox data script and rejects replacing it with a path shadowed by a custom mount", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-tools-"));
+    const alpha = agent("alpha", path.join(tmpDir, "workspace"));
+    const mounted = path.join(tmpDir, "mounted");
+    alpha.sandbox = AgentSandboxConfigSchema.parse({ enabled: true, mounts: [{ host: mounted, container: "/workspace/scripts" }] });
+    const config: GatewayConfig = { version: 3, agents: [alpha], extensions: { scheduler: { enabled: true } }, sessions: { idleMinutes: 360 } };
+    const ctx = context(config);
+    ctx.getDataDir = () => tmpDir!;
+    setSchedulerContext(ctx);
+    await writeScript(alpha.workspace, "scripts/gate.sh");
+    await writeScript(mounted, "gate.sh");
+    await writeScript(path.join(tmpDir, "agents", "alpha", "data"), "gate.sh");
+    const tools = await schedulerExtension.getAgentTools!(alpha, { config });
+    const create = tools.find((tool) => tool.name === "scheduler.create_job")!;
+    const update = tools.find((tool) => tool.name === "scheduler.update_job")!;
+
+    const created = await create.execute({
+      name: "Sandbox gate", cron: "* * * * *", tz: "UTC", script: "./data/gate.sh", noAgent: true,
+    }, { agent: alpha, config }) as { ok: boolean; job: { id: string } };
+    expect(created).toMatchObject({ ok: true, job: { payload: { script: "./data/gate.sh" } } });
+    expect(await update.execute({ jobId: created.job.id, script: "scripts/gate.sh" }, { agent: alpha, config }))
+      .toMatchObject({ ok: false, error: expect.stringContaining("shadowed workspace path") });
+    expect(await getScheduler().list("alpha")).toMatchObject([{ payload: { script: "./data/gate.sh" } }]);
   });
 
   it("adds the host/workspace hint when a container path or '..' is given as the script", async () => {

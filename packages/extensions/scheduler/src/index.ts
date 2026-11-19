@@ -13,6 +13,7 @@ import {
 } from "@yoplai/shared";
 import { z } from "zod";
 import type { Context, Hono } from "hono";
+import { getScriptMounts } from "@yoplai/shared/node/script";
 import {
   ScheduleAlreadyRunningError,
   ScheduleNotFoundError,
@@ -94,14 +95,19 @@ function toolError(error: unknown) {
 }
 
 const SCRIPT_PATH_HINT =
-  "Job scripts run on the gateway host, not in your container, and the script path is relative to the agent workspace root. " +
-  "Inside a container, /workspace/files (the conversation folder) and /workspace/uploads are not under the workspace root, " +
-  "so keep job scripts under the workspace root (e.g. data/).";
+  "Save the job's script path relative to the workspace root, for example scripts/check.sh. " +
+  "Sandboxed agents run scripts in their sandbox container with cwd = /workspace. " +
+  "Scripts for non-sandboxed agents run on the gateway host with cwd = the workspace root. " +
+  "/workspace/files and /workspace/uploads refer to ordinary workspace paths during a script run.";
 
 const SCRIPT_RUNTIME_GUIDANCE =
-  "Scripts run on the gateway host, not in your container, with cwd = the agent workspace root: use relative paths " +
-  "and never reference /workspace/... container paths inside the script. /workspace/files (the conversation folder) " +
-  "and /workspace/uploads are not part of the workspace root. Non-.sh/.bash scripts need a shebang and chmod +x.";
+  SCRIPT_PATH_HINT + " Inside the sandbox, use relative or /workspace/... paths. The container mounts the workspace, " +
+  "/workspace/data, and /shared and custom mounts when configured. Non-.sh/.bash scripts need a shebang and chmod +x.";
+
+const SCRIPT_TOOL_GUIDANCE =
+  "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
+  "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. " +
+  "When YOPLAI_TOOL_SOCKET is set, send HTTP over that Unix socket, for example with curl --unix-socket.";
 
 /** Checks a job script now, so a bad path fails at save time, not at the first run. */
 async function scriptValidationError(
@@ -109,7 +115,8 @@ async function scriptValidationError(
   script: string
 ): Promise<string | undefined> {
   try {
-    await resolveScriptLaunch(getSchedulerContext().resolveWorkspaceDir(agent), script);
+    const ctx = getSchedulerContext();
+    await resolveScriptLaunch(ctx.resolveWorkspaceDir(agent), script, getScriptMounts(agent, ctx.getDataDir()));
     return undefined;
   } catch (error) {
     return `${error instanceof Error ? error.message : String(error)}. ${SCRIPT_PATH_HINT}`;
@@ -234,8 +241,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         "should stay silent most ticks. Set quietOutput: true on high-frequency script jobs to skip " +
         "writing an output file for uneventful runs (errors and woke-agent runs always write one). " +
         SCRIPT_RUNTIME_GUIDANCE + " " +
-        "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
-        "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. " +
+        SCRIPT_TOOL_GUIDANCE + " " +
         "Optional deliver pushes each run's result to comm-channel targets: this happens at the RUNTIME " +
         "level after the run resolves, not as an LLM action — do NOT call a *.send_message tool yourself " +
         "to report cron results, that would duplicate delivery and the agent is not trusted to self-report " +
@@ -362,8 +368,7 @@ function schedulerAgentTools(): ExtensionAgentTool[] {
         '(wakes the agent only when the script\'s final stdout line is JSON with {"wakeAgent": true}); ' +
         "quietOutput: true skips the output file for uneventful script ticks. " +
         SCRIPT_RUNTIME_GUIDANCE + " " +
-        "Scripts can POST {tool,args,agentId,agentToken,sessionId,runId} to YOPLAI_TOOL_URL/internal/tools using " +
-        "YOPLAI_TOOL_TOKEN, YOPLAI_AGENT_ID, YOPLAI_SESSION_ID and YOPLAI_RUN_ID from env. deliver replaces the job's " +
+        SCRIPT_TOOL_GUIDANCE + " deliver replaces the job's " +
         "whole delivery list when provided (pass [] to clear it, omit to leave it unchanged); results are " +
         "pushed by the RUNTIME after each run, so do NOT call a *.send_message tool yourself to report " +
         "cron results. Set timeoutMs to override the per-run timeout in milliseconds (default 30 minutes). " + credentialModeGuidance,

@@ -16,6 +16,7 @@ import {
   setExtensionActivator,
 } from "../extensions/registry.js";
 import { resetActiveTurns } from "../agents/active-turns.js";
+import { cleanupOrphanScriptContainers } from "../agents/container.js";
 import { bindExtensionContext, createExtensionContext } from "../extensions/context.js";
 import {
   prepareStartupConfig,
@@ -86,6 +87,14 @@ export async function startGatewayCommand(
   };
   await initializeDashboardRegistry(runtimeConfig, CONFIG_DIR);
   resetActiveTurns();
+  // Recover containers from a previous gateway before the scheduler arms jobs.
+  try {
+    cleanupOrphanScriptContainers(CONFIG_DIR);
+  } catch (error) {
+    if (config.agents.some((agent) => agent.sandbox?.enabled)) {
+      console.warn(`Could not clean up prior sandbox script containers: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
     await extension.start(bindExtensionContext(extensionContext, extension.id));

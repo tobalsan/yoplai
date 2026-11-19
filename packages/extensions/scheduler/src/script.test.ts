@@ -4,8 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseWakeAgent,
+  resolveScriptLaunch,
   resolveScriptPath,
   runScript,
+  ScriptPathError,
   terminateRunningScripts,
 } from "./script.js";
 
@@ -236,6 +238,44 @@ describe("resolveScriptPath containment", () => {
   afterEach(async () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
     tmpDir = undefined;
+  });
+
+  it("launches a normalized data path from the mounted agent data directory", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    const workspace = path.join(tmpDir, "workspace");
+    const dataDir = path.join(tmpDir, "agent-data");
+    await fs.mkdir(path.join(workspace, "data"), { recursive: true });
+    await fs.mkdir(dataDir);
+    await fs.mkdir(path.join(workspace, "data", "gate.sh"));
+    const script = await writeScript(dataDir, "gate.sh", "echo mapped-data\n");
+
+    await expect(resolveScriptLaunch(workspace, "./data/gate.sh", { dataDir })).resolves.toEqual({
+      command: "bash", args: [await fs.realpath(script)], containerPath: "/workspace/data/gate.sh",
+    });
+  });
+
+  it("rejects a script under a shadowing mount even when only the mount contains it", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    const mounted = path.join(tmpDir, "mounted");
+    await fs.mkdir(mounted);
+    await writeScript(mounted, "gate.sh", "echo mounted-file\n");
+
+    await expect(resolveScriptPath(tmpDir, "scripts/gate.sh", {
+      dataDir: path.join(tmpDir, "data"), shadowedPaths: ["/workspace/scripts/"],
+    })).rejects.toThrow(ScriptPathError);
+  });
+
+  it("rejects a workspace alias into data when the container mounts a different data directory", async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-scheduler-script-"));
+    const workspace = path.join(tmpDir, "workspace");
+    const dataDir = path.join(tmpDir, "mounted-data");
+    await fs.mkdir(path.join(workspace, "data"), { recursive: true });
+    await fs.mkdir(dataDir);
+    await writeScript(path.join(workspace, "data"), "gate.sh", "echo workspace-data\n");
+    await writeScript(dataDir, "gate.sh", "echo mounted-data\n");
+    await fs.symlink("data/gate.sh", path.join(workspace, "alias.sh"));
+
+    await expect(resolveScriptLaunch(workspace, "alias.sh", { dataDir })).rejects.toThrow(ScriptPathError);
   });
 
   it("rejects a '..' escape", async () => {

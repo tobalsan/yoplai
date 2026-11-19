@@ -11,7 +11,8 @@ import type {
   RunAgentResult,
   WebhookConfig,
 } from "@yoplai/shared";
-import { AgentConfigSchema, GatewayConfigSchema } from "@yoplai/shared";
+import { AgentConfigSchema, AgentSandboxConfigSchema, GatewayConfigSchema } from "@yoplai/shared";
+import { ScriptExecutionError } from "@yoplai/shared/node/script";
 import {
   clearWebhooksRuntime,
   registerWebhookRoutes,
@@ -247,6 +248,49 @@ describe("webhook prompt frontmatter", () => {
     expect(hook.runAgent).not.toHaveBeenCalled();
     expect(hook.error).not.toHaveBeenCalled();
     expect(hook.emit).not.toHaveBeenCalled();
+  });
+
+  it("delivers the webhook payload and metadata to the sandbox runner", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle alert");
+    hook.agent.sandbox = AgentSandboxConfigSchema.parse({ enabled: true });
+    hook.ctx.runAgentScript = async ({ agentId, stdin, owner, env }) => {
+      const wakeAgent = agentId !== "sales" || owner !== "webhooks" ||
+        stdin !== '{"ticket":42}' || env?.WEBHOOK_NAME !== "notion" ||
+        Object.keys(env).some((name) => !name.startsWith("WEBHOOK_"));
+      const finalStdoutLine = JSON.stringify({ wakeAgent });
+      return { stdout: `${finalStdoutLine}\n`, stderr: "", finalStdoutLine };
+    };
+
+    expect((await hook.request('{"ticket":42}')).status).toBe(200);
+    await vi.waitFor(() => expect(hook.info).toHaveBeenCalledWith("[webhooks] sales/notion gate: skipped"));
+    expect(hook.runAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sandbox gate under a shadowed path without waking the agent", async () => {
+    const hook = fixture("---\nscript: mounted/gate.sh\n---\nHandle alert");
+    hook.agent.sandbox = AgentSandboxConfigSchema.parse({ enabled: true, mounts: [{ host: hook.workspace, container: "/workspace/mounted" }] });
+    const runScript = vi.fn();
+    hook.ctx.runAgentScript = runScript;
+
+    await hook.request();
+    await vi.waitFor(() => expect(hook.error.mock.calls[0]?.[0]).toContain("shadowed workspace path"));
+    expect(hook.error.mock.calls[0]?.[0]).toContain("hook.md");
+    expect(runScript).not.toHaveBeenCalled();
+    expect(hook.runAgent).not.toHaveBeenCalled();
+  });
+
+  it("logs a sandbox start failure and still wakes the agent", async () => {
+    const hook = fixture("---\nscript: gate.sh\n---\nHandle alert", { "gate.sh": "exit 49\n" });
+    hook.agent.sandbox = AgentSandboxConfigSchema.parse({ enabled: true });
+    hook.ctx.runAgentScript = async () => {
+      throw new ScriptExecutionError("Sandbox script container start failed", "spawn", "fixture start error");
+    };
+
+    await hook.request();
+    await vi.waitFor(() => expect(hook.runAgent).toHaveBeenCalledOnce());
+    expect(hook.error).toHaveBeenCalledWith("[webhooks] sales/notion gate: spawn", "Sandbox script container start failed", {
+      reason: "spawn", stderrTail: "fixture start error",
+    });
   });
 
   it("reuses the gate scope while retaining fresh request ids and gate env", async () => {

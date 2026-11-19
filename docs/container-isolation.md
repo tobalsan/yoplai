@@ -131,6 +131,36 @@ Custom mounts must resolve beneath allowed roots and avoid blocked patterns. Con
 
 Pi extension tools work in and out of containers. Sandbox Claude rejects configured extension tools rather than silently dropping them.
 
+### Scheduler scripts and webhook gates
+
+With `sandbox.enabled: true`, each scheduler script and webhook gate starts in
+its own container with `/workspace` as its working directory. Save script paths
+relative to the agent workspace, for example `scripts/check-status.sh`. Inside
+the container, scripts can reference absolute paths under `/workspace`. Files
+ending in `.sh` or `.bash` run under Bash. Other scripts need a shebang and
+`chmod +x`.
+
+The container follows the agent's image, network, resource limits, OneCLI,
+and workspace access settings. With a writable workspace, existing
+`AGENTS.md` and `agent.yaml` remain read-only. The workspace `.env` is masked,
+`/workspace/data` is writable, and configured shared and custom mounts apply.
+Custom mounts under a read-only `/workspace` need an existing destination in
+the workspace.
+Session uploads and conversation-file mounts are omitted. Ordinary directories
+in the workspace, including any named `files` or `uploads`, remain visible
+through the workspace mount.
+
+Scheduler scripts can call agent tools with their temporary run credentials.
+With socket transport, clients connect to the Unix socket in
+`YOPLAI_TOOL_SOCKET` to send HTTP requests to `YOPLAI_TOOL_URL`. Webhook gates
+receive the request body or query on stdin and metadata in `WEBHOOK_*`
+variables. Script containers are cleaned up on exit, including failure,
+timeout, and extension shutdown. Agents without sandboxing run scripts on the
+gateway host from their workspace directory.
+
+See [scheduler script tool examples](../packages/extensions/scheduler/README.md#calling-agent-tools-from-a-script)
+and [webhook frontmatter](webhooks.md#frontmatter).
+
 ### Outbound file protocol
 
 New container runners call `/internal/tools` with `tool: "__register_file_output"`
