@@ -6,6 +6,7 @@ import type { McpAppViewReference } from "@yoplai/shared/types";
 import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
+import { ContextUsageRing } from "./chat/ContextUsageRing";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
 import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
@@ -325,7 +326,7 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
   const {
     simpleMessages, fullMessages, streamingBlocks, streamingText, streamingFiles,
     activeTools, isStreaming, loading, stopping, pendingQueuedMessages,
-    contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
+    contextUsage, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
   const setup = useOptionalSetup();
@@ -1150,6 +1151,9 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
             onPaste={handlePaste}
             rows={1}
           />
+          <Show when={contextUsage()}>
+            {(usage) => <ContextUsageRing inputTokens={usage().inputTokens} maxTokens={usage().maxTokens} />}
+          </Show>
           <Show
             when={isStreaming()}
           fallback={
@@ -1225,19 +1229,6 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
         <div class="hero-spacer hero-spacer-bottom" />
       </div>
 
-      <Show when={contextUsageDisplay()}>
-        {(display) => (
-          <div
-            class="context-usage"
-            classList={{
-              unavailable: display().unavailable,
-              danger: isContextUsageDanger(),
-            }}
-          >
-            {display().text}
-          </div>
-        )}
-      </Show>
       <Show when={contextWarning()}>
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>

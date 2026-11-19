@@ -1,31 +1,39 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal } from "solid-js";
+import { readMigratedLocal } from "./lib/local-storage";
 
-type Theme = "light" | "dark";
+export type ThemeChoice = "light" | "dark" | "system";
+const storageKey = "yoplai-theme";
+const systemTheme = window.matchMedia?.("(prefers-color-scheme: light)");
+const [systemLight, setSystemLight] = createSignal(systemTheme?.matches ?? false);
 
-function getInitialTheme(): Theme {
-  const stored = localStorage.getItem("yoplai-theme");
-  if (stored === "light" || stored === "dark") return stored;
-  const legacy = localStorage.getItem("aihub-theme");
-  if (legacy === "light" || legacy === "dark") {
-    localStorage.setItem("yoplai-theme", legacy);
-    return legacy;
-  }
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches
-    ? "light"
-    : "dark";
+function parseChoice(value: string | null): ThemeChoice {
+  return value === "light" || value === "dark" ? value : "system";
 }
 
-const [theme, setTheme] = createSignal<Theme>(getInitialTheme());
+const [themeChoice, setChoice] = createSignal(parseChoice(readMigratedLocal(storageKey)));
+const theme = createMemo(() => {
+  const choice = themeChoice();
+  return choice === "system" ? systemLight() ? "light" : "dark" : choice;
+});
 
-export { theme };
+export { theme, themeChoice };
 
-export function toggleTheme() {
-  setTheme((t) => (t === "dark" ? "light" : "dark"));
+export function setThemeChoice(choice: ThemeChoice) {
+  setChoice(choice);
+  try { localStorage.setItem(storageKey, choice); } catch { /* The current tab keeps the choice. */ }
 }
+
+const onSystemTheme = (event: MediaQueryListEvent) => setSystemLight(event.matches);
+if (systemTheme?.addEventListener) systemTheme.addEventListener("change", onSystemTheme);
+else systemTheme?.addListener?.(onSystemTheme);
+
+window.addEventListener("storage", (event) => {
+  if (event.storageArea && event.storageArea !== window.localStorage) return;
+  if (event.key === storageKey || event.key === null) setChoice(parseChoice(event.newValue));
+});
 
 createEffect(() => {
-  const t = theme();
-  document.documentElement.setAttribute("data-theme", t);
-  localStorage.setItem("yoplai-theme", t);
-  document.cookie = `yoplai-theme=${t}; Path=/; SameSite=Lax; Max-Age=31536000`;
+  const resolved = theme();
+  document.documentElement.dataset.theme = resolved;
+  document.cookie = `yoplai-theme=${resolved}; Path=/; SameSite=Lax; Max-Age=31536000`;
 });

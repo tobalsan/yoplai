@@ -7,7 +7,7 @@ import { Route, Router } from "@solidjs/router";
 import { FrameView, type FrameViewProps } from "./FrameView";
 import { createDashboardAnnotations, DashboardAnnotationsContext } from "./dashboardAnnotations";
 import { PREPARE_TIMEOUT_MS, READY_TIMEOUT_MS } from "./remoteDashboardHost";
-import { theme, toggleTheme } from "../../theme";
+import { setThemeChoice } from "../../theme";
 
 const ID = "d".repeat(32);
 const NEXT = "e".repeat(32);
@@ -52,7 +52,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  if (theme() === "light") toggleTheme();
+  setThemeChoice("dark");
 });
 
 type Props = Partial<FrameViewProps> & { chatAgent?: string };
@@ -533,7 +533,7 @@ describe("remote dashboard host: replacement and late results", () => {
     fromShell(old, "renderer-ready");
     const read = reads()[0];
     getByRole(container, "button", { name: "Copy link" });
-    toggleTheme();
+    setThemeChoice("light");
     await settle();
     expect(read.signal.aborted).toBe(true);
     expect(container.querySelector("iframe")).toBeNull();
@@ -567,7 +567,7 @@ describe("remote dashboard host: replacement and late results", () => {
     expect(prepares()[1].body.query).toBe("week=2");
     await answerPrepare(prepares()[1], 2);
     expect(shellFrame()).not.toBe(first);
-    toggleTheme();
+    setThemeChoice("light");
     await settle();
     expect(prepares()[2].body).toMatchObject({ query: "week=2", theme: "light" });
   });

@@ -1674,25 +1674,61 @@
           cursor: not-allowed;
         }
 
-        .context-usage {
-          width: min(100%, var(--transcript-width));
-          box-sizing: border-box;
-          margin: 0 auto 4px;
-          text-align: left;
-          color: color-mix(in srgb, var(--text-primary) 70%, var(--text-muted));
+        .context-ring-wrap { position: relative; flex: none; }
+
+        .context-ring {
+          position: relative;
+          display: grid;
+          place-items: center;
+          width: 36px;
+          height: 34px;
+          padding: 0;
+          border: 0;
+          border-radius: 50%;
+          background: transparent;
+          color: var(--text-muted);
+          cursor: pointer;
+        }
+
+        .context-ring:hover { background: var(--bg-raised); }
+        .context-ring:focus-visible { outline: 2px solid var(--accent); }
+        .context-ring.warning { color: var(--tone-warning, #b7791f); }
+        .context-ring.danger { color: var(--error); }
+        .context-ring-track { stroke: var(--border-default); }
+        .context-ring-fill { stroke: currentColor; transform: rotate(-90deg); transform-origin: center; }
+
+        .context-ring-percent {
+          position: absolute;
+          color: var(--text-secondary);
+          font-size: 0.56rem;
+          font-weight: 600;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .context-ring-tooltip {
+          display: none;
+          position: absolute;
+          z-index: 11;
+          inset-inline-end: 0;
+          bottom: calc(100% + 6px);
+          width: max-content;
+          padding: 6px 9px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: var(--bg-surface);
+          color: var(--text-primary);
           font-size: 12px;
-          font-weight: 500;
-          line-height: 1.35;
-          padding: 2px 18px 8px 72px;
+          font-variant-numeric: tabular-nums;
         }
 
-        .context-usage.unavailable {
-          opacity: 0.9;
+        .context-ring-tooltip::after {
+          content: "";
+          position: absolute;
+          inset: 100% 0 auto;
+          height: 6px;
         }
 
-        .context-usage.danger {
-          color: #ef4444;
-        }
+        .context-ring-wrap:is(:hover, :focus-within) .context-ring-tooltip:not([hidden]) { display: block; }
 
         .context-warning {
           width: min(calc(100% - 36px), calc(var(--transcript-width) - 36px));
@@ -1776,10 +1812,6 @@
 
           .composer-zone {
             padding: 0 12px 14px;
-          }
-
-          .context-usage {
-            padding-left: 64px;
           }
 
           .attach-btn,
