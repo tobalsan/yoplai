@@ -27,9 +27,16 @@ const onSystemTheme = (event: MediaQueryListEvent) => setSystemLight(event.match
 if (systemTheme?.addEventListener) systemTheme.addEventListener("change", onSystemTheme);
 else systemTheme?.addListener?.(onSystemTheme);
 
-window.addEventListener("storage", (event) => {
+function onStorage(event: StorageEvent) {
   if (event.storageArea && event.storageArea !== window.localStorage) return;
   if (event.key === storageKey || event.key === null) setChoice(parseChoice(event.newValue));
+}
+window.addEventListener("storage", onStorage);
+
+import.meta.hot?.dispose(() => {
+  if (systemTheme?.removeEventListener) systemTheme.removeEventListener("change", onSystemTheme);
+  else systemTheme?.removeListener?.(onSystemTheme);
+  window.removeEventListener("storage", onStorage);
 });
 
 createEffect(() => {

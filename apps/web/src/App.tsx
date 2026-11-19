@@ -170,6 +170,11 @@ function Layout(props: { children?: JSX.Element }) {
         .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
           -webkit-app-region: no-drag;
         }
+        .agents-toolbar-title {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 600;
+        }
         .app.zen-mode {
           background: var(--bg-base);
         }
@@ -208,19 +213,17 @@ function HomeRoute() {
 
 function AgentsRouteShell() {
   return (
-    <LeftNavShell>
-      <AgentCatalog />
+    <LeftNavShell toolbar={<h1 class="agents-toolbar-title">Agents</h1>}>
+      <AgentCatalog hideHeading />
     </LeftNavShell>
   );
 }
 
 function TeamsRouteShell() {
   return (
-    <LeftNavShell>
-      <Show when={capabilities.forkedAgents} fallback={<AgentCatalog />}>
-        <Teams />
-      </Show>
-    </LeftNavShell>
+    <Show when={capabilities.forkedAgents} fallback={<AgentsRouteShell />}>
+      <LeftNavShell><Teams /></LeftNavShell>
+    </Show>
   );
 }
 

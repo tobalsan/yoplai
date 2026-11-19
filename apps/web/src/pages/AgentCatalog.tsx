@@ -31,7 +31,7 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
     : UNASSIGNED_MESSAGE;
 }
 
-export function AgentCatalog() {
+export function AgentCatalog(props: { hideHeading?: boolean }) {
   const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
   const [savingMain, setSavingMain] = createSignal<string | null>(null);
   const navigate = useNavigate();
@@ -109,7 +109,7 @@ export function AgentCatalog() {
 
   return (
     <div class="agent-catalog">
-      <h1 class="catalog-heading">Agents</h1>
+      <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}
@@ -266,23 +266,6 @@ export function AgentCatalog() {
           font-weight: 600;
           color: var(--text-primary);
           margin-bottom: 20px;
-        }
-
-        .desktop-window .agent-catalog {
-          padding-top: 0;
-        }
-
-        .desktop-window .catalog-heading {
-          margin-inline: -24px;
-          padding: 12px 24px 0;
-          padding-inline-start: max(24px, var(--desktop-main-clearance, 0px));
-          -webkit-app-region: drag;
-        }
-
-        @media (max-width: 768px) {
-          .desktop-window .catalog-heading {
-            min-height: 78px;
-          }
         }
 
         .loading, .error {

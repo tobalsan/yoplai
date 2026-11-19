@@ -85,6 +85,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The full-screen chat panel keeps its tabs and close buttons clear of the toolbar. Narrow chat toolbars group secondary controls under More chat controls. The Agents heading sits in the toolbar.
 - The desktop dev home does not generate an OAuth key if the shell supplies one.
 - The macOS release command rejects `apps/desktop/electron-builder.env` so electron-builder uses the keychain profile for notarization.
 - The desktop chat repair button shows its label on one line. Dialogs stop header dragging. Full-height pages fit below the drag inset.
