@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { readSplashPreference } from "./preferences.js";
+import { readSplashPreference, readThemePreference, writeSplashPreference, writeThemePreference } from "./preferences.js";
 
 it.each([[null, true], ["{", true], ['{"splash":0}', true], ['{"splash":true}', true], ['{"splash":false}', false]])(
   "reads splash preference %s as %s", async (content, enabled) => {
@@ -15,3 +15,19 @@ it.each([[null, true], ["{", true], ['{"splash":0}', true], ['{"splash":true}', 
     }
   },
 );
+
+it("imports a theme without changing the splash choice", async () => {
+  const userData = await fs.mkdtemp(path.join(os.tmpdir(), "desktop-preferences-"));
+  try {
+    await fs.writeFile(path.join(userData, "desktop-preferences.json"), '{"splash":false}');
+    expect(readThemePreference(userData)).toBeUndefined();
+    writeThemePreference(userData, "system");
+    expect(readSplashPreference(userData)).toBe(false);
+    expect(readThemePreference(userData)).toBe("system");
+    writeSplashPreference(userData, true);
+    expect(readSplashPreference(userData)).toBe(true);
+    expect(readThemePreference(userData)).toBe("system");
+  } finally {
+    await fs.rm(userData, { recursive: true, force: true });
+  }
+});

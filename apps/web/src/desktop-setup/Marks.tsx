@@ -61,8 +61,8 @@ export function AgentMark(props: { side?: boolean }) {
     });
   });
   return <svg ref={svg} class="setup-mark" viewBox="-35 -35 70 70" aria-hidden="true">
-    <circle r={radius} fill="white" />
-    <g transform={`translate(${offset().x} ${offset().y})`} fill="black">
+    <circle r={radius} fill="var(--setup-ink)" />
+    <g transform={`translate(${offset().x} ${offset().y})`} fill="var(--setup-paper)">
       <ellipse cx={-eyeHalfGap} rx={eyeRx} ry={eyeRy} />
       <ellipse cx={eyeHalfGap} rx={eyeRx} ry={eyeRy} />
     </g>
@@ -70,7 +70,7 @@ export function AgentMark(props: { side?: boolean }) {
 }
 
 export function Wordmark() {
-  return <svg viewBox="0 -4 1078 246" role="img" aria-label="Yoplai" fill="white">
+  return <svg viewBox="0 -4 1078 246" role="img" aria-label="Yoplai" fill="var(--setup-ink)">
     <path fill-rule="evenodd" d="M0 0H79L118 69L157 0H236L153 135V238H83V135Z M197.5 119A123 123 0 1 0 443.5 119A123 123 0 1 0 197.5 119Z M269.5 119A51 51 0 1 0 371.5 119A51 51 0 1 0 269.5 119Z M451 0H548A83.5 83.5 0 0 1 548 167H521V238H451Z M521 67H545A18.5 18.5 0 0 1 545 104H521Z M640 0H710V169H767V238H640Z M852 0H926L1005 238H934L922 198H856L844 238H773Z M889 87L907 143H871Z M1008 0H1078V238H1008Z" />
   </svg>;
 }

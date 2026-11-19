@@ -44,6 +44,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- The desktop splash and setup use the macOS appearance by default. If you select Light or Dark, they use that choice on the next start.
 - `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home.
 - The desktop app uses the new Yoplai icon in the Dock.
 - The desktop sidebar header omits the brand text. The browser sidebar keeps it.
