@@ -71,6 +71,18 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
   });
   const running = { child, port, home, output: () => output };
   started.push(running);
+  // READY can arrive before the HTTP listener accepts connections.
+  await until(async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/capabilities`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      await response.body?.cancel();
+      return response.status === 200;
+    } catch {
+      return false;
+    }
+  });
   return running;
 }
 
