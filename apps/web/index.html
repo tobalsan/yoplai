@@ -12,13 +12,25 @@
     <link rel="manifest" href="/api/manifest.webmanifest" />
     <title>Yoplai</title>
     <script>
-      if (/\bElectron\//.test(navigator.userAgent)) {
+      var desktop = /\bElectron\//.test(navigator.userAgent);
+      if (desktop) {
         var firstDesktopScreen = true;
         try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
         if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
       }
       var t;
       try { t = localStorage.getItem('yoplai-theme') ?? localStorage.getItem('aihub-theme'); } catch {}
+      if (desktop && window.yoplaiDesktopTheme) {
+        var choice = t === 'light' || t === 'dark' ? t : 'system';
+        var saved = window.yoplaiDesktopTheme.load(choice);
+        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+          if (saved !== choice) {
+            try { localStorage.setItem('yoplai-theme', saved); } catch {}
+          }
+          document.documentElement.dataset.desktopThemeChoice = saved;
+          t = saved;
+        }
+      }
       if (t !== 'light' && t !== 'dark') {
         t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       }
@@ -112,7 +124,12 @@
         color: var(--text-primary);
       }
       html[data-desktop-first-screen], html[data-desktop-first-screen] body {
+        --desktop-first-screen: #000;
         background: #000;
+      }
+      html[data-desktop-first-screen][data-theme="light"], html[data-desktop-first-screen][data-theme="light"] body {
+        --desktop-first-screen: #fff;
+        background: #fff;
       }
       #root {
         height: 100%;

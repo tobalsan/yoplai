@@ -1,9 +1,21 @@
+:root {
+  --paper: #000;
+  --loading: #ccc;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --paper: #fff;
+    --loading: #333;
+  }
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #000;
+  background: var(--paper);
 }
 
 canvas {
@@ -18,8 +30,12 @@ canvas {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ccc;
+  background: var(--loading);
   animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #loading { animation: none; }
 }
 
 @keyframes pulse {

@@ -264,6 +264,13 @@ function simTo(t) {
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d', { alpha: false });
+const light = matchMedia('(prefers-color-scheme: light)');
+let paper, ink;
+function setColors() {
+  paper = light.matches ? '#fff' : '#000';
+  ink = light.matches ? '#000' : '#fff';
+}
+setColors();
 let vw = 0, vh = 0, dpr = 1, scale = 1;
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -285,7 +292,7 @@ function drawInk(t) {
   ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
   const done = new Set();
   for (const run of runs) if (run.completes && t >= run.t1 + 0.08) done.add(run.glyph);
-  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff';
+  ctx.fillStyle = ink; ctx.strokeStyle = ink;
   for (const g of done) ctx.fill(glyphs[g], 'evenodd');
   for (const run of runs) {
     if (t < run.t0 || done.has(run.glyph)) continue;
@@ -340,7 +347,7 @@ function drawAgent(t) {
   if (sq.anchor) ctx.translate(0, sq.anchor * sq.q * r);
   ctx.scale(1 + sq.wide * sq.q, 1 - sq.q);
   bodyPath(r, sq.flat);
-  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.fillStyle = ink; ctx.fill();
   ctx.restore();
 
   const e = eyesAt(t);
@@ -350,7 +357,7 @@ function drawAgent(t) {
     const ox = gx * 0.34 * r + sq.dir.x * shift, oy = -0.03 * r + gy * 0.30 * r + sq.dir.y * shift;
     const ew = 0.184 * r * e.scale * (1 - 0.22 * Math.abs(gx)), eh = 0.316 * r * e.scale;
     const lw = 0.1 * r * e.scale;
-    ctx.fillStyle = '#000'; ctx.strokeStyle = '#000'; ctx.lineCap = 'round'; ctx.lineWidth = lw;
+    ctx.fillStyle = paper; ctx.strokeStyle = paper; ctx.lineCap = 'round'; ctx.lineWidth = lw;
     for (const side of [-1, 1]) {
       const ex = ox + side * 0.29 * r * (1 - 0.15 * Math.abs(gx));
       const w = side === 1 ? e.wink : 0;
@@ -367,7 +374,7 @@ function drawAgent(t) {
 }
 function draw(t) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, vw, vh);
+  ctx.fillStyle = paper; ctx.fillRect(0, 0, vw, vh);
   ctx.translate(vw / 2, vh / 2); ctx.scale(scale, scale); ctx.translate(-CENTER.x, -CENTER.y);
   drawInk(t);
   drawAgent(t);
@@ -427,6 +434,7 @@ window.yoplaiSplash = {
 canvas.hidden = wait;
 resize();
 drawFrame();
+light.addEventListener('change', () => { setColors(); drawFrame(); });
 window.addEventListener('resize', () => { resize(); drawFrame(); });
 if (wait || reducedMotion || clock === T.end) complete();
 else if (frozen) end();

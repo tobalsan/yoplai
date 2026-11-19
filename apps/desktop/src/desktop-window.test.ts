@@ -8,6 +8,7 @@ const index = fs.readFileSync("apps/web/index.html", "utf8");
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  delete window.yoplaiDesktopTheme;
   localStorage.clear();
   sessionStorage.clear();
   document.documentElement.removeAttribute("data-desktop-first-screen");
@@ -15,10 +16,10 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function loadPage(userAgent: string, reducedMotion = false) {
+function loadPage(userAgent: string, reducedMotion = false, choice = "light") {
   vi.stubGlobal("navigator", { userAgent });
   vi.stubGlobal("matchMedia", () => ({ matches: reducedMotion }));
-  localStorage.setItem("yoplai-theme", "light");
+  localStorage.setItem("yoplai-theme", choice);
   const page = new DOMParser().parseFromString(index, "text/html");
   document.head.replaceChildren(...page.querySelectorAll("style"));
   document.body.replaceChildren(...page.body.children);
@@ -39,24 +40,27 @@ function renderScreen(root: HTMLElement) {
   expect(getByRole(root, "heading", { name: "Welcome to Yoplai" })).toBeTruthy();
 }
 
-it("keeps the light theme black from the first paint until the first screen fades in", async () => {
-  const { root, animation } = loadPage("Electron/45");
+it.each([
+  ["light", "rgb(255, 255, 255)"],
+  ["dark", "rgb(0, 0, 0)"],
+])("keeps the %s backdrop until the first screen fades in", async (choice, backdrop) => {
+  const { root, animation } = loadPage("Electron/45", false, choice);
   const background = () => window.getComputedStyle(document.body).backgroundColor;
-  expect(background()).toBe("rgb(0, 0, 0)");
+  expect(background()).toBe(backdrop);
   fadeInDesktopWindow(root);
   root.append(document.createElement("div"));
   await Promise.resolve();
   expect(root.animate).not.toHaveBeenCalled();
-  expect(background()).toBe("rgb(0, 0, 0)");
+  expect(background()).toBe(backdrop);
 
   renderScreen(root);
   await vi.waitFor(() => expect(root.animate).toHaveBeenCalledWith([
     { opacity: 0 }, { opacity: 1 },
   ], expect.objectContaining({ duration: 200 })));
-  expect(background()).toBe("rgb(0, 0, 0)");
+  expect(background()).toBe(backdrop);
   animation.resolve();
   await animation.promise;
-  expect(background()).not.toBe("rgb(0, 0, 0)");
+  expect(background()).not.toBe(backdrop);
 });
 
 it("does not fade again after a reload or menu navigation", async () => {
@@ -86,3 +90,11 @@ it.each([["Chrome/146", false], ["Electron/45", true]])(
     expect(window.getComputedStyle(document.body).backgroundColor).not.toBe("rgb(0, 0, 0)");
   },
 );
+
+it("uses the desktop preference before the screen paints on a new origin", () => {
+  const load = vi.fn().mockReturnValue("light");
+  Object.assign(window, { yoplaiDesktopTheme: { load } });
+  loadPage("Electron/45", false, "dark");
+  expect(load).toHaveBeenCalledWith("dark");
+  expect(window.getComputedStyle(document.body).backgroundColor).toBe("rgb(255, 255, 255)");
+});

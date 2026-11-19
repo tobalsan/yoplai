@@ -13,7 +13,7 @@ function openSplash(mode: "splash" | "wait", reducedMotion = false) {
     url: `file:///splash.html?mode=${mode}`,
     runScripts: "dangerously",
     beforeParse(window) {
-      window.matchMedia = () => ({ matches: reducedMotion });
+      window.matchMedia = (query: string) => ({ matches: query.includes("reduced-motion") && reducedMotion, addEventListener: vi.fn() });
       window.requestAnimationFrame = (callback: FrameRequestCallback) => queue.push(callback);
       window.Path2D = class {
         moveTo() {}

@@ -21,7 +21,7 @@ export function fadeInDesktopWindow(root: HTMLElement): void {
       return;
     }
     const background = root.style.backgroundColor;
-    root.style.backgroundColor = "var(--bg-base)";
+    root.style.backgroundColor = "var(--desktop-first-screen)";
     const finish = () => {
       root.style.backgroundColor = background;
       restore();
