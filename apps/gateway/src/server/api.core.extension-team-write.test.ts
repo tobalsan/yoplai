@@ -130,8 +130,8 @@ extensions:
   });
 
   it.each([
-    { extensionId: settingsId, config: { label: "$env:" }, field: "label" },
-    { extensionId: settingsId, config: { groups: [{ label: "$env:" }] }, field: "groups[0].label" },
+    { extensionId: settingsId, config: { label: "$env:ALG_724_TEST_LABEL" }, field: "label" },
+    { extensionId: settingsId, config: { groups: [{ label: "$env:ALG_724_TEST_GROUP_LABEL" }] }, field: "groups[0].label" },
     { extensionId: connectionId, config: { token: "$env:" }, field: "token" },
   ])("rejects a reserved environment reference in $field before writing", async ({ extensionId, config, field }) => {
     const before = await readAgentYaml();
