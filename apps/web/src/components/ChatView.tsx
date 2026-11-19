@@ -29,6 +29,7 @@ import {
   untrack,
 } from "solid-js";
 
+import type { Component, JSX } from "solid-js";
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { ScheduleAlertsBanner } from "./ScheduleAlertsBanner";
@@ -114,7 +115,7 @@ type DropZone = "history" | "composer" | "attach";
 
 export { ThinkingLine } from "./chat/ChatBlocks";
 
-export function ChatView() {
+export function ChatView(props: { children?: JSX.Element; shell?: Component<{ toolbar: JSX.Element; children: JSX.Element }> }) {
   const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
   const handleCodeCopy = (event: MouseEvent) => {
@@ -781,20 +782,8 @@ export function ChatView() {
     prefillSuggestion(message);
   });
 
-  return (
-    <DashboardAnnotationsContext.Provider value={annotations}>
-    <div
-      ref={chatViewRef}
-      class="chat-view"
-      onClick={handleCodeCopy}
-      classList={{
-        "drop-active": isFileDragActive(),
-        "hero-mode": heroPhase() !== "off",
-        "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
-      }}
-    >
-      <div class="chat-main">
-      <header class="header">
+  const toolbar = () => (
+      <div class="chat-toolbar">
         <A
           href={projectId() ? `/p/${projectId()}` : "/agents"}
           class="back-btn"
@@ -829,6 +818,13 @@ export function ChatView() {
           <div class="agent-info-text">
             <div class="agent-title-row">
               <div class="agent-name">{agent()?.name ?? "Loading..."}<RemoteAgentMark gateway={agent()?.gateway} /></div>
+              <span
+                class="status-dot"
+                classList={{ active: isStreaming() }}
+                role="img"
+                aria-label={isStreaming() ? "Thinking" : "Online"}
+                title={isStreaming() ? "Thinking" : "Online"}
+              />
               <Show when={project()}>
                 {(proj) => (
                   <A href={`/p/${projectId()}`} class="chat-project-chip">
@@ -838,18 +834,9 @@ export function ChatView() {
                 )}
               </Show>
             </div>
-            <div class="agent-status">
-              <span class="status-dot" classList={{ active: isStreaming() }} />
-              <span class="status-text">
-                {isStreaming() ? "thinking" : "online"}
-              </span>
-              <Show when={agent()?.description}>
-                <span class="agent-description-sep">&middot;</span>
-                <span class="agent-description-inline">
-                  {agent()!.description}
-                </span>
-              </Show>
-            </div>
+            <Show when={agent()?.description}>
+              <span class="agent-description-inline">{agent()!.description}</span>
+            </Show>
           </div>
           <button
             type="button"
@@ -889,6 +876,7 @@ export function ChatView() {
         <Show when={isOAuth() && canUseFullView()}>
           <select
             class="think-dropdown"
+            aria-label="Thinking level"
             value={thinkingLevel() ?? ""}
             onChange={(e) => {
               const val = e.currentTarget.value;
@@ -945,7 +933,24 @@ export function ChatView() {
           <span class="new-chat-label">New chat</span>
         </button>
         <ChatSettingsMenu agentId={params.agentId} settingsAgentId={settingsAgentId()} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
-      </header>
+      </div>
+  );
+
+  const body = () => (
+    <div
+      ref={chatViewRef}
+      class="chat-view"
+      onClick={handleCodeCopy}
+      classList={{
+        "drop-active": isFileDragActive(),
+        "hero-mode": heroPhase() !== "off",
+        "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
+      }}
+    >
+      <div class="chat-main">
+      <Show when={!props.shell}>
+        <header class="standalone-chat-bar">{toolbar()}</header>
+      </Show>
 
       <Show when={firstChat.failed() || missingModel()}>
         <div class="desktop-chat-repair">
@@ -1245,6 +1250,12 @@ export function ChatView() {
 
       <style>{chatViewStyles}</style>
     </div>
+  );
+
+  const Shell = props.shell;
+  return (
+    <DashboardAnnotationsContext.Provider value={annotations}>
+      {Shell ? <Shell toolbar={toolbar()}>{body()}</Shell> : body()}
     </DashboardAnnotationsContext.Provider>
   );
 }

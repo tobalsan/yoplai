@@ -59,7 +59,6 @@ function mount() {
             <>
               <AgentSidebar
                 collapsed={() => false}
-                onToggleCollapse={() => {}}
               />
               <TurnNotifier enabled={true} />
             </>

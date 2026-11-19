@@ -46,7 +46,6 @@ import { AgentAvatarFill } from "./AgentAvatarFill";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
-  onToggleCollapse: () => void;
 };
 
 const LazySidebarAccountPanel = lazy(
@@ -447,6 +446,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
         </div>
       )}</Show>
       <div class="agent-sidebar-shell">
+        <Show when={!desktopWindow || capabilities.branding?.logo}>
         <div class="sidebar-header">
           <Show when={!desktopWindow || capabilities.branding?.logo}>
             <A class="sidebar-logo" href="/" aria-label={desktopWindow ? capabilities.branding?.name ?? "Yoplai" : undefined}>
@@ -469,17 +469,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
               </Show>
             </A>
           </Show>
-          <Show when={import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true"}>
-            <span class="dev-badge">DEV</span>
-          </Show>
-          <button
-            class="collapse-btn"
-            type="button"
-            onClick={props.onToggleCollapse}
-          >
-            «
-          </button>
         </div>
+        </Show>
         <div class="sidebar-content">
           <nav class="sidebar-nav" aria-label="Primary">
             <button type="button" class="nav-link sidebar-search" aria-label="Search" title="Search (Cmd/Ctrl+K)" onClick={openSessionSearch}>
@@ -1068,35 +1059,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
           gap: 8px;
         }
 
-        .dev-badge {
-          background: #f59e0b;
-          color: #fff;
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 6px;
-          border-radius: 4px;
-          letter-spacing: 0.05em;
-          flex-shrink: 0;
-          transition: opacity 0.2s ease;
-        }
-
-        .collapse-btn {
-          margin-left: auto;
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
-          border: 1px solid var(--border-default);
-          background: var(--bg-surface);
-          color: var(--text-primary);
-          cursor: pointer;
-          flex-shrink: 0;
-        }
-
-        .collapse-btn:focus-visible {
-          outline: 2px solid rgba(59, 130, 246, 0.6);
-          outline-offset: 2px;
-        }
-
         .sidebar-content {
           flex: 1;
           min-height: 0;
@@ -1595,8 +1557,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
         .agent-sidebar.collapsed .logo-full,
         .agent-sidebar.collapsed .nav-full,
-        .agent-sidebar.collapsed .dev-badge,
-        .agent-sidebar.collapsed .collapse-btn,
         .agent-sidebar.collapsed .theme-label,
         .agent-sidebar.collapsed .sidebar-recent {
           display: none;
@@ -1633,8 +1593,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
         /* Hover to expand: restore full content */
         .agent-sidebar.collapsed:is(:hover, .menu-open) .logo-full,
         .agent-sidebar.collapsed:is(:hover, .menu-open) .nav-full,
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .dev-badge,
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .collapse-btn,
         .agent-sidebar.collapsed:is(:hover, .menu-open) .theme-label,
         .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-recent {
           display: revert;
@@ -1665,58 +1623,22 @@ export function AgentSidebar(props: AgentSidebarProps) {
           justify-content: unset;
         }
 
-        .desktop-window .agent-sidebar .agent-sidebar-shell .sidebar-header {
-          box-sizing: border-box;
-          height: 36px;
-          flex-shrink: 0;
-          padding: 4px 10px 4px var(--desktop-buttons-width);
-          -webkit-app-region: drag;
-        }
-
-        .desktop-window .agent-sidebar.collapsed:not(:hover, .menu-open) .sidebar-header {
-          padding: 0;
-        }
-
-        .desktop-window .agent-sidebar.collapsed:not(:hover, .menu-open) .sidebar-logo {
-          display: none;
-        }
-
         @media (max-width: 768px) {
           .agent-sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
+            position: absolute;
+            inset: 0 auto 0 0;
             width: 280px;
             min-width: 280px;
             height: 100%;
-            height: 100dvh;
-            z-index: 850;
-            transform: translateX(0);
-            transition: transform 0.2s ease;
-          }
-
-          .desktop-window .agent-sidebar .sidebar-header {
-            margin-bottom: 58px;
           }
 
           .agent-sidebar-shell {
-            width: 100%;
             box-shadow: 12px 0 24px var(--shadow-md);
           }
+        }
 
-          .agent-sidebar.collapsed {
-            width: 280px;
-            min-width: 280px;
-            transform: translateX(-100%);
-          }
-
-          .agent-sidebar.collapsed .agent-sidebar-shell,
-          .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
-            position: relative;
-            inset: auto;
-            width: 100%;
-            box-shadow: none;
-          }
+        @media (prefers-reduced-motion: reduce) {
+          .agent-sidebar-shell { transition: none; }
         }
       `}</style>
     </aside>

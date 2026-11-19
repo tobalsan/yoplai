@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { within, waitFor } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { ProjectsBoard } from "./ProjectsBoard";
+import { setSidebarCollapsedPersistent } from "../lib/layout";
 import { getSessionKey } from "../api/chat";
 
 const { navigate } = vi.hoisted(() => {
@@ -73,7 +74,10 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 
-vi.mock("../lib/capabilities", () => ({ isExtensionEnabled: () => true }));
+vi.mock("../lib/capabilities", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/capabilities")>(),
+  isExtensionEnabled: () => true,
+}));
 
 vi.mock("@solidjs/router", () => ({
   useSearchParams: () => [{}, () => {}],
@@ -100,6 +104,17 @@ afterEach(() => {
 });
 
 describe("ProjectsBoard context panel navigation", () => {
+  it("puts the sidebar toggle and filter in the same toolbar", () => {
+    setSidebarCollapsedPersistent(false);
+    dispose = render(() => <ProjectsBoard />, container);
+    const page = within(container);
+    const toolbar = within(page.getByRole("banner"));
+    expect(toolbar.getByRole("textbox", { name: "Filter projects" })).toBeTruthy();
+    page.getByRole("button", { name: "Toggle sidebar", expanded: true }).click();
+    expect(toolbar.getByRole("button", { name: "Toggle sidebar", expanded: false })).toBeTruthy();
+    setSidebarCollapsedPersistent(false);
+  });
+
   it("opens a directory agent's current session on the main chat page", async () => {
     localStorage.setItem("yoplai:sessionKey:PRO-lead/one", "existing-session");
     dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
