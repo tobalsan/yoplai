@@ -48,6 +48,10 @@ Breaking changes are marked **⚠ BREAKING**.
 - The desktop app uses the new Yoplai icon in the Dock.
 - The desktop sidebar header omits the brand text. The browser sidebar keeps it.
 - The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.
+- The desktop wizard keeps its footer visible. Searchable pickers replace the provider and model selects. Free models show a Free badge.
+- A full-width toolbar holds the sidebar toggle on each page. The sidebar starts below it. The chat status is a dot after the agent name.
+- A context ring in the composer replaces the context usage text.
+- The theme setting offers Light, Dark, and System. System is the default and follows the OS appearance.
 - The setup wordmark shows YOPLAI with no period. The splash keeps its period.
 
 - Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.
