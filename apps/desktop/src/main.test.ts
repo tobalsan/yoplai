@@ -6,9 +6,11 @@ import type { BrowserWindowConstructorOptions, MenuItemConstructorOptions } from
 import type { Stack, StackHooks } from "./stack.js";
 import { RESTART_URL } from "./links.js";
 
-const storage = vi.hoisted(() => ({ root: "" }));
+const storage = vi.hoisted(() => ({ root: "", packaged: true }));
 const desktop = vi.hoisted(() => ({
   options: vi.fn(),
+  setPath: vi.fn(),
+  whenReady: vi.fn(async () => {}),
   menu: vi.fn((template: MenuItemConstructorOptions[]) => ({
     getMenuItemById: (id: string) => (template[0].submenu as MenuItemConstructorOptions[]).find((item) => item.id === id),
   })),
@@ -26,12 +28,13 @@ const desktop = vi.hoisted(() => ({
 vi.mock("electron", () => ({
   app: {
     name: "Yoplai",
-    isPackaged: true,
+    get isPackaged() { return storage.packaged; },
+    setPath: desktop.setPath,
     requestSingleInstanceLock: () => true,
     getPath: (name: string) => path.join(storage.root, name),
     on: desktop.onAppEvent,
     exit: desktop.exit,
-    whenReady: async () => {},
+    whenReady: desktop.whenReady,
   },
   BrowserWindow: class {
     constructor(options: BrowserWindowConstructorOptions) { desktop.options(options); }
@@ -54,6 +57,7 @@ const signals = ["SIGINT", "SIGTERM"] as const;
 let previous: Set<NodeJS.SignalsListener>;
 
 beforeEach(async () => {
+  storage.packaged = true;
   vi.resetModules();
   vi.clearAllMocks();
   desktop.loadFile.mockReset().mockResolvedValue(undefined);
@@ -64,6 +68,7 @@ beforeEach(async () => {
   vi.stubEnv("HOME", path.join(storage.root, "home"));
   vi.stubEnv("YOPLAI_HOME", path.join(storage.root, "yoplai"));
   vi.stubEnv("YOPLAI_SPLASH_STATS", "");
+  vi.stubEnv("YOPLAI_DESKTOP_FRESH", undefined);
   await fs.mkdir(process.env.HOME!);
   previous = new Set(signals.flatMap((signal) => process.listeners(signal)));
 });
@@ -245,4 +250,20 @@ it("reads the splash checkbox at start and saves its new value for the next star
   option.click?.({ checked: true } as never, undefined, {} as never);
   expect(JSON.parse(await fs.readFile(preferences, "utf8"))).toEqual({ splash: true });
   expect(desktop.loadFile).toHaveBeenCalledTimes(1);
+});
+
+
+it.each(["persistent", "fresh"])("sets separate storage paths before Electron is ready in %s mode", async (mode) => {
+  storage.packaged = false;
+  vi.stubEnv("YOPLAI_DESKTOP_FRESH", mode === "fresh" ? "1" : undefined);
+  vi.stubEnv("YOPLAI_DESKTOP_DEV_PARENT", storage.root);
+  await import("./main.js");
+  await vi.waitFor(() => expect(desktop.loadURL).toHaveBeenCalledWith(uiUrl));
+  const userData = desktop.setPath.mock.calls.find(([name]) => name === "userData")?.[1];
+  expect(userData).toMatch(mode === "fresh" ? /yoplai-desktop-[^/]+\/userData$/ : /Yoplai Dev\/[a-f0-9]{64}$/);
+  expect(desktop.setPath).toHaveBeenCalledWith("sessionData", userData);
+  expect(Math.max(...desktop.setPath.mock.invocationCallOrder)).toBeLessThan(desktop.whenReady.mock.invocationCallOrder[0]);
+  const plan = desktop.start.mock.calls[0][0].createPlan({ gatewayPort: 4001, uiPort: 3001, appsPort: 4002 });
+  const home = plan.children[0].env.YOPLAI_HOME!;
+  expect(JSON.parse(await fs.readFile(path.join(home, "yoplai.json"), "utf8")).version).toBe(3);
 });

@@ -34,9 +34,13 @@ export function isTrustedExternalOAuthModel(model: AnyModel): boolean {
 
 type Keychain = { exists(): Promise<boolean>; read(): Promise<string> };
 const run = promisify(execFile);
+function allowsSystemKeychain(): boolean {
+  return os.platform() === "darwin" && (process.env.YOPLAI_DEV !== "1" || process.env.YOPLAI_DESKTOP_KEYCHAIN === "1");
+}
+
 const systemKeychain: Keychain = {
   async exists() {
-    if (process.platform !== "darwin" || process.env.YOPLAI_DEV === "1") return false;
+    if (!allowsSystemKeychain()) return false;
     try {
       await run("/usr/bin/security", ["find-generic-password", "-s", keychainService], { timeout: 5000 });
       return true;
@@ -45,7 +49,7 @@ const systemKeychain: Keychain = {
     }
   },
   async read() {
-    if (process.platform !== "darwin" || process.env.YOPLAI_DEV === "1") throw new Error("Access denied");
+    if (!allowsSystemKeychain()) throw new Error("Access denied");
     const { stdout } = await run("/usr/bin/security", ["find-generic-password", "-s", keychainService, "-w"], { timeout: 60_000 });
     return stdout;
   },
