@@ -127,6 +127,7 @@
 .setup-wizard input, .setup-wizard select { min-width: 0; width: 100%; padding: .65em 1em; border: 1px solid var(--setup-field-line); border-radius: 12px; color: var(--setup-ink); background: var(--setup-card); color-scheme: var(--setup-scheme); font-weight: 400; }
 .setup-wizard input::placeholder { color: var(--setup-placeholder); }
 .setup-suggestions { display: flex; gap: 10px; padding: 4px 0; margin-top: 10px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--setup-scrollbar) var(--setup-card); }
+.setup-window .setup-suggestions { scrollbar-width: none; }
 .setup-wizard .setup-suggestions .setup-outline { flex: none; font-size: clamp(12px, 1.08vw, 17px); }
 .setup-agent .setup-primary { margin-top: clamp(20px, 5.6vh, 56px); }
 .setup-link .remote-gateways { text-align: left; }

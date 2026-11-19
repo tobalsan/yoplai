@@ -9,12 +9,13 @@ export function startupColor(choice: ThemeChoice | undefined, systemDark: boolea
 }
 
 function isCurrentFrame(contents: WebContents, frame: WebFrameMain | null, origin: string | undefined): boolean {
-  if (!origin || !frame || frame.detached || frame !== contents.mainFrame) return false;
+  if (!origin || !frame || frame.detached || frame !== contents.mainFrame || frame.origin !== origin) return false;
   return URL.parse(frame.url)?.origin === origin && URL.parse(contents.getURL())?.origin === origin;
 }
 
 export function createDesktopTheme(userData: string, nativeTheme: NativeTheme) {
-  let preference = readThemePreference(userData);
+  let savedPreference = readThemePreference(userData);
+  let preference = savedPreference;
   nativeTheme.themeSource = preference ?? "system";
   const background = () => startupColor(preference, nativeTheme.shouldUseDarkColors);
 
@@ -31,6 +32,7 @@ export function createDesktopTheme(userData: string, nativeTheme: NativeTheme) {
     contents.on("did-frame-navigate", (_event, _url, _code, _status, isMainFrame) => {
       if (isMainFrame) pendingNavigation = false;
     });
+    contents.on("did-stop-loading", () => { pendingNavigation = false; });
     contents.ipc.on("desktop-theme", (event, action: unknown, choice: unknown) => {
       if (pendingNavigation || !isCurrentFrame(contents, event.senderFrame, activeOrigin())
         || (action !== "load" && action !== "save") || !isThemeChoice(choice)) {
@@ -38,12 +40,15 @@ export function createDesktopTheme(userData: string, nativeTheme: NativeTheme) {
         return;
       }
       const next = action === "load" && preference !== undefined ? preference : choice;
-      if (preference !== next) {
+      if (savedPreference !== next) {
         try {
           writeThemePreference(userData, next);
+          savedPreference = next;
         } catch {
           console.error("[desktop] Cannot save the theme preference.");
         }
+      }
+      if (preference !== next) {
         preference = next;
         nativeTheme.themeSource = next;
         updateBackground();

@@ -20,7 +20,7 @@ function harness(userData: string) {
   const theme = createDesktopTheme(userData, native as unknown as NativeTheme);
   const origin = "http://127.0.0.1:7000";
   let activeOrigin = origin;
-  const frame = { url: `${origin}/setup`, detached: false };
+  const frame = { url: `${origin}/setup`, origin, detached: false };
   const contents = Object.assign(new EventEmitter(), { mainFrame: frame, getURL: () => frame.url, ipc: new EventEmitter() });
   const win = Object.assign(new EventEmitter(), { webContents: contents, setBackgroundColor: vi.fn() });
   theme.attach(win as unknown as BrowserWindow, () => activeOrigin);
@@ -53,6 +53,35 @@ it("imports the first choice and rejects messages from other frames and navigati
   frame.url = origin;
   setOrigin("http://127.0.0.1:7001");
   expect(send("save", "dark")).toBeNull();
+  expect(readThemePreference(userData)).toBe("light");
+}));
+
+it("rejects an opaque origin even when the top frame has the active UI URL", () => withProfile((userData) => {
+  const { frame, send } = harness(userData);
+  frame.origin = "null";
+  expect(send("load", "light")).toBeNull();
+  expect(send("save", "dark")).toBeNull();
+  expect(readThemePreference(userData)).toBeUndefined();
+}));
+
+it("saves from the current page after a navigation stops without a commit", () => withProfile((userData) => {
+  const { contents, send } = harness(userData);
+  contents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+  expect(send("save", "light")).toBeNull();
+  contents.emit("did-stop-loading");
+  expect(send("save", "light")).toBe("light");
+  expect(readThemePreference(userData)).toBe("light");
+}));
+
+it("uses the new theme and retries the same choice after a failed write", () => withProfile((userData) => {
+  const { native, send } = harness(userData);
+  const file = path.join(userData, "desktop-preferences.json");
+  fs.mkdirSync(file);
+  expect(send("save", "light")).toBe("light");
+  expect(native.themeSource).toBe("light");
+  expect(readThemePreference(userData)).toBeUndefined();
+  fs.rmdirSync(file);
+  expect(send("save", "light")).toBe("light");
   expect(readThemePreference(userData)).toBe("light");
 }));
 
