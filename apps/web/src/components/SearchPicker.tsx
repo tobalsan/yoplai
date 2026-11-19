@@ -31,6 +31,7 @@ export function SearchPicker(props: {
   const [expanded, setExpanded] = createSignal<string>();
   const groups = createMemo(() => started() ? props.groups(query(), expanded()) : []);
   const rows = createMemo(() => groups().flatMap((group) => group.rows));
+  const selectedRow = createMemo(() => rows().find((row) => row.value !== undefined && row.value === props.selected));
   const rowId = (row: string) => `${id}-${encodeURIComponent(row)}`;
   let trigger!: HTMLButtonElement;
   let panel!: HTMLDivElement;
@@ -42,14 +43,18 @@ export function SearchPicker(props: {
   const position = (event?: Event) => {
     if (event?.target === list) return;
     const rect = trigger.getBoundingClientRect();
-    const below = window.innerHeight - rect.bottom - 64;
-    const above = rect.top - 48;
-    const up = below < 284 && above > below;
-    panel.dataset.side = up ? "above" : "below";
+    const gap = 6;
+    const below = window.innerHeight - rect.bottom - 64 - gap;
+    const above = rect.top - 48 - gap;
     panel.style.setProperty("--picker-width", `${rect.width}px`);
     panel.style.setProperty("--picker-left", `${rect.left}px`);
-    panel.style.setProperty("--picker-edge", `${up ? window.innerHeight - rect.top + 6 : rect.bottom + 6}px`);
-    panel.style.setProperty("--picker-space", `${Math.max(80, (up ? above : below) - 6)}px`);
+    const scrollTop = list.scrollTop;
+    panel.style.removeProperty("--picker-space");
+    const up = panel.offsetHeight > below && above > below;
+    panel.dataset.side = up ? "above" : "below";
+    panel.style.setProperty("--picker-edge", `${up ? window.innerHeight - rect.top + gap : rect.bottom + gap}px`);
+    panel.style.setProperty("--picker-space", `${Math.max(80, up ? above : below)}px`);
+    list.scrollTop = scrollTop;
   };
   const contains = (target: EventTarget | null) => target instanceof Node && (trigger.contains(target) || panel.contains(target));
   const dismiss = (event: Event) => { if (!contains(event.target)) close(); };
@@ -83,12 +88,12 @@ export function SearchPicker(props: {
     setExpanded(undefined);
     setStarted(true);
     setOpen(true);
-    position();
     panel.style.display = "flex";
     panel.showPopover?.();
+    position();
     input.focus({ preventScroll: true });
     list.scrollTop = 0;
-    moveTo(last ? rows().at(-1) : rows().find((row) => row.value === props.selected && row.value !== undefined) ?? rows()[0]);
+    moveTo(last ? rows().at(-1) : selectedRow() ?? rows()[0]);
     document.addEventListener("pointerdown", dismiss);
     document.addEventListener("focusin", dismiss);
     window.addEventListener("resize", position);
@@ -97,6 +102,7 @@ export function SearchPicker(props: {
   const choose = (row?: PickerRow) => {
     if (row?.expand !== undefined) {
       setExpanded(expanded() === row.expand ? undefined : row.expand);
+      position();
       moveTo(row);
     } else if (row?.value !== undefined) {
       props.onSelect(row.value);
@@ -127,6 +133,7 @@ export function SearchPicker(props: {
             const value = event.currentTarget.value;
             setQuery(value);
             props.onQuery?.(value);
+            position();
             list.scrollTop = 0;
             moveTo(rows()[0]);
           }}
@@ -154,10 +161,10 @@ export function SearchPicker(props: {
           <Show when={group.label}><div class="search-picker-group" aria-hidden="true">{group.label}</div></Show>
           <For each={group.rows}>{(row) => <div id={rowId(row.id)} role="option" class="search-picker-row"
             classList={{ "search-picker-active": active() === row.id, "search-picker-child": expanded() !== undefined && group.id === expanded() && row.value !== undefined && !query().trim() }}
-            aria-selected={row.value === undefined ? undefined : row.value === props.selected}
+            aria-selected={row.value === undefined ? undefined : row.id === selectedRow()?.id}
             onMouseDown={(event) => event.preventDefault()} onClick={() => choose(row)}>
             {row.content}
-            <Show when={row.value !== undefined && row.value === props.selected}><i class="fa-solid fa-check search-picker-check" aria-hidden="true" /></Show>
+            <Show when={row.id === selectedRow()?.id}><i class="fa-solid fa-check search-picker-check" aria-hidden="true" /></Show>
           </div>}</For>
         </div>}</For>
       </div>

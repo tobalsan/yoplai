@@ -18,7 +18,7 @@
 .search-picker-chevron, .search-picker-muted, .search-picker-group { color: var(--text-secondary); }
 .search-picker-panel {
   position: fixed; inset: auto; top: var(--picker-edge); left: var(--picker-left); margin: 0;
-  width: var(--picker-width); max-height: min(344px, 37vh, var(--picker-space));
+  width: var(--picker-width); max-height: min(344px, 37vh, var(--picker-space, 344px));
   flex-direction: column; padding: 4px; overflow: hidden; text-align: left;
   transform-origin: top center; opacity: 0; transform: translateY(-4px);
   transition: opacity 90ms ease-in, transform 90ms ease-in, display 90ms allow-discrete, overlay 90ms allow-discrete;
