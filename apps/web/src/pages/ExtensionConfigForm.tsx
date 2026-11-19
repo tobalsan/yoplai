@@ -113,11 +113,7 @@ export function ExtensionConfigForm(props: {
     if (current.personalSecretFields !== undefined) setCredentialScope(preferredScope(scopeStatus()));
   });
 
-  // Non-admins may view, but not change, the admin-managed team credentials.
-  const teamReadOnly = () => {
-    const current = entry();
-    return credentialScope() === "team" && (current?.personalSecretFields !== undefined || !!current?.oauth) && current?.canConfigureTeam === false;
-  };
+  const teamReadOnly = () => credentialScope() === "team" && entry().canConfigureTeam === false;
   const teamConfigured = () => {
     const current = entry();
     return !!current && fields().some((field) => field.secret && current.configValues[field.name] != null);
@@ -280,7 +276,7 @@ export function ExtensionConfigForm(props: {
   /** Validates and saves the form; returns the refreshed catalog entry. Throws with a user-facing message. */
   const submit = async (): Promise<ExtensionCatalogEntry | undefined> => {
     const current = entry();
-    if (!current) return undefined;
+    if (!current || teamReadOnly()) return undefined;
 
     const formFields = fields();
     // Guard required fields client-side so a blank required secret doesn't
@@ -357,7 +353,7 @@ export function ExtensionConfigForm(props: {
 
   const formBody = () => (
     <>
-    <Show when={!teamReadOnly() || teamConfigured() || !!entry().oauth}>
+    <Show when={!teamReadOnly() || teamConfigured() || !!entry().oauth || !fields().some((field) => field.secret)}>
     <For each={baseFields()}>{renderField}</For>
 
     <Show when={advancedFields().length > 0}>
@@ -425,7 +421,7 @@ export function ExtensionConfigForm(props: {
       </Show>
     </div>
     </Show>
-    <Show when={teamReadOnly() && entry().oauth}>
+    <Show when={teamReadOnly() && (entry().oauth || entry().personalSecretFields === undefined)}>
       <p class="ext-config-scope-note">These settings are managed by an admin.</p>
     </Show>
     <Show when={error()}>

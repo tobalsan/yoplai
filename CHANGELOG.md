@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- In multi-user mode, shared extension settings and Enable/Disable controls require an agent manager. Shared settings accept literal values, and extensions still accept credentials through their declared secret fields.
 - Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
 - Upgrade Pi packages to 1.5.2; codemode scripts now wait for a free worker instead of failing immediately when both workers are busy. Rebuild the sandbox image after upgrading.
 - **⚠ BREAKING** `yoplai connect <url>` with no `--token` needs the running local gateway and uses a browser sign-in (or links at once to a remote with no sign-in). Use `--token` for the old behavior.

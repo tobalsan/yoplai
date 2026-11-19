@@ -71,6 +71,18 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
   });
   const running = { child, port, home, output: () => output };
   started.push(running);
+  // READY can arrive before the HTTP listener accepts connections.
+  await until(async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/capabilities`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      await response.body?.cancel();
+      return response.status === 200;
+    } catch {
+      return false;
+    }
+  });
   return running;
 }
 
@@ -410,7 +422,7 @@ describe("browser link between two real gateways", () => {
     const plain = await startGateway("plain", "local");
     const plainBase = `http://127.0.0.1:${plain.port}`;
     const response = await startLink("open", undefined, plainBase);
-    expect(response.status).toBe(200);
+    expect(response.status, response.status === 200 ? undefined : `${await response.text()}\n${plain.output()}`).toBe(200);
     expect(await json(response)).toEqual({ status: "linked", name: "open" });
     const saved = JSON.parse(await fs.readFile(localStorePath, "utf8")) as Array<{ name: string; url: string; token?: string; managed?: unknown }>;
     const open = saved.find((item) => item.name === "open");
