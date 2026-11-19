@@ -156,14 +156,17 @@ function Layout(props: { children?: JSX.Element }) {
           --desktop-buttons-width: 88px;
           --desktop-buttons-height: 40px;
         }
-        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window {
-          --desktop-header-region: no-drag;
+        /* Electron reads only a literal app-region value, not var(). */
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window *,
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window::before,
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window *::before {
+          -webkit-app-region: no-drag !important;
         }
         .desktop-window:not(.desktop-wizard, :has(.left-nav-shell))::before {
           content: "";
           flex: 0 0 8px;
           margin-inline-start: var(--desktop-buttons-width);
-          -webkit-app-region: var(--desktop-header-region, drag);
+          -webkit-app-region: drag;
         }
         .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
           -webkit-app-region: no-drag;
