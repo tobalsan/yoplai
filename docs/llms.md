@@ -578,6 +578,9 @@ without `allow-same-origin`. Existing viewer access, sandbox CSP and publication
 rules still apply; `frame-ancestors 'self'` restricts embedding to the chat origin.
 The header offers title, Open and Expand/Collapse without a URL toolbar.
 
+On narrow screens, the open app view covers the chat toolbar so the tabs and close buttons stay available.
+The More chat controls button opens a group with the taskboard, thinking level, view mode, and device controls when available.
+
 Annotation mode: the `/d/:id` route injects `assets/annotate.js` inline (page
 identity in its `data-annotation`) only when the viewer `canWrite` the entry and
 has agent access; the script does nothing at top level. Framed, it posts

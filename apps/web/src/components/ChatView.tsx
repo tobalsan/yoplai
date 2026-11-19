@@ -6,6 +6,7 @@ import type { McpAppViewReference } from "@yoplai/shared/types";
 import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
+import { ChatToolbarOverflow } from "./chat/ChatToolbarOverflow";
 import { ContextUsageRing } from "./chat/ContextUsageRing";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
@@ -852,66 +853,71 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
             <i class={notificationSoundEnabled() ? "fa-solid fa-bell" : "fa-solid fa-bell-slash"} aria-hidden="true" />
           </button>
         </div>
-        <Show when={isExtensionEnabled("projects")}>
-          <A
-            class="taskboard-btn"
-            href="/projects"
-            aria-label="Open taskboard"
-            title="Tasks"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-            </svg>
-          </A>
-        </Show>
-        <Show when={isOAuth() && canUseFullView()}>
-          <select
-            class="think-dropdown"
-            aria-label="Thinking level"
-            value={thinkingLevel() ?? ""}
-            onChange={(e) => {
-              const val = e.currentTarget.value;
-              session.selectThinking(val ? (val as ThinkLevel) : null);
-            }}
-          >
-            <option value="">Default</option>
-            <option value="off">Off</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">XHigh</option>
-          </select>
-        </Show>
-        <Show when={canUseFullView()}>
-          <div class="view-toggle">
-            <button
-              class="toggle-btn"
-              classList={{ active: viewMode() === "simple" }}
-              onClick={() => handleViewChange("simple")}
-            >
-              Simple
-            </button>
-            <button
-              class="toggle-btn"
-              classList={{ active: viewMode() === "full" }}
-              onClick={() => handleViewChange("full")}
-            >
-              Full
-            </button>
-          </div>
-        </Show>
-        <Show when={agent()?.gateway}>
-          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
+        <Show when={isExtensionEnabled("projects") || canUseFullView() || agent()?.gateway}>
+          <ChatToolbarOverflow>
+            <Show when={isExtensionEnabled("projects")}>
+              <A
+                class="taskboard-btn"
+                href="/projects"
+                aria-label="Open taskboard"
+                title="Tasks"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+                </svg>
+                <span class="chat-overflow-label">Open taskboard</span>
+              </A>
+            </Show>
+            <Show when={isOAuth() && canUseFullView()}>
+              <select
+                class="think-dropdown"
+                aria-label="Thinking level"
+                value={thinkingLevel() ?? ""}
+                onChange={(e) => {
+                  const val = e.currentTarget.value;
+                  session.selectThinking(val ? (val as ThinkLevel) : null);
+                }}
+              >
+                <option value="">Default</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">XHigh</option>
+              </select>
+            </Show>
+            <Show when={canUseFullView()}>
+              <div class="view-toggle">
+                <button
+                  class="toggle-btn"
+                  classList={{ active: viewMode() === "simple" }}
+                  onClick={() => handleViewChange("simple")}
+                >
+                  Simple
+                </button>
+                <button
+                  class="toggle-btn"
+                  classList={{ active: viewMode() === "full" }}
+                  onClick={() => handleViewChange("full")}
+                >
+                  Full
+                </button>
+              </div>
+            </Show>
+            <Show when={agent()?.gateway}>
+              {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
+            </Show>
+          </ChatToolbarOverflow>
         </Show>
         <button
           class="new-chat-btn"

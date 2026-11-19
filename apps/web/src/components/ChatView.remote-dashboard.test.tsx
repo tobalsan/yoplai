@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, getByRole, getByTitle, queryByTitle, waitFor } from "@testing-library/dom";
+import { fireEvent, getByRole, getByTitle, queryByRole, queryByTitle, waitFor } from "@testing-library/dom";
 import { Route, Router } from "@solidjs/router";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView } from "./ChatView";
@@ -134,6 +134,38 @@ describe("captured dashboard in a chat", () => {
 });
 
 describe("remote dashboard in a chat", () => {
+  it("offers secondary controls in the narrow chat toolbar", async () => {
+    history.replaceState({}, "", "/chat/pom%40ams");
+    setCapabilitiesForTests({ multiUser: false, extensions: { projects: true } });
+    api.fetchAgent.mockResolvedValue({ id: "pom@ams", name: "Pom", gateway: "ams", authMode: "oauth" });
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    mountChat();
+    await waitFor(() => expect(getByRole(root, "combobox", { name: "Thinking level" })).toBeTruthy());
+    const setWidth = (width: number) => resize([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+    setWidth(330);
+    const more = getByRole(root, "button", { name: "More chat controls", expanded: false });
+    expect(queryByRole(root, "combobox", { name: "Thinking level" })).toBeNull();
+    expect(queryByRole(root, "link", { name: "Open taskboard" })).toBeNull();
+    expect(queryByRole(root, "button", { name: /^Device:/ })).toBeNull();
+    more.click();
+    expect(getByRole(root, "link", { name: "Open taskboard" }).getAttribute("href")).toBe("/projects");
+    const level = getByRole(root, "combobox", { name: "Thinking level" });
+    getByRole(root, "button", { name: /^Device:/ }).click();
+    expect(getByRole(root, "group", { name: "Device access" })).toBeTruthy();
+    level.focus();
+    fireEvent.keyDown(level, { key: "Escape" });
+    expect(document.activeElement).toBe(more);
+    expect(queryByRole(root, "combobox", { name: "Thinking level" })).toBeNull();
+    setWidth(1024);
+    expect(queryByRole(root, "button", { name: "More chat controls" })).toBeNull();
+    expect(getByRole(root, "combobox", { name: "Thinking level" })).toBeTruthy();
+  });
+
   it("opens the dashboard of a remote agent through the trusted host, with the gateway of the loaded agent", async () => {
     history.replaceState({}, "", `/chat/pom%40ams?dashboard=${ID}&new=1`);
     mountChat();

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, getByRole, getByTitle, queryByRole, waitFor } from "@testing-library/dom";
+import { fireEvent, getByRole, getByTitle, queryByRole, waitFor, within } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import App from "./App";
 import { resetCapabilitiesForTests } from "./lib/capabilities";
@@ -106,4 +106,15 @@ it("shows a visible failure with Reload on the public route when the gateway ref
   await waitFor(() => expect(getByRole(root, "alert").textContent).toContain("No linked gateway has this name."));
   fireEvent.click(getByRole(root, "button", { name: "Reload" }));
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([path]) => String(path) === "/api/relay/dashboard-views")).toHaveLength(2));
+});
+
+it("shows the Agents heading in the toolbar with the sidebar toggle", async () => {
+  history.replaceState({}, "", "/agents");
+  dispose = render(() => <App />, root);
+  await waitFor(() => {
+    const toolbar = within(getByRole(root, "banner"));
+    expect(toolbar.getByRole("heading", { name: "Agents", level: 1 })).toBeTruthy();
+    expect(toolbar.getByRole("button", { name: "Toggle sidebar" })).toBeTruthy();
+  });
+  expect(within(root).getAllByRole("heading", { name: "Agents", level: 1 })).toHaveLength(1);
 });
