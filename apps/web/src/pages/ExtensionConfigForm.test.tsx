@@ -92,11 +92,11 @@ function setSession(role: string | null) {
 let container: HTMLElement;
 let dispose: () => void;
 
-async function mount(agentId: string, extensionId: string) {
+async function mount(agentId: string, extensionId: string, scope?: "personal" | "team") {
   useParamsMock.mockReturnValue({ agentId, extensionId });
   // The details page loads the entry and hands it to the form.
   const entry = await fetchAgentExtensionMock(agentId, extensionId);
-  dispose = render(() => (entry ? <ExtensionConfigForm entry={entry} /> : null), container);
+  dispose = render(() => (entry ? <ExtensionConfigForm entry={entry} scope={scope} /> : null), container);
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -158,40 +158,70 @@ describe("ExtensionConfigForm", () => {
     );
   });
 
-  it("prefills existing config values and redacts existing secrets", async () => {
+  it("saves only the changed team setting alongside a reference and a masked secret", async () => {
     setSession("admin");
-    fetchAgentExtensionMock.mockResolvedValue(
-      exaEntry({
-        configJsonSchema: {
-          type: "object",
-          properties: {
-            apiKey: { type: "string" },
-            baseUrl: { type: "string" },
-          },
-          required: ["apiKey"],
+    const entry = exaEntry({
+      id: "canary-team",
+      configJsonSchema: {
+        type: "object",
+        properties: {
+          apiKey: { type: "string" },
+          baseUrl: { type: "string" },
+          label: { type: "string" },
         },
-        configValues: { apiKey: "********", baseUrl: "https://api.exa.ai" },
-      })
-    );
-    patchAgentExtensionMock.mockResolvedValue([exaEntry({ enabled: true })]);
-    await mount("scribe", "exa");
+        required: ["apiKey"],
+      },
+      configValues: { apiKey: "********", baseUrl: "$env:CANARY_BASE_URL", label: "Old label" },
+    });
+    fetchAgentExtensionMock.mockResolvedValue(entry);
+    patchAgentExtensionMock.mockResolvedValue([{ ...entry, enabled: true }]);
+    await mount("canary-agent", "canary-team");
 
     expect(container.querySelector<HTMLInputElement>("#ext-field-apiKey")?.value).toBe(
       "********"
     );
     expect(container.querySelector<HTMLInputElement>("#ext-field-baseUrl")?.value).toBe(
-      "https://api.exa.ai"
+      "$env:CANARY_BASE_URL"
     );
 
-    container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const label = container.querySelector<HTMLInputElement>("#ext-field-label")!;
+    label.value = "New label";
+    label.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // Unchanged settings are not resent, so `$env:` refs in agent.yaml survive.
-    expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "exa", {
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("canary-agent", "canary-team", {
       enabled: true,
-      config: {},
+      config: { label: "New label" },
       secrets: {},
     }, undefined);
+  });
+
+  it("saves personal OAuth settings without copying a team reference", async () => {
+    const entry = exaEntry({
+      id: "canary-oauth",
+      oauth: { provider: "canary-provider", scopes: [] },
+      requiredSecrets: [],
+      configJsonSchema: { properties: { region: { type: "string" }, label: { type: "string" } } },
+      configValues: { region: "$env:CANARY_REGION", label: "Team label" },
+    });
+    fetchAgentExtensionMock.mockResolvedValue(entry);
+    patchAgentExtensionMock.mockResolvedValue([{ ...entry, personalConfigValues: { label: "My label" } }]);
+    await mount("canary-agent", "canary-oauth", "personal");
+
+    expect(container.querySelector<HTMLInputElement>("#ext-field-region")?.value).toBe("$env:CANARY_REGION");
+    const label = container.querySelector<HTMLInputElement>("#ext-field-label")!;
+    label.value = "My label";
+    label.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(patchAgentExtensionMock).toHaveBeenCalledWith("canary-agent", "canary-oauth", {
+      credentialScope: "personal",
+      config: { label: "My label" },
+      secrets: {},
+    }, undefined);
+    expect(container.querySelector(".ext-config-saved")?.textContent).toBe("Saved ✓");
   });
 
   it("blocks submit and warns when a required field is blank", async () => {

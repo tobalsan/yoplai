@@ -422,29 +422,86 @@ describe("buildExtensionCatalog", () => {
     expect(entry?.tier).toBe("auto-form");
   });
 
-  it("surfaces current config values with secrets redacted and setting env refs resolved", async () => {
+  it("shows setting references and masks credentials in the catalog", async () => {
     await writeExternalExtension(root, "configured", {
       configJsonSchema:
-        '{ type: "object", properties: { apiKey: { type: "string" }, region: { type: "string" } } }',
+        '{ type: "object", properties: { apiKey: { type: "string" }, region: { type: "string" }, maxTokens: { type: "number" } } }',
       requiredSecrets: '["apiKey"]',
     });
     const agent = makeAgent({
       configured: {
         enabled: true,
-        apiKey: "$env:CONFIGURED_API_KEY",
-        region: "$env:CONFIGURED_REGION",
+        apiKey: "$env:CANARY_CATALOG_KEY",
+        region: "$env:CANARY_CATALOG_REGION",
+        maxTokens: 42,
+        token: "canary-channel-token",
+        appToken: "canary-app-token",
+        requireMention: false,
+        channels: [{ id: "channel-a", signingSecret: "canary-signing-secret", auth: { password: "canary-password" } }],
       },
     });
-    vi.stubEnv("CONFIGURED_API_KEY", "secret-value");
-    vi.stubEnv("CONFIGURED_REGION", "eu");
+    vi.stubEnv("CANARY_CATALOG_REGION", "canary-resolved-region");
     const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
     const entry = catalog.find((e) => e.id === "configured");
     vi.unstubAllEnvs();
 
-    // Non-secret settings show their value; secrets never do.
     expect(entry?.configValues).toEqual({
       apiKey: "********",
-      region: "eu",
+      region: "$env:CANARY_CATALOG_REGION",
+      maxTokens: 42,
+      token: "********",
+      appToken: "********",
+      requireMention: false,
+      channels: [{ id: "channel-a", signingSecret: "********", auth: { password: "********" } }],
+    });
+  });
+
+  it("uses raw settings even when runtime configuration has resolved them", async () => {
+    await writeExternalExtension(root, "configured");
+    const rawAgent = makeAgent({ configured: { region: "$env:CANARY_RAW_REGION" } });
+    const rawConfig = {
+      ...configWith(rawAgent, root),
+      extensions: { configured: { region: "canary-default", url: "$env:CANARY_RAW_URL" } },
+    };
+    const resolvedAgent = makeAgent({ configured: { region: "canary-resolved-region" } });
+    const resolvedConfig = {
+      ...configWith(resolvedAgent, root),
+      extensions: { configured: { region: "canary-default", url: "canary-resolved-url" } },
+    };
+
+    const catalog = await buildExtensionCatalog(resolvedConfig, resolvedAgent, { rawConfig });
+
+    expect(catalog.find((entry) => entry.id === "configured")?.configValues).toEqual({
+      region: "$env:CANARY_RAW_REGION",
+      url: "$env:CANARY_RAW_URL",
+    });
+  });
+
+  it("honors declarations for fields inside schema-defined objects and arrays", async () => {
+    await writeExternalExtension(root, "configured", {
+      configJsonSchema: JSON.stringify({
+        properties: {
+          channels: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                tokenBudget: { type: "number" },
+                pin: { type: "string", format: "password" },
+              },
+            },
+          },
+        },
+      }),
+    });
+    const agent = makeAgent({
+      configured: { channels: [{ tokenBudget: 42, pin: "canary-pin", token: "canary-channel-token" }] },
+    });
+
+    const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
+
+    expect(catalog.find((entry) => entry.id === "configured")?.configValues).toEqual({
+      channels: [{ tokenBudget: 42, pin: "********", token: "********" }],
     });
   });
 

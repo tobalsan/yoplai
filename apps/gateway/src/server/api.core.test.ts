@@ -48,6 +48,7 @@ vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-test",
   getAgent,
   getActiveAgents,
+  getRawLoadedConfig: () => loadConfigValue,
   isAgentActive,
   resolveWorkspaceDir,
   loadConfig: () => loadConfigValue,
@@ -1216,7 +1217,7 @@ describe("api core session resolution", () => {
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         loadConfigValue,
         expect.objectContaining({ id: "alpha" }),
-        { configurable: true }
+        { configurable: true, rawConfig: loadConfigValue }
       );
     });
 
@@ -1242,7 +1243,7 @@ describe("api core session resolution", () => {
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         loadConfigValue,
         expect.not.objectContaining({ extensions: expect.anything() }),
-        { configurable: false }
+        { configurable: false, rawConfig: loadConfigValue }
       );
     });
 
@@ -1277,7 +1278,7 @@ describe("api core session resolution", () => {
           id: "poolie",
           extensions: { acme: { enabled: false, region: "fork" } },
         }),
-        { configurable: true }
+        { configurable: true, rawConfig: loadConfigValue }
       );
     });
 
@@ -1564,7 +1565,7 @@ describe("api core session resolution", () => {
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         resolvedReloaded,
         resolvedReloaded.agents[0],
-        { configurable: true }
+        { configurable: true, rawConfig: rawReloaded }
       );
     });
 

@@ -16,7 +16,7 @@ describe("channel extension config loading", () => {
 
   async function loadAgent(
     fields: Record<string, unknown>,
-    includeHealthyAgent = false
+    options: { includeHealthyAgent?: boolean; agentEnv?: string; root?: Record<string, unknown> } = {}
   ) {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-channel-config-"));
     const workspace = path.join(home, "agents", "assistant");
@@ -30,7 +30,8 @@ describe("channel extension config loading", () => {
         ...fields,
       })
     );
-    if (includeHealthyAgent) {
+    if (options.agentEnv) await fs.writeFile(path.join(workspace, ".env"), options.agentEnv);
+    if (options.includeHealthyAgent) {
       const healthyWorkspace = path.join(home, "agents", "healthy");
       await fs.mkdir(healthyWorkspace, { recursive: true });
       await fs.writeFile(
@@ -47,6 +48,7 @@ describe("channel extension config loading", () => {
       JSON.stringify({
         version: 3,
         agents: "agents/*",
+        ...options.root,
       })
     );
     vi.stubEnv("YOPLAI_HOME", home);
@@ -54,29 +56,82 @@ describe("channel extension config loading", () => {
     return loadConfig().agents[0];
   }
 
+  it("checks workspace authority before projection on load and plain reload", async () => {
+    vi.stubEnv("CANARY_SHARED_CHAT", "canary-shared-chat-value");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const agent = await loadAgent({
+      telegram: { token: "$env:CANARY_SHARED_CHAT" },
+      extensions: {
+        slack: {
+          token: "$env:CANARY_WORKSPACE_TOKEN",
+          appToken: "canary-app-token",
+          mentionPatterns: ["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"],
+        },
+        "canary-nested": { profiles: [{ target: "$env:CANARY_SHARED_CHAT", enabled: true }] },
+      },
+    }, {
+      agentEnv: "CANARY_WORKSPACE_TOKEN=canary-workspace-token-value\n",
+      root: { extensions: { "canary-root": { target: "$env:CANARY_SHARED_CHAT" } } },
+    });
+    const { getConfigPath, loadConfig, reloadConfig } = await import("./index.js");
+    const { resolveStartupConfig } = await import("./validate.js");
+
+    expect(agent.extensions?.slack).toMatchObject({
+      token: "$env:CANARY_WORKSPACE_TOKEN",
+      mentionPatterns: ["canary-literal-pattern"],
+    });
+    expect(agent.slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
+    expect(agent.extensions?.["canary-nested"]?.profiles).toEqual([{ enabled: true }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/assistant.*slack.*CANARY_SHARED_CHAT/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/assistant.*canary-nested.*CANARY_SHARED_CHAT/));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("canary-shared-chat-value");
+
+    const config = await resolveStartupConfig(loadConfig());
+    expect(config.agents[0]).toMatchObject({
+      slack: { token: "canary-workspace-token-value", mentionPatterns: ["canary-literal-pattern"] },
+      telegram: { token: "canary-shared-chat-value" },
+      extensions: { slack: { token: "canary-workspace-token-value", mentionPatterns: ["canary-literal-pattern"] } },
+    });
+    expect(config.extensions?.["canary-root"]).toEqual({ target: "canary-shared-chat-value" });
+    reloadConfig();
+    expect(loadConfig().agents[0].slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
+    expect(loadConfig().agents[0].extensions?.slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
+
+    const configFile = getConfigPath();
+    const previousRoot = JSON.parse(await fs.readFile(configFile, "utf8"));
+    await fs.writeFile(configFile, JSON.stringify({ ...previousRoot, extensionEnvAllowlist: ["CANARY_SHARED_CHAT"] }));
+    const allowed = reloadConfig();
+    expect(allowed.agents[0].slack?.mentionPatterns).toEqual(["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"]);
+    expect(allowed.agents[0].extensions?.slack?.mentionPatterns).toEqual(["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"]);
+    expect((await resolveStartupConfig(allowed)).agents[0]).toMatchObject({
+      slack: { mentionPatterns: ["canary-shared-chat-value", "canary-literal-pattern"] },
+      extensions: { slack: { mentionPatterns: ["canary-shared-chat-value", "canary-literal-pattern"] } },
+    });
+  });
+
   it("loads nested Mattermost settings into the per-agent channel config", async () => {
     const agent = await loadAgent({
       extensions: {
         mattermost: {
           enabled: true,
           url: "https://chat.example.test",
-          token: "$env:MATTERMOST_TOKEN",
+          token: "$env:CANARY_MATTERMOST_TOKEN",
           channels: { "channel-a": { requireMention: false, agent: "other" } },
           dm: { enabled: true, allowFrom: ["user-a"], agent: "other" },
         },
       },
-    });
+    }, { agentEnv: "CANARY_MATTERMOST_TOKEN=canary-token\n" });
 
     expect(agent.mattermost).toEqual({
       url: "https://chat.example.test",
-      token: "$env:MATTERMOST_TOKEN",
+      token: "$env:CANARY_MATTERMOST_TOKEN",
       channels: { "channel-a": { requireMention: false } },
       dm: { enabled: true, allowFrom: ["user-a"] },
     });
     expect(agent.extensions?.mattermost).toEqual({
       enabled: true,
       url: "https://chat.example.test",
-      token: "$env:MATTERMOST_TOKEN",
+      token: "$env:CANARY_MATTERMOST_TOKEN",
       channels: { "channel-a": { requireMention: false, agent: "other" } },
       dm: { enabled: true, allowFrom: ["user-a"], agent: "other" },
     });
@@ -86,17 +141,17 @@ describe("channel extension config loading", () => {
       extensions: {
         slack: {
           enabled: true,
-          token: "$env:SLACK_TOKEN",
-          appToken: "$env:SLACK_APP_TOKEN",
+          token: "$env:CANARY_SLACK_TOKEN",
+          appToken: "$env:CANARY_SLACK_APP_TOKEN",
           channels: { "channel-a": { requireMention: false, agent: "other" } },
           dm: { enabled: true, allowFrom: ["user-a"] },
         },
       },
-    });
+    }, { agentEnv: "CANARY_SLACK_TOKEN=canary-token\nCANARY_SLACK_APP_TOKEN=canary-app-token\n" });
 
     expect(agent.slack).toEqual({
-      token: "$env:SLACK_TOKEN",
-      appToken: "$env:SLACK_APP_TOKEN",
+      token: "$env:CANARY_SLACK_TOKEN",
+      appToken: "$env:CANARY_SLACK_APP_TOKEN",
       channels: {
         "channel-a": { requireMention: false, reactionNotifications: "off" },
       },
@@ -108,16 +163,16 @@ describe("channel extension config loading", () => {
       extensions: {
         telegram: {
           enabled: true,
-          token: "$env:TELEGRAM_TOKEN",
+          token: "$env:CANARY_TELEGRAM_TOKEN",
           allowedUsers: [101, "user-a"],
           allowedChats: [-202, "chat-a"],
           showToolCalls: true,
         },
       },
-    });
+    }, { agentEnv: "CANARY_TELEGRAM_TOKEN=canary-token\n" });
 
     expect(agent.telegram).toEqual({
-      token: "$env:TELEGRAM_TOKEN",
+      token: "$env:CANARY_TELEGRAM_TOKEN",
       allowedUsers: [101, "user-a"],
       allowedChats: [-202, "chat-a"],
       showToolCalls: true,
@@ -131,8 +186,8 @@ describe("channel extension config loading", () => {
           [channel]: {
             enabled: false,
             url: "https://chat.example.test",
-            token: "$env:CHANNEL_TOKEN",
-            appToken: "$env:CHANNEL_APP_TOKEN",
+            token: "canary-token",
+            appToken: "canary-app-token",
           },
         },
       });
@@ -181,7 +236,7 @@ describe("channel extension config loading", () => {
           },
         },
       },
-      true
+      { includeHealthyAgent: true }
     );
     const { loadConfig } = await import("./index.js");
 
@@ -237,14 +292,14 @@ describe("channel extension config loading", () => {
       extensions: {
         mattermost: {
           url: "https://chat.example.test",
-          token: "$env:MATTERMOST_TOKEN",
+          token: "$env:CANARY_MATTERMOST_TOKEN",
         },
       },
-    });
+    }, { agentEnv: "CANARY_MATTERMOST_TOKEN=canary-token\n" });
 
     expect(agent.mattermost).toEqual({
       url: "https://chat.example.test",
-      token: "$env:MATTERMOST_TOKEN",
+      token: "$env:CANARY_MATTERMOST_TOKEN",
     });
   });
 

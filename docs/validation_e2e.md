@@ -303,6 +303,25 @@ with a seeded plain value and one extension with a plain Enable/Disable button.
 3. Capture a screenshot and matching DOM snapshot for each role, and save the
    status codes and persistence checks under `validation/`.
 
+## Extension catalog references (ALG-731)
+
+Use the isolated gateway and web UI above. Give a dummy member chat access to
+the test agent. Add a Slack block under `extensions` with `enabled: false`
+to keep the canary bot offline, `token: canary-channel-token`, and
+`applicationId: $env:CANARY_CATALOG_LABEL`. Define `CANARY_CATALOG_LABEL`
+as `canary-catalog-label-value` in the agent workspace `.env`.
+
+1. Sign in with `buu` as the member and open the agent's extension details.
+   From the same browser session, call `GET /api/agents/:id/extensions`.
+   Verify HTTP 200 and check Slack's `configValues` for `token: "********"`
+   and `applicationId: "$env:CANARY_CATALOG_LABEL"`. Check the full response
+   for the absence of both canary values.
+2. As the manager, PATCH a change to `requireMention` on the same extension.
+   Verify the response and a fresh GET show the new setting, mask, and
+   reference. Verify the token line in `agent.yaml` is unchanged.
+3. Capture a screenshot and DOM snapshot from the member's session and save
+   the status codes, catalog assertions, and persistence check under `validation/`.
+
 ## Dashboard browser checks (ALG-483)
 
 Build the agent image and record its size and increase over the prior image. In the isolated home above, create a sandboxed Pi agent using that image and seed the dashboard skill's CS templates, migrations, and sample data. Use the normal gateway run path to ask the agent to follow "Check it visually" (no installation or render harness), save a screenshot under `/tmp`, and read it. Record time from browser open to PNG: a fresh container must finish within 15 seconds. Capture the read tool's image content block and the model's next response describing something visible only in the screenshot.

@@ -135,6 +135,7 @@ Core `yoplai.json` fields:
 | `sessions.idleMinutes`               | Logical-session idle rotation; default 360                          |
 | `agentLoop`                          | Agent-to-agent loop limits (`maxAgentTurns`, `maxHops`)             |
 | `extensions`                         | Built-in/external extension configuration                           |
+| `extensionEnvAllowlist`              | Optional array of shared env names allowed in agent extension blocks |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |
 | `sandbox`, `onecli`, `oauth`         | Isolation (incl. `sandbox.gatewayTransport`: `http`/`socket`), proxy, and host OAuth settings |
 | `maintenance`                        | Model for gateway-owned background LLM tasks                        |
@@ -147,6 +148,17 @@ Core `yoplai.json` fields:
 | `taskboard`, `projects`, `subagents` | Legacy/compatibility config surfaces; prefer owning extensions      |
 
 Schema in `packages/shared/src/types.ts` is final source of truth. Extension-specific fields belong in [Extensions](extensions.md) and owning package READMEs.
+
+### Extension environment references
+
+An `agent.yaml` setting under `extensions.<id>` can use `$env:NAME` when
+`NAME` is defined in that agent's workspace `.env` or listed in the shared
+`extensionEnvAllowlist` in `yoplai.json`. Add names from the gateway process
+environment, the gateway home `.env`, or `yoplai.json` `env` to the allowlist
+when an agent extension needs to use them. At load, the gateway drops each
+disallowed setting or array entry and logs the agent, extension, and env name.
+Agent root fields and gateway-wide extension settings keep their usual
+environment resolution.
 
 ### Branding
 

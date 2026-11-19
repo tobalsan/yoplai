@@ -299,10 +299,12 @@ export function ExtensionConfigForm(props: {
       const { config: submitted, secrets } = splitAutoFormValues(formFields, values());
       // Send only settings that differ from the team: keeps `$env:` refs intact, and
       // personal fields left at the team value keep following it. Personal OAuth
-      // settings never follow the team value, so they are sent in full.
+      // submits all settings except env references, which the personal route refuses.
       const team = splitAutoFormValues(formFields, teamValues()).config;
       const personalOAuth = oauthScoped() && credentialScope() === "personal";
-      const config = personalOAuth ? submitted : Object.fromEntries(Object.entries(submitted).filter(([name, value]) => team[name] !== value));
+      const config = Object.fromEntries(Object.entries(submitted).filter(([name, value]) =>
+        personalOAuth ? !(typeof value === "string" && value.startsWith("$env:")) : team[name] !== value
+      ));
       const updated = await patchAgentExtension(params.agentId, params.extensionId, {
         ...(current.personalSecretFields !== undefined || oauthScoped() ? { credentialScope: credentialScope() } : {}),
         ...(credentialScope() === "team" ? { enabled: true } : {}),

@@ -11,6 +11,7 @@ import { aggregateMcpCandidates, readMcpIconCache, readSharedMcpServerSources, r
 import {
   getActiveAgents,
   getAgent,
+  getRawLoadedConfig,
   isAgentActive,
   loadConfig,
   resolveAgentEnv,
@@ -396,9 +397,10 @@ function hasOAuthConnection(
 }
 
 async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig, configurable = true) {
+  const rawConfig = getRawLoadedConfig();
   const auth = await getRequestAuthContext(c);
   const canConfigureTeam = await canConfigureTeamExtensions(c, agent.id);
-  const catalog = await buildExtensionCatalog(config, agent, { configurable, ...(auth ? { requesterUserId: auth.user.id } : {}) });
+  const catalog = await buildExtensionCatalog(config, agent, { configurable, rawConfig, ...(auth ? { requesterUserId: auth.user.id } : {}) });
   return catalog.map((catalogEntry) => {
     const entry = {
       ...catalogEntry,
@@ -1232,6 +1234,10 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   const undeclaredSecret = Object.keys(patch.secrets ?? {}).find((field) => !secretFields.includes(field));
   if (undeclaredSecret !== undefined) {
     return c.json({ error: `Unknown credential field "${undeclaredSecret}"` }, 400);
+  }
+  const secretRef = Object.entries(patch.secrets ?? {}).find(([, value]) => isEnvRef(value));
+  if (secretRef) {
+    return c.json({ error: `Environment references are not allowed in secret field "${secretRef[0]}"` }, 400);
   }
 
   const workspaceDir = resolveWorkspaceDir(
