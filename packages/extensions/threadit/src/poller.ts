@@ -565,8 +565,14 @@ export class ThreaditPoller {
     }
 
     const context = await this.api.context(item.id);
-    if (!context.ok) {
-      this.log("warn", "could not read the context", context);
+    // The board returns top-level messages through the target's root.
+    const root = context.ok ? context.data.top_level.at(-1) : undefined;
+    if (!context.ok || !root) {
+      this.log(
+        "warn",
+        "could not read the context",
+        context.ok ? { ok: false, kind: "decode" } : context
+      );
       if (this.stopped) return true;
       await this.failItem(item);
       return true;
@@ -574,7 +580,7 @@ export class ThreaditPoller {
     if (this.stopped) return true;
     const prompt = buildPrompt(this.me?.username ?? "", context.data);
 
-    const end = await this.runTurn(item, prompt);
+    const end = await this.runTurn(item, prompt, root.id);
     if (this.stopped) return true;
     switch (end.kind) {
       case "answer":
@@ -600,7 +606,7 @@ export class ThreaditPoller {
 
   // ---- one turn ----
 
-  private async runTurn(item: BoardMessage, prompt: string): Promise<TurnEnd> {
+  private async runTurn(item: BoardMessage, prompt: string, rootId: number): Promise<TurnEnd> {
     const controller = new AbortController();
     const state: { reason?: StopReason } = {};
     const abort = (reason: StopReason): void => {
@@ -684,7 +690,7 @@ export class ThreaditPoller {
         const result = await this.ctx.runAgent({
           agentId: this.agentId,
           message: prompt,
-          sessionKey: `threadit:thread-${item.thread_id}`,
+          sessionKey: `threadit:thread-${item.thread_id}:root-${rootId}`,
           source: "threadit",
           origin: { sink: "threadit", destination: { channel: `${item.thread_id}:${item.id}` } },
           sessionOwnerId: null,
