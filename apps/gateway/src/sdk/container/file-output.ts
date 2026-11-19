@@ -94,18 +94,14 @@ export class ContainerFileOutputAdapter {
 
     // Node has no openat: directory replacement can still race these checks.
     // O_NOFOLLOW pins the leaf without following a final symlink.
-    const sourceFile = files
-      ? await fsPromises
-          .open(
-            realSource,
-            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-          )
-          .catch(rethrowValidationError)
-      : undefined;
+    const sourceFile = await fsPromises
+      .open(
+        realSource,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+      )
+      .catch(rethrowValidationError);
     try {
-      const stat = sourceFile
-        ? await sourceFile.stat().catch(rethrowValidationError)
-        : await fsPromises.stat(realSource).catch(rethrowValidationError);
+      const stat = await sourceFile.stat().catch(rethrowValidationError);
       if (!stat.isFile()) {
         throw new FileOutputRejectedError(
           `file_output path is not a file: ${event.path}`
@@ -124,19 +120,15 @@ export class ContainerFileOutputAdapter {
 
       signal?.throwIfAborted();
       await ensureMediaDirectories();
-      if (sourceFile) {
-        try {
-          await pipeline(
-            sourceFile.createReadStream({ autoClose: false }),
-            createWriteStream(target, { flags: "wx" }),
-            { signal }
-          );
-        } catch (error) {
-          await fsPromises.rm(target, { force: true });
-          throw error;
-        }
-      } else {
-        await fsPromises.copyFile(realSource, target);
+      try {
+        await pipeline(
+          sourceFile.createReadStream({ autoClose: false }),
+          createWriteStream(target, { flags: "wx" }),
+          { signal }
+        );
+      } catch (error) {
+        await fsPromises.rm(target, { force: true });
+        throw error;
       }
       signal?.throwIfAborted();
       const metadata = await registerMediaFile({
@@ -183,7 +175,7 @@ export class ContainerFileOutputAdapter {
       }
       return metadata;
     } finally {
-      await sourceFile?.close();
+      await sourceFile.close();
     }
   }
 }
