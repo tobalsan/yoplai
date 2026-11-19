@@ -13,7 +13,6 @@ import {
   hasAgentRootConfig,
 } from "./registry.js";
 import { resolveAgentEnv } from "../config/index.js";
-import { isEnvRef, resolveEnvRefSync } from "../config/secrets.js";
 import { extensionSecretFields, getPersonalExtensionTokens, overlayOAuthPersonalSettings, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { CredentialStore } from "../credentials/store.js";
 
@@ -118,7 +117,7 @@ export type ExtensionCatalogEntry = {
   requiredSecrets: string[];
   /** Field names a UI should collapse under advanced settings. */
   advancedConfigFields: string[];
-  /** Existing per-agent config values, with secret fields redacted and setting env refs resolved. */
+  /** Existing per-agent config values, with credentials masked and setting references intact. */
   configValues: Record<string, unknown>;
   /**
    * Agent-resolved bespoke config route (`:agentId` substituted) when the
@@ -180,27 +179,44 @@ function isEnabledForAgent(agent: AgentConfig, extensionId: string): boolean {
   return (value as { enabled?: unknown }).enabled !== false;
 }
 
-function configValuesForAgent(
-  agent: AgentConfig,
-  extension: Extension,
-  gatewayConfig: GatewayConfig
+const credentialFieldName = /token|secret|password|passphrase|api.?key/i;
+
+function maskConfigValue(value: unknown, schema: unknown): unknown {
+  const valueSchema = schema && typeof schema === "object" ? schema as Record<string, unknown> : undefined;
+  if (Array.isArray(value)) return value.map((entry) => maskConfigValue(entry, valueSchema?.items));
+  if (value && typeof value === "object") {
+    return maskConfigFields(value as Record<string, unknown>, valueSchema);
+  }
+  return value;
+}
+
+function maskConfigFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown> | null | undefined,
+  secretFields = extensionSecretFields({ configJsonSchema: schema })
 ): Record<string, unknown> {
-  const extensions = agent.extensions as Record<string, unknown> | undefined;
-  const value = extensions?.[extension.id];
+  const properties = schema?.properties;
+  const declaredFields = properties && typeof properties === "object" ? properties as Record<string, unknown> : {};
+  return Object.fromEntries(Object.entries(config).map(([field, value]) => {
+    const declared = Object.hasOwn(declaredFields, field);
+    const masked = secretFields.includes(field) || (!declared && credentialFieldName.test(field));
+    return [field, masked ? "********" : maskConfigValue(value, declared ? declaredFields[field] : undefined)];
+  }));
+}
+
+function configValuesForAgent(
+  agent: AgentConfig | undefined,
+  extension: Extension,
+  gatewayConfig: GatewayConfig | null
+): Record<string, unknown> {
+  const value = agent?.extensions?.[extension.id];
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
-  const root = gatewayConfig.extensions?.[extension.id];
+  const root = gatewayConfig?.extensions?.[extension.id];
   const config = { ...(typeof root === "object" && root !== null ? root : {}), ...(value as Record<string, unknown>) };
   delete config.enabled;
-  const secretFields = extensionSecretFields(extension);
-  const env = resolveAgentEnv(agent, gatewayConfig);
-  for (const [field, fieldValue] of Object.entries(config)) {
-    if (secretFields.includes(field)) config[field] = "********";
-    // Settings such as usernames are not secret: show the value, not the env ref.
-    else if (isEnvRef(fieldValue)) config[field] = resolveEnvRefSync(fieldValue, env);
-  }
-  return config;
+  return maskConfigFields(config, extension.configJsonSchema, extensionSecretFields(extension));
 }
 
 /** Config as it resolves for the requester's own grant, whether or not they have connected yet. */
@@ -228,9 +244,14 @@ function toCatalogEntry(
   config: GatewayConfig,
   agent: AgentConfig,
   dir: string | undefined,
-  configurable: boolean,
-  requesterUserId?: string
+  options: {
+    configurable: boolean;
+    requesterUserId?: string;
+    displayAgent: AgentConfig | undefined;
+    displayConfig: GatewayConfig | null;
+  }
 ): ExtensionCatalogEntry {
+  const { configurable, requesterUserId, displayAgent, displayConfig } = options;
   const fullConfigJsonSchema = extension.configJsonSchema ?? null;
   const configRoutePath =
     resolveAgentConfigRoute(extension.configRoute, agent.id) ?? null;
@@ -265,7 +286,7 @@ function toCatalogEntry(
     configJsonSchema,
     requiredSecrets: oauth ? [] : extension.requiredSecrets ?? [],
     advancedConfigFields: extension.advancedConfigFields ?? [],
-    configValues: configValuesForAgent(agent, extension, config),
+    configValues: configValuesForAgent(displayAgent, extension, displayConfig),
     configRoutePath,
     oauth: oauth
       ? {
@@ -293,11 +314,17 @@ function toCatalogEntry(
 export async function buildExtensionCatalog(
   config: GatewayConfig,
   agent: AgentConfig,
-  options: { configurable?: boolean; requesterUserId?: string } = {}
+  options: { configurable?: boolean; requesterUserId?: string; rawConfig?: GatewayConfig | null } = {}
 ): Promise<ExtensionCatalogEntry[]> {
   const entries: ExtensionCatalogEntry[] = [];
   const seen = new Set<string>();
   const configurable = options.configurable ?? true;
+  const { rawConfig, requesterUserId } = options;
+  const displayConfig = rawConfig === undefined ? config : rawConfig;
+  // Catalogs for pool-only agents omit template extension settings.
+  const displayAgent = rawConfig === undefined ? agent
+    : configurable ? rawConfig?.agents.find((candidate) => candidate.id === agent.id) : undefined;
+  const entryOptions = { configurable, requesterUserId, displayAgent, displayConfig };
 
   for (const registration of getBuiltInExtensionRegistrations()) {
     let extension: Extension;
@@ -314,7 +341,7 @@ export async function buildExtensionCatalog(
     // agent-edit UI, still enable-able manually in agent.yaml.
     if (extension.factory === true || extension.id === "mcp") continue;
     const dir = resolveBuiltInExtensionDir(registration.packageName);
-    entries.push(toCatalogEntry(extension, true, config, agent, dir, configurable, options.requesterUserId));
+    entries.push(toCatalogEntry(extension, true, config, agent, dir, entryOptions));
   }
 
   const external = await discoverExternalExtensions(
@@ -325,7 +352,7 @@ export async function buildExtensionCatalog(
     seen.add(extension.id);
     if (extension.factory === true || extension.id === "mcp") continue;
     entries.push(
-      toCatalogEntry(extension, false, config, agent, extensionDir, configurable, options.requesterUserId)
+      toCatalogEntry(extension, false, config, agent, extensionDir, entryOptions)
     );
   }
 

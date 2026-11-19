@@ -1338,6 +1338,7 @@ const GatewayCommonFields = {
     .optional(),
   oauth: OAuthConfigSchema.optional(),
   extensions: ExtensionsConfigSchema,
+  extensionEnvAllowlist: z.array(z.string()).optional(),
   extensionsPath: z.string().optional(),
   branding: z
     .object({

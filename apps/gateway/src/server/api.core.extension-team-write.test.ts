@@ -23,6 +23,7 @@ describe("team extension settings over HTTP", () => {
   let manager: string;
 
   const readAgentYaml = () => fs.readFile(path.join(home, "agents", agentId, "agent.yaml"), "utf8");
+  const agentEnvPath = () => path.join(home, "agents", agentId, ".env");
   const getCatalog = (cookie: string) => fetch(`${origin}${catalogPath}`, { headers: { Cookie: cookie } });
   const patch = (cookie: string, extensionId: string, body: unknown) => fetch(`${origin}${catalogPath}/${extensionId}`, {
     method: "PATCH",
@@ -77,6 +78,7 @@ extensions:
     });
     await writeExtension(settingsId, { label: { type: "string" } });
     await writeExtension(connectionId, { token: { type: "string", writeOnly: true }, label: { type: "string" } });
+    await fs.writeFile(agentEnvPath(), "CANARY_OTHER=canary-existing-value\n");
 
     vi.resetModules();
     const { loadConfig } = await import("../config/index.js");
@@ -147,6 +149,19 @@ extensions:
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: expect.stringContaining("otherField") });
     expect(await readAgentYaml()).toBe(before);
+  });
+
+  it("rejects a reference as a team secret while preserving both settings files", async () => {
+    const beforeYaml = await readAgentYaml();
+    const beforeEnv = await fs.readFile(agentEnvPath(), "utf8");
+    const response = await patch(manager, connectionId, {
+      secrets: { token: "$env:CANARY_OTHER" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: expect.stringContaining("token") });
+    expect(await readAgentYaml()).toBe(beforeYaml);
+    expect(await fs.readFile(agentEnvPath(), "utf8")).toBe(beforeEnv);
   });
 
   it("stores a declared team credential as a reference and masks it in the catalog", async () => {

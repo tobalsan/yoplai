@@ -16,11 +16,13 @@ import {
   type SubagentConfig,
 } from "@yoplai/shared";
 import { projectChannelExtensionBlocks } from "./channel-extension-config.js";
+import { envRefName, isEnvRef } from "./secrets.js";
 
 export const CONFIG_DIR = resolveHomeDir();
 export const SCHEDULES_PATH = path.join(CONFIG_DIR, "schedules.json");
 
 let cachedConfig: GatewayConfig | null = null;
+let rawLoadedConfig: GatewayConfig | null = null;
 let singleAgentId: string | null = null;
 const agentEnvDigests = new Map<string, string>();
 
@@ -57,6 +59,7 @@ function globToDirs(pattern: string, configDir: string): string[] {
 function discoverAgents(
   agentGlobs: string | string[] | undefined,
   configDir: string,
+  extensionEnvAllowlist: ReadonlySet<string>,
   options: { strict?: boolean; label?: string; emptyMessage?: string } = {}
 ): AgentConfig[] {
   const patterns =
@@ -106,13 +109,8 @@ function discoverAgents(
         );
       }
       seen.set(parsed.data.id, agentPath);
-      agents.push(
-        projectChannelExtensionBlocks({
-          ...parsed.data,
-          workspace: workspaceDir,
-          workspaceDir,
-        })
-      );
+      const agent = { ...parsed.data, workspace: workspaceDir, workspaceDir };
+      agents.push(projectChannelExtensionBlocks(filterAgentExtensionEnvRefs(agent, extensionEnvAllowlist)));
     }
   }
 
@@ -139,6 +137,36 @@ function readEnvFile(envPath: string): {
       )
     ),
   };
+}
+
+function filterAgentExtensionEnvRefs(agent: AgentConfig, allowlist: ReadonlySet<string>): AgentConfig {
+  if (!agent.extensions || Object.keys(agent.extensions).length === 0) return agent;
+  const workspaceEnv = readEnvFile(path.join(agent.workspaceDir ?? agent.workspace, ".env")).env;
+
+  function filter(value: unknown, extensionId: string): unknown {
+    if (isEnvRef(value)) {
+      const name = envRefName(value);
+      if (Object.hasOwn(workspaceEnv, name) || allowlist.has(name)) return value;
+      console.warn(`[config] agent "${agent.id}" extension "${extensionId}" dropped environment reference ${JSON.stringify(name)}`);
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry) => filter(entry, extensionId)).filter((entry) => entry !== undefined);
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value)
+          .map(([key, entry]) => [key, filter(entry, extensionId)] as const)
+          .filter(([, entry]) => entry !== undefined)
+      );
+    }
+    return value;
+  }
+
+  const extensions = Object.fromEntries(
+    Object.entries(agent.extensions).map(([id, block]) => [id, filter(block, id) as typeof block])
+  );
+  return { ...agent, extensions };
 }
 
 function processEnvRecord(): Record<string, string> {
@@ -209,6 +237,7 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
   }
   const parsed = GatewayRootConfigSchema.parse(json);
   const configDir = path.dirname(configPath);
+  const extensionEnvAllowlist = new Set(parsed.extensionEnvAllowlist);
   const hasPoolConfig = Object.prototype.hasOwnProperty.call(json, "pool");
   const agentDiscovery =
     parsed.agents ?? (hasPoolConfig ? undefined : "$YOPLAI_HOME/agents/*");
@@ -220,12 +249,14 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
     agents: discoverAgents(
       agentDiscovery as string | string[] | undefined,
       configDir,
+      extensionEnvAllowlist,
       { strict: !hasPoolConfig && parsed.agents === undefined, label: "agents" }
     ),
     pool: hasPoolConfig
       ? discoverAgents(
           parsed.pool as string | string[] | undefined,
           configDir,
+          extensionEnvAllowlist,
           { strict: true, label: "pool", emptyMessage: poolEmptyMessage }
         )
       : undefined,
@@ -259,8 +290,16 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
     if (!agent.queueMode) agent.queueMode = "queue";
   }
 
-  if (!configPathOverride) cachedConfig = result;
+  if (!configPathOverride) {
+    rawLoadedConfig = result;
+    cachedConfig = result;
+  }
   return result;
+}
+
+/** Snapshot from disk before runtime secret resolution. */
+export function getRawLoadedConfig(): GatewayConfig | null {
+  return rawLoadedConfig;
 }
 
 export function reloadConfig(): GatewayConfig {
@@ -274,6 +313,7 @@ export function setLoadedConfig(config: GatewayConfig): void {
 
 export function clearConfigCacheForTests(): void {
   cachedConfig = null;
+  rawLoadedConfig = null;
   singleAgentId = null;
   agentEnvDigests.clear();
 }

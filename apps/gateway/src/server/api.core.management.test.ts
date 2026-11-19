@@ -17,12 +17,14 @@ import { googleProvider } from "../../../../packages/shared/src/oauth/__tests__/
 const state = vi.hoisted(() => ({
   dir: "",
   config: {} as GatewayConfig,
+  rawConfig: undefined as GatewayConfig | undefined,
   runtime: null as Pick<MultiUserRuntime, "db" | "membership" | "forks" | "access" | "getPoolAgentIds"> | null,
 }));
 vi.mock("../audit/store.js", () => ({ recordSettingsChange: () => undefined, getAuditActor: async () => ({}) }));
 vi.mock("../config/index.js", () => ({
   get CONFIG_DIR() { return state.dir; },
   loadConfig: () => state.config,
+  getRawLoadedConfig: () => state.rawConfig ?? state.config,
   getAgent: (id: string) => state.config.agents.find((agent) => agent.id === id),
   getActiveAgents: () => state.config.agents,
   isAgentActive: () => true,
@@ -38,13 +40,19 @@ vi.mock("../extensions/registry.js", () => ({
     { id: "token", load: async () => ({ id: "token", displayName: "Token", description: "Token", requiredSecrets: ["apiKey"], configJsonSchema: { properties: { apiKey: { type: "string" }, region: { type: "string" } } } }) },
     { id: "oauth", load: async () => ({ id: "oauth", displayName: "OAuth", description: "OAuth", oauth: { provider: "google", scopes: [] }, configJsonSchema: { properties: { allowWrite: { type: "boolean" } } } }) },
     { id: "settings", load: async () => ({ id: "settings", displayName: "Settings", description: "Settings", configJsonSchema: { properties: { region: { type: "string" } } } }) },
+    ...["slack", "telegram"].map((id) => ({ id, load: async () => ({ id, displayName: id, description: id }) })),
   ],
   getExtensionRuntime: () => ({ getCapabilities: () => ({ multiUser: true }) }),
 }));
 vi.mock("../extensions/reload.js", () => ({
   reloadAfterExtensionWrite: async () => {
     const agent = parse(fs.readFileSync(path.join(state.dir, "agents/alpha/agent.yaml"), "utf8")) as AgentConfig;
+    const resolvedExtensions = state.config.agents[0].extensions;
     state.config.agents = [{ ...agent, workspace: path.join(state.dir, "agents/alpha"), workspaceDir: path.join(state.dir, "agents/alpha") }];
+    if (state.rawConfig) {
+      state.rawConfig = { ...state.config, agents: [{ ...state.config.agents[0] }] };
+      state.config.agents[0].extensions = { ...agent.extensions, telegram: resolvedExtensions?.telegram ?? {} };
+    }
     return state.config;
   },
 }));
@@ -54,6 +62,7 @@ let api: typeof import("./api.core.js")["api"];
 describe("public agent team configuration permissions", () => {
   beforeEach(async () => {
     vi.resetModules();
+    state.rawConfig = undefined;
     (await import("@yoplai/shared")).registerOAuthProvider(googleProvider);
     state.dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-management-"));
     const db = new Database(path.join(state.dir, "auth.db"));
@@ -98,6 +107,47 @@ describe("public agent team configuration permissions", () => {
     const request = new Request(`http://localhost${url}`, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) });
     return api.request(forwardAuthContextToRequest(request, { user: { id: userId, role, approved: true }, session: { id: `session-${userId}`, userId } }));
   }
+
+  it("masks channel tokens for Public readers and preserves them during a manager edit", async () => {
+    const agentFile = path.join(state.dir, "agents/alpha/agent.yaml");
+    const channelYaml = `  slack:
+    token: canary-slack-token
+    requireMention: true
+  telegram:
+    token: $env:CANARY_TELEGRAM_TOKEN
+    allowedChats: [$env:CANARY_TELEGRAM_CHAT]
+`;
+    fs.appendFileSync(agentFile, channelYaml);
+    const rawExtensions = {
+      ...state.config.agents[0].extensions,
+      slack: { token: "canary-slack-token", requireMention: true },
+      telegram: { token: "$env:CANARY_TELEGRAM_TOKEN", allowedChats: ["$env:CANARY_TELEGRAM_CHAT"] },
+    };
+    state.rawConfig = { ...state.config, agents: [{ ...state.config.agents[0], extensions: rawExtensions }] };
+    state.config.agents[0].extensions = {
+      ...rawExtensions,
+      telegram: { token: "canary-telegram-token", allowedChats: ["canary-telegram-chat"] },
+    };
+
+    const catalogUrl = "/agents/alpha/extensions";
+    async function expectChannelValues(response: Response, requireMention: boolean) {
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      for (const value of ["canary-slack-token", "canary-telegram-token", "canary-telegram-chat"]) {
+        expect(body).not.toContain(value);
+      }
+      expect(JSON.parse(body).extensions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "slack", configValues: { token: "********", requireMention } }),
+        expect.objectContaining({ id: "telegram", configValues: { token: "********", allowedChats: ["$env:CANARY_TELEGRAM_CHAT"] } }),
+      ]));
+    }
+
+    await expectChannelValues(await request("member", "user", catalogUrl), true);
+    const saved = await request("manager", "admin", `${catalogUrl}/slack`, "PATCH", { config: { requireMention: false } });
+    await expectChannelValues(saved, false);
+    expect(fs.readFileSync(agentFile, "utf8")).toContain("    token: canary-slack-token\n");
+    await expectChannelValues(await request("member", "user", catalogUrl), false);
+  });
 
   it("keeps foreign admins and regular Public users out of team settings while allowing their personal connections", async () => {
     for (const [userId, role] of [["foreign", "admin"], ["member", "user"]] as const) {
