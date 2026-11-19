@@ -19,9 +19,10 @@ let setupWrites: unknown[];
 let overrides: (path: string, method: string, body: Record<string, unknown>) => Response | Promise<Response> | undefined;
 
 const models = [
-  { provider: "google", model: "environment", name: "Environment", source: "environment", default: true, ready: false },
-  { provider: "openai-codex", model: "external", name: "External", source: "codex", default: true, ready: false },
-  { provider: "openai", model: "owned", name: "Owned", source: "owned", default: true, ready: true },
+  { provider: "openrouter", model: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron Lightning", source: "owned", default: false, ready: false, free: true },
+  { provider: "google", model: "environment", name: "Environment", source: "environment", default: true, ready: false, free: false },
+  { provider: "openai-codex", model: "external", name: "External", source: "codex", default: true, ready: false, free: false },
+  { provider: "openai", model: "owned", name: "Owned", source: "owned", default: true, ready: true, free: false },
 ];
 const response = (body: unknown, status = 200) => Response.json(body, { status });
 const heading = (name: string) => findByRole(root, "heading", { name });
@@ -198,14 +199,53 @@ it("shows the gateway warning and confirms key replacement", async () => {
   await waitFor(() => expect(attempts).toEqual([false, true]));
   await click("Add a key");
   const form = await findByRole(root, "form", { name: "Add an API key" });
-  fireEvent.input(within(form).getByRole("textbox", { name: "Search providers" }), { target: { value: "mistral" } });
-  fireEvent.change(within(form).getByRole("combobox"), { target: { value: "mistral" } });
+  await click("Provider: Select a provider", form);
+  const search = within(form).getByRole("combobox", { name: "Search providers" });
+  fireEvent.input(search, { target: { value: "mistral" } });
+  fireEvent.click(within(form).getByRole("option", { name: "Mistral" }));
   fireEvent.input(within(form).getByLabelText("API key"), { target: { value: "fake-api-key" } });
   await click("Save key", form);
   dialog = await findByRole(root, "alertdialog");
   expect(dialog.textContent).toContain("Replace the current credential");
   await click("Confirm", dialog);
   await waitFor(() => expect(keys).toEqual([false, true]));
+});
+
+it("filters providers and returns focus after Escape or a keyboard choice", async () => {
+  boot("/setup?step=model");
+  await click("Add a key");
+  const form = getByRole(root, "form", { name: "Add an API key" });
+  const trigger = await button("Provider: Select a provider", form);
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  let search = within(form).getByRole("combobox", { name: "Search providers" });
+  expect(document.activeElement).toBe(search);
+  fireEvent.input(search, { target: { value: "mistral" } });
+  expect(within(form).getAllByRole("option").map((option) => option.textContent)).toEqual(["Mistral"]);
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(within(form).queryByRole("listbox")).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+  await click("Provider: Select a provider", form);
+  search = within(form).getByRole("combobox", { name: "Search providers" });
+  fireEvent.keyDown(search, { key: "ArrowDown" });
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(await button("Provider: Mistral", form)).toBe(document.activeElement);
+});
+
+it("shows suggested models, expands a provider, and selects a free match", async () => {
+  boot("/setup?step=agent");
+  await click("Model: Owned OpenAI Ready");
+  const search = getByRole(root, "combobox", { name: "Search models" });
+  expect(document.activeElement).toBe(search);
+  expect(within(getByRole(root, "group", { name: "Suggested" })).getByRole("option", { name: /Owned/ })).toBeTruthy();
+  expect(queryByRole(root, "option", { name: /Nemotron/ })).toBeNull();
+  fireEvent.click(getByRole(root, "option", { name: /OpenRouter.*Expand/ }));
+  expect(getByRole(root, "option", { name: /Nemotron Lightning.*Free/ })).toBeTruthy();
+  fireEvent.input(search, { target: { value: "openrouter 3.5 free" } });
+  expect(queryByRole(root, "group", { name: "Suggested" })).toBeNull();
+  expect(within(getByRole(root, "group", { name: "OpenRouter" })).getByRole("option", { name: /Nemotron Lightning.*Free/ })).toBeTruthy();
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(await button("Model: Nemotron Lightning OpenRouter Free")).toBe(document.activeElement);
+  expect(queryByRole(root, "listbox")).toBeNull();
 });
 
 it("creates the agent after retry with the same request ID and does not send a greeting", async () => {
@@ -226,7 +266,7 @@ it("creates the agent after retry with the same request ID and does not send a g
   await click("Inbox helper");
   expect(name.value).toBe(original);
   expect((getByRole(root, "textbox", { name: "Purpose" }) as HTMLInputElement).value).toBe("Sort my inbox and draft my replies.");
-  expect((getByRole(root, "option", { name: /Owned.*Ready/ }) as HTMLOptionElement).selected).toBe(true);
+  expect(await button("Model: Owned OpenAI Ready")).toBeTruthy();
   await click("Shuffle face");
   await click("Create agent");
   expect((await findByRole(root, "alert")).textContent).toBe("Remove the $env: or $secret: prefix.");
@@ -323,7 +363,7 @@ it("resumes the link in the same tab without opening consent twice", async () =>
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
 });
 
-it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel before reply", "Search", "Search before reply"])("discards a key confirmation after %s", async (action) => {
+it.each(["Cancel", "Edit key", "Edit provider", "Edit provider before reply", "Edit before reply", "Cancel before reply", "Search", "Search before reply"])("discards a key confirmation after %s", async (action) => {
   const old = holdReply();
   const calls: unknown[] = [];
   const replacement = () => response({ error: "replacement_required" }, 409);
@@ -335,18 +375,20 @@ it.each(["Cancel", "Edit key", "Edit provider", "Edit before reply", "Cancel bef
   await click("Add a key");
   const form = await findByRole(root, "form", { name: "Add an API key" });
   const key = within(form).getByLabelText("API key");
-  const provider = within(form).getByRole("combobox");
-  fireEvent.change(provider, { target: { value: "openai" } });
+  await click("Provider: Select a provider", form);
+  fireEvent.click(within(form).getByRole("option", { name: "OpenAI" }));
   fireEvent.input(key, { target: { value: "fake-old-key" } });
   await click("Save key", form);
   if (!action.endsWith("before reply")) await findByRole(root, "alertdialog");
   if (action.startsWith("Cancel")) await click("Cancel", form);
-  else if (action.startsWith("Search")) {
-    fireEvent.input(within(form).getByRole("textbox", { name: "Search providers" }), { target: { value: "mistral" } });
-    expect((provider as HTMLSelectElement).value).toBe("");
-    expect((await button("Save key", form) as HTMLButtonElement).disabled).toBe(true);
-  } else if (action === "Edit provider") fireEvent.change(provider, { target: { value: "" } });
-  else fireEvent.input(key, { target: { value: "fake-new-key" } });
+  else if (action.startsWith("Search") || action.startsWith("Edit provider")) {
+    await click("Provider: OpenAI", form);
+    const search = within(form).getByRole("combobox", { name: "Search providers" });
+    if (action.startsWith("Search")) {
+      fireEvent.input(search, { target: { value: "mistral" } });
+      expect((await button("Save key", form) as HTMLButtonElement).disabled).toBe(true);
+    } else fireEvent.click(within(form).getByRole("option", { name: "Mistral" }));
+  } else fireEvent.input(key, { target: { value: "fake-new-key" } });
   old.reply(replacement());
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(queryByRole(root, "alertdialog")).toBeNull();

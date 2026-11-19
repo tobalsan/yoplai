@@ -186,6 +186,34 @@ it("uses the packaged avatar and accepts a write through the packaged UI proxy",
   expect(Buffer.from(await avatar.arrayBuffer()).equals(await fs.readFile(path.join(avatars, "default-4.webp")))).toBe(true);
 });
 
+it("lists and checks free models and creates an agent only with an eligible source", async () => {
+  const file = path.join(home, "models.json");
+  const config = JSON.parse(await fs.readFile(file, "utf8"));
+  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const marked = ["fixture:free", "fixture-free"];
+  const unmarked = "fixture-zero";
+  config.providers.openai.models = [...marked, unmarked].map((id) => ({ id, name: id, api: "openai-responses", cost }));
+  await fs.writeFile(file, JSON.stringify(config));
+  const pick = (id: string) => ({ provider: "openai", model: id });
+  const check = (id: string) => request("/api/model-access/models/check", json(pick(id)));
+  const models = async () => (await (await request("/api/model-access/models")).json()).models;
+  expect(await models()).toEqual(expect.arrayContaining(marked.map((id) => expect.objectContaining({ ...pick(id), source: "owned", default: false, free: true }))));
+  expect(await models()).not.toEqual(expect.arrayContaining([expect.objectContaining(pick(unmarked))]));
+  expect((await check(unmarked)).status).toBe(404);
+  expect(await (await create({ ...body(), model: pick(unmarked) })).json()).toMatchObject({ error: "unavailable_model" });
+  expect(providerCalls).toEqual([]);
+  reply = (res) => sendModelText(res, "OK");
+  expect(await (await check(marked[0])).json()).toMatchObject({ ...pick(marked[0]), ready: true });
+  const chosen = pick(marked[0]);
+  const created = await create({ ...body(), model: chosen });
+  expect(created.status).toBe(201);
+  expect(await list()).toEqual([expect.objectContaining({ model: chosen })]);
+  expect((await request("/api/model-access/openai", { method: "DELETE" })).status).toBe(204);
+  expect(await models()).toEqual([]);
+  expect((await check(marked[0])).status).toBe(404);
+  expect(await (await create({ ...body("Second agent"), model: chosen })).json()).toMatchObject({ error: "unavailable_model" });
+});
+
 it("rejects invalid JSON, a missing body, bad fields, and a model not on the list", async () => {
   expect((await request("/api/agents", { method: "POST" })).status).toBe(400);
   expect((await request("/api/agents", { ...json(body()), body: "{" })).status).toBe(400);

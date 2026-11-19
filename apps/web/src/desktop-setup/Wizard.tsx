@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createResource, createSignal, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { GatewayLinkPanel, readPendingSetupLink } from "../pages/RemoteGateways";
 import { isDesktopWindow } from "../lib/desktop-window";
@@ -94,6 +94,25 @@ export default function Wizard() {
     await exit("/agents", true).catch(() => undefined);
   };
 
+  const [moreContent, setMoreContent] = createSignal(false);
+  let viewport: HTMLDivElement | undefined;
+  let stage: HTMLDivElement | undefined;
+  const checkScroll = () => {
+    if (viewport) setMoreContent(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight > 1);
+  };
+  createEffect(() => {
+    if (resetting()) return;
+    const observer = new ResizeObserver(checkScroll);
+    if (viewport && stage) { observer.observe(viewport); observer.observe(stage); }
+    checkScroll();
+    onCleanup(() => observer.disconnect());
+  });
+  createEffect(() => {
+    index();
+    link();
+    if (viewport) viewport.scrollTop = 0;
+  });
+
   return <main class="setup-wizard" classList={{ "setup-window": isDesktopWindow() }}>
     <style>{styles}</style>
     <header class="setup-brand"><Wordmark /></header>
@@ -103,7 +122,9 @@ export default function Wizard() {
         <button class="setup-outline" onClick={() => void resetWizard()}>Retry</button>
       </Show>
     </div>}>
-    <div class={`setup-stage setup-${link() ? "link" : steps[index()]}`}>
+    <div class="setup-content" classList={{ "setup-content-more": moreContent() }}>
+    <div class="setup-viewport" ref={viewport} onScroll={checkScroll}>
+    <div ref={stage} class={`setup-stage setup-${link() ? "link" : steps[index()]}`}>
       <Switch>
         <Match when={index() === 0}>
           <AgentMark />
@@ -144,9 +165,11 @@ export default function Wizard() {
       </Switch>
       <Show when={error()}><p role="alert">{error()}</p></Show>
     </div>
+    </div>
+    </div>
     <footer class="setup-footer">
       <span><Show when={index() > 0}><button disabled={busy() || creating() || leavingLink()} onClick={back}>Back</button></Show></span>
-      <div class="setup-dots" aria-hidden="true"><For each={steps}>{(_, i) => <span classList={{ current: i() === index() }} />}</For></div>
+      <div class="setup-dots" role="img" aria-label={`Step ${index() + 1} of ${steps.length}`}><For each={steps}>{(_, i) => <span classList={{ current: i() === index() }} />}</For></div>
       <button disabled={busy() || creating() || leavingLink()} onClick={() => void skip()}>Skip</button>
     </footer>
     </Show>
