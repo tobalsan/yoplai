@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, getByRole, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -313,6 +313,11 @@ describe("ChatView abort handling", () => {
     resetCapabilitiesForTests();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("names the online status dot", async () => {
+    const { container } = renderView();
+    await waitFor(() => expect(getByRole(container, "img", { name: "Online" })).toBeTruthy());
   });
 
   it("starts fresh before opening a dashboard and keeps it through the first message and session resolution", async () => {
@@ -1032,7 +1037,7 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByText(container, "A remote agent wants to write a file on this device")).not.toBeNull());
       expect(queryByText(container, "/tmp/a.txt")).not.toBeNull();
       expect(queryByText(container, "<img src=x onerror=alert(1)>")).not.toBeNull();
-      expect(queryByRole(container, "img")).toBeNull();
+      expect(queryByRole(getByRole(container, "region", { name: "A remote agent wants to write a file on this device" }), "img")).toBeNull();
       dispose();
     });
 

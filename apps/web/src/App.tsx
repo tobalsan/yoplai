@@ -154,7 +154,6 @@ function Layout(props: { children?: JSX.Element }) {
 
         .desktop-window {
           --desktop-buttons-width: 88px;
-          --desktop-buttons-height: 40px;
         }
         /* Electron reads only a literal app-region value, not var(). */
         body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window *,
@@ -171,7 +170,6 @@ function Layout(props: { children?: JSX.Element }) {
         .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
           -webkit-app-region: no-drag;
         }
-        .desktop-window .mobile-sidebar-toggle { margin-top: var(--desktop-buttons-height); }
         .app.zen-mode {
           background: var(--bg-base);
         }
@@ -249,11 +247,7 @@ function McpServerDetailsRouteShell() {
   );
 }
 function ChatRouteShell() {
-  return (
-    <LeftNavShell>
-      <ChatView />
-    </LeftNavShell>
-  );
+  return <ChatView shell={LeftNavShell} />;
 }
 
 function LoginRoute() {

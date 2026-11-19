@@ -20,11 +20,9 @@ const LazyAgentsView = lazy(() =>
 
 export function BoardRouteShell(): JSX.Element {
   return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyProjectsBoard withSidebar={false} />
-      </Suspense>
-    </LeftNavShell>
+    <Suspense>
+      <LazyProjectsBoard />
+    </Suspense>
   );
 }
 
