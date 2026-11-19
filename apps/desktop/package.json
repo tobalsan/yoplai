@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-splash.mjs",
     "start": "node launch.mjs",
     "postinstall": "install-electron",
-    "dist": "node scripts/build-package.mjs"
+    "dist": "node scripts/build-package.mjs",
+    "dist:release": "node scripts/build-package.mjs --release"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.1",
