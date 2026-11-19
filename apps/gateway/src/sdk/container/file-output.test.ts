@@ -218,6 +218,74 @@ describe("container file output adapter", () => {
     }
   );
 
+  it("settles when a data file shrinks after validation", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = root;
+    const data = path.join(root, "data");
+    fs.mkdirSync(data);
+    const source = path.join(data, "report.csv");
+    fs.writeFileSync(source, "a,b\nc,d\n");
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      onHistoryEvent: vi.fn(),
+      onEvent: vi.fn(),
+    } as unknown as SdkRunParams;
+    const ensureMediaDirectories = metadata.ensureMediaDirectories;
+    vi.spyOn(metadata, "ensureMediaDirectories").mockImplementationOnce(async () => {
+      await ensureMediaDirectories();
+      await fsPromises.truncate(source, 4);
+    });
+
+    const result = await new ContainerFileOutputAdapter()
+      .handle(params, { type: "file_output", path: "/workspace/data/report.csv" }, data)
+      .catch((error: unknown) => {
+        expect(isFileOutputRejectedError(error)).toBe(false);
+        return undefined;
+      });
+
+    expect(await fsPromises.readFile(source, "utf8")).toBe("a,b\n");
+    if (result) {
+      expect(result.size).toBe(8);
+      expect(await fsPromises.readFile(result.path, "utf8")).toBe("a,b\n");
+    } else {
+      expect(await fsPromises.readdir(metadata.getMediaOutboundDir())).toEqual([]);
+      expect(params.onEvent).not.toHaveBeenCalled();
+    }
+  }, 1000);
+
+  it("leaves no outbound file when a data file send is aborted before copying", async () => {
+    const root = tempDir();
+    process.env.YOPLAI_HOME = root;
+    const data = path.join(root, "data");
+    fs.mkdirSync(data);
+    fs.writeFileSync(path.join(data, "report.csv"), "a,b\n");
+    const params = {
+      agentId: "cloud",
+      sessionId: "session-1",
+      onHistoryEvent: vi.fn(),
+      onEvent: vi.fn(),
+    } as unknown as SdkRunParams;
+    const controller = new AbortController();
+    const ensureMediaDirectories = metadata.ensureMediaDirectories;
+    vi.spyOn(metadata, "ensureMediaDirectories").mockImplementationOnce(async () => {
+      await ensureMediaDirectories();
+      controller.abort();
+    });
+
+    await expect(
+      new ContainerFileOutputAdapter().handle(
+        params,
+        { type: "file_output", path: "/workspace/data/report.csv" },
+        data,
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(await fsPromises.readdir(metadata.getMediaOutboundDir())).toEqual([]);
+    expect(params.onHistoryEvent).not.toHaveBeenCalled();
+    expect(params.onEvent).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["diagram.png", undefined, "image/png"],
     ["portrait.jpg", undefined, "image/jpeg"],
@@ -478,7 +546,7 @@ describe("container file output adapter", () => {
         onEvent: vi.fn(),
       } as unknown as SdkRunParams;
       if (kind === "copy")
-        vi.spyOn(fsPromises, "copyFile").mockRejectedValueOnce(failure);
+        vi.spyOn(fsPromises, "open").mockRejectedValueOnce(failure);
       if (kind === "registration")
         vi.spyOn(metadata, "registerMediaFile").mockRejectedValueOnce(failure);
       if (kind === "history")

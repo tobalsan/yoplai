@@ -47,6 +47,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Threadit isolates agent sessions by top-level message so a failed turn cannot carry its saved history into other branches of the thread.
+- Gateway `send_file` finishes when a file in `/workspace/data` shrinks during delivery and cleans up incomplete copies on cancellation.
 - The relay requires valid loopback IP addresses in forwarding headers and for the socket peer.
 - Opening chat settings no longer flashes the page while sharing or default-agent preferences load. The menu matches sidebar context menus in both themes, with icons and Agent settings first, Set as default agent hidden for the current default, then Share link.
 
