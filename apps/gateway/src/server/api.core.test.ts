@@ -1211,7 +1211,7 @@ describe("api core session resolution", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         agentId: "alpha",
-        extensions: catalog,
+        extensions: [{ ...catalog[0], canConfigureTeam: true }],
       });
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         loadConfigValue,
@@ -1311,7 +1311,7 @@ describe("api core session resolution", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         agentId: "alpha",
-        extensions: catalog,
+        extensions: [{ ...catalog[0], canConfigureTeam: false }],
       });
     });
 
@@ -1374,7 +1374,7 @@ describe("api core session resolution", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         agentId: "alpha",
-        extensions: catalog,
+        extensions: [{ ...catalog[0], canConfigureTeam: true }],
       });
     });
   });
@@ -1422,7 +1422,7 @@ describe("api core session resolution", () => {
       expect(await response.json()).toEqual({
         agentId: "alpha",
         extensionId: "acme",
-        extensions: catalog,
+        extensions: [{ ...catalog[0], canConfigureTeam: true }],
       });
       // Wrote to the resolved workspace dir with the parsed patch.
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
@@ -1547,6 +1547,7 @@ describe("api core session resolution", () => {
       resolveStartupConfig.mockResolvedValue(resolvedReloaded);
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue(catalog);
+      resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"] });
       const { api } = await import("./api.core.js");
 
       const response = await api.request(
@@ -1574,6 +1575,7 @@ describe("api core session resolution", () => {
       };
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue(catalog);
+      resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"] });
       const { api } = await import("./api.core.js");
 
       const response = await api.request(
@@ -1689,7 +1691,7 @@ describe("api core session resolution", () => {
       );
     });
 
-    it("lets same-team members write team config", async () => {
+    it("lets the agent manager write team config", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
         pool: [],
@@ -1697,7 +1699,7 @@ describe("api core session resolution", () => {
       multiUserState.loaded = true;
       multiUserState.agentAccess = true;
       multiUserState.authContext = {
-        user: { id: "u1", role: "user" },
+        user: { id: "u1", role: "admin" },
         session: { id: "s1", userId: "u1" },
       };
       updateAgentExtensionConfig.mockResolvedValue({});
@@ -1938,11 +1940,12 @@ describe("api core session resolution", () => {
         expect(reloadConfig).toHaveBeenCalled();
       });
 
-      it("lets members change settings of extensions without credentials", async () => {
+      it("requires agent management for team writes to extensions without credentials", async () => {
         resolveExtensionDefinition.mockResolvedValue({ id: "acme", configJsonSchema: { properties: { region: { type: "string" } } } });
         buildExtensionCatalog.mockResolvedValue([{ ...catalog[0], enabled: true, requiredSecrets: [], oauth: null }]);
         updateAgentExtensionConfig.mockResolvedValue({});
-        expect((await patch({ enabled: false })).status).toBe(200);
+        expect((await patch({ enabled: false })).status).toBe(403);
+        expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
       });
 
       it("lets members save a personal OAuth setting while team scope stays admin-only", async () => {

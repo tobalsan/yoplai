@@ -287,6 +287,22 @@ Leave `validation/` with:
 If a validation step cannot be run, say why in `validation/notes.md` and in the
 issue handoff. Do not claim E2E coverage for a path that was not exercised.
 
+## Team extension settings (ALG-724)
+
+Start the gateway and web UI with `pnpm dev` and the isolated `YOPLAI_HOME`
+above. Give a dummy member chat access to the test agent and sign in with
+`buu` as that member and as an agent manager. Use one settings-only extension
+with a seeded plain value and one extension with a plain Enable/Disable button.
+
+1. As the member, open both extension details pages. Verify that the shared
+   value is visible in a disabled input, Save is absent, and Enable/Disable is
+   disabled. Confirm the catalog returns `canConfigureTeam: false` and that a
+   team PATCH with a plain setting returns 403 and leaves `agent.yaml` intact.
+2. As the manager, save a plain setting and change the enabled state. Reload
+   both pages and confirm the new values in the catalog and `agent.yaml`.
+3. Capture a screenshot and matching DOM snapshot for each role, and save the
+   status codes and persistence checks under `validation/`.
+
 ## Dashboard browser checks (ALG-483)
 
 Build the agent image and record its size and increase over the prior image. In the isolated home above, create a sandboxed Pi agent using that image and seed the dashboard skill's CS templates, migrations, and sample data. Use the normal gateway run path to ask the agent to follow "Check it visually" (no installation or render harness), save a screenshot under `/tmp`, and read it. Record time from browser open to PNG: a fresh container must finish within 15 seconds. Capture the read tool's image content block and the model's next response describing something visible only in the screenshot.

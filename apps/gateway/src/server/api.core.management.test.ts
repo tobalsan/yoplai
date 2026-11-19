@@ -99,15 +99,16 @@ describe("public agent team configuration permissions", () => {
     return api.request(forwardAuthContextToRequest(request, { user: { id: userId, role, approved: true }, session: { id: `session-${userId}`, userId } }));
   }
 
-  it("keeps foreign admins and regular Public users out of team credentials while allowing their personal connections", async () => {
+  it("keeps foreign admins and regular Public users out of team settings while allowing their personal connections", async () => {
     for (const [userId, role] of [["foreign", "admin"], ["member", "user"]] as const) {
       const catalog = await request(userId, role, "/agents/alpha/extensions");
       expect(catalog.status).toBe(200);
       expect((await catalog.json()).extensions).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: "token", canConfigureTeam: false }),
         expect.objectContaining({ id: "oauth", canConfigureTeam: false }),
+        expect.objectContaining({ id: "settings", canConfigureTeam: false }),
       ]));
-      for (const [extension, patch] of [["token", { secrets: { apiKey: "example-value" } }], ["token", { config: { region: "eu" } }], ["token", { enabled: false }], ["oauth", { config: { allowWrite: true } }], ["oauth", { enabled: false }]] as const) {
+      for (const [extension, patch] of [["token", { secrets: { apiKey: "example-value" } }], ["token", { config: { region: "eu" } }], ["token", { enabled: false }], ["oauth", { config: { allowWrite: true } }], ["oauth", { enabled: false }], ["settings", { config: { region: "eu" } }], ["settings", { enabled: false }]] as const) {
         expect((await request(userId, role, `/agents/alpha/extensions/${extension}`, "PATCH", patch)).status).toBe(403);
       }
       expect((await request(userId, role, "/agents/alpha/extensions/token/credentials", "DELETE")).status).toBe(403);
@@ -116,17 +117,17 @@ describe("public agent team configuration permissions", () => {
       expect((await personal.json()).extensions).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: "token", personalSecretFields: ["apiKey"], canConfigureTeam: false }),
       ]));
-      expect((await request(userId, role, "/agents/alpha/extensions/settings", "PATCH", { config: { region: "eu" } })).status).toBe(200);
     }
   });
 
-  it("allows owning admins and superadmins to configure team credentials and OAuth", async () => {
+  it("allows owning admins and superadmins to configure team extensions", async () => {
     for (const [userId, role] of [["manager", "admin"], ["super", "superadmin"]] as const) {
       const catalog = await request(userId, role, "/agents/alpha/extensions");
       expect(catalog.status).toBe(200);
       expect((await catalog.json()).extensions).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: "token", canConfigureTeam: true }),
         expect.objectContaining({ id: "oauth", canConfigureTeam: true }),
+        expect.objectContaining({ id: "settings", canConfigureTeam: true }),
       ]));
       const saved = await request(userId, role, "/agents/alpha/extensions/token", "PATCH", { secrets: { apiKey: "example-team" }, config: { region: "eu" } });
       expect(saved.status).toBe(200);
@@ -134,7 +135,8 @@ describe("public agent team configuration permissions", () => {
         expect.objectContaining({ id: "token", configValues: { apiKey: "********", region: "eu" } }),
       ]));
       expect((await request(userId, role, "/agents/alpha/extensions/oauth", "PATCH", { config: { allowWrite: true } })).status).toBe(200);
-      for (const extension of ["token", "oauth"]) {
+      expect((await request(userId, role, "/agents/alpha/extensions/settings", "PATCH", { config: { region: "eu" } })).status).toBe(200);
+      for (const extension of ["token", "oauth", "settings"]) {
         expect((await request(userId, role, `/agents/alpha/extensions/${extension}`, "PATCH", { enabled: false })).status).toBe(200);
         expect((await request(userId, role, `/agents/alpha/extensions/${extension}`, "PATCH", { enabled: true })).status).toBe(200);
       }

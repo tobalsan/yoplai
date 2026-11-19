@@ -290,10 +290,10 @@ describe("ExtensionDetails", () => {
     vi.unstubAllGlobals();
   });
 
-  it("enables a toggle-only extension from its details page", async () => {
+  it.each([true, undefined])("enables a toggle-only extension with canConfigureTeam=%s", async (canConfigureTeam) => {
     setSession("admin");
     fetchAgentExtensionsMock.mockResolvedValue([
-      entry({ tier: "toggle-only", enabled: false }),
+      entry({ tier: "toggle-only", enabled: false, canConfigureTeam }),
     ]);
     patchAgentExtensionMock.mockResolvedValue([
       entry({ tier: "toggle-only", enabled: true }),
@@ -304,6 +304,7 @@ describe("ExtensionDetails", () => {
       "button.ext-details-configure"
     )!;
     expect(button.textContent).toBe("Enable");
+    expect(button.disabled).toBe(false);
     button.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -313,6 +314,19 @@ describe("ExtensionDetails", () => {
     expect(
       container.querySelector("button.ext-details-configure")?.textContent
     ).toBe("Disable");
+  });
+
+  it.each([false, true])("locks the team toggle for a non-manager when enabled=%s", async (enabled) => {
+    setSession("user");
+    fetchAgentExtensionsMock.mockResolvedValue([entry({ tier: "toggle-only", enabled, canConfigureTeam: false })]);
+    await mount("scribe", "exa");
+
+    const button = container.querySelector<HTMLButtonElement>("button.ext-details-configure")!;
+    expect(button.textContent).toBe(enabled ? "Disable" : "Enable");
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("Ask an agent manager");
+    button.click();
+    expect(patchAgentExtensionMock).not.toHaveBeenCalled();
   });
 
   it("locks the toggle for root-managed extensions", async () => {

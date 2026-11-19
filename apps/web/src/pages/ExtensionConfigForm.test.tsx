@@ -411,6 +411,23 @@ describe("ExtensionConfigForm", () => {
     expect(container.textContent).toContain("An admin must configure them");
   });
 
+  it.each([false, true])("shows settings-only team values with canConfigureTeam=%s", async (canConfigureTeam) => {
+    fetchAgentExtensionMock.mockResolvedValue(exaEntry({
+      requiredSecrets: [],
+      configJsonSchema: { properties: { region: { type: "string" } } },
+      configValues: { region: "West" },
+      canConfigureTeam,
+    }));
+    await mount("scribe", "exa");
+
+    const region = container.querySelector<HTMLInputElement>("#ext-field-region");
+    expect(region?.value).toBe("West");
+    expect(region?.disabled).toBe(!canConfigureTeam);
+    const save = container.querySelector<HTMLButtonElement>(".ext-config-save");
+    if (canConfigureTeam) expect(save?.disabled).toBe(false);
+    else expect(save).toBeNull();
+  });
+
   it("lets admins select Whole team and keeps scope-specific secret presence separate", async () => {
     fetchAgentExtensionMock.mockResolvedValue(exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true }));
     patchAgentExtensionMock.mockResolvedValue([exaEntry({ personalSecretFields: ["apiKey"], canConfigureTeam: true, configValues: { apiKey: "********" } })]);
