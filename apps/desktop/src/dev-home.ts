@@ -51,7 +51,7 @@ export function seedDevHome({ home, mode }: DevHome, env: NodeJS.ProcessEnv, war
   const envPath = path.join(home, ".env");
   const original = readEnvFile(envPath);
   const values = original ? parseEnv(original.toString("utf8")) : {};
-  if (!Object.hasOwn(values, "OAUTH_ENCRYPTION_KEY")) {
+  if (env.OAUTH_ENCRYPTION_KEY === undefined && !Object.hasOwn(values, "OAUTH_ENCRYPTION_KEY")) {
     const key = randomBytes(32).toString("base64url");
     const separator = original?.length && original.at(-1) !== 10 ? "\n" : "";
     fs.appendFileSync(envPath, `${separator}OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });

@@ -42,6 +42,6 @@ Use `pnpm desktop --fresh` or `YOPLAI_DESKTOP_FRESH=1 pnpm desktop` for a new te
 
 **CAUTION:** Do not run a second gateway on the same home. Both gateways can write to the same state files.
 
-The desktop seed creates a config only if neither `yoplai.json` nor `aihub.json` exists. It adds `OAUTH_ENCRYPTION_KEY` to `.env` only if the file lacks the key. The seed does not change agent or session files. If the config lacks agent discovery rules or a usable `oauth.encryptionKey`, the desktop app warns but does not change the config.
+The desktop seed creates a config only if neither `yoplai.json` nor `aihub.json` exists. It adds `OAUTH_ENCRYPTION_KEY` to `.env` only if both the shell and the file lack the key. The seed does not change agent or session files. If the config lacks agent discovery rules or a usable `oauth.encryptionKey`, the desktop app warns but does not change the config.
 
 The gateway makes separate writes at start. The dashboard registry migration writes `canvas/schema.json` and can update `canvas/registry.json`. The gateway also resets `run/active-turns.json` to an empty turn list.

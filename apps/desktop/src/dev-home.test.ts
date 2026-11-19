@@ -88,6 +88,19 @@ it("appends a key after the original bytes and does not append it twice", () => 
   expect(warn).not.toHaveBeenCalled();
 });
 
+it.each([undefined, "OTHER=value"])("does not write an OAuth key when the shell supplies it (%j)", (original) => {
+  const env = { HOME: userHome, OAUTH_ENCRYPTION_KEY: "test-key" };
+  const selected = createDevHome(env, [], appData);
+  const envFile = path.join(selected.home, ".env");
+  if (original !== undefined) fs.writeFileSync(envFile, original);
+  const warn = vi.fn();
+
+  expect(seedDevHome(selected, env, warn)).toBe("OAUTH_ENCRYPTION_KEY");
+  expect(warn).not.toHaveBeenCalled();
+  if (original === undefined) expect(fs.existsSync(envFile)).toBe(false);
+  else expect(fs.readFileSync(envFile, "utf8")).toBe(original);
+});
+
 it("warns if the configured OAuth key has no value", () => {
   const env = { HOME: userHome };
   const selected = createDevHome(env, [], appData);
