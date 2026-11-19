@@ -77,7 +77,7 @@ beforeEach(() => {
 afterEach(() => { dispose?.(); dispose = undefined; root.remove(); resetCapabilitiesForTests(); vi.unstubAllGlobals(); });
 
 function boot(path: string) { history.replaceState({}, "", path); dispose = render(() => <App />, root); }
-async function modelScreen() { await click("Get started"); await click("Continue"); await heading("Give your agents a model."); }
+async function modelScreen() { await click("Get started"); await click("Continue"); await heading("Choose a model provider"); }
 async function linkScreen() { await click("Get started"); await click("Connect to a Yoplai server"); await click("Continue"); }
 
 it("redirects to setup, shows Back after welcome, and saves a skipped screen", async () => {
@@ -654,7 +654,7 @@ it.each(["answered", "failed"] as const)("resumes an active greeting and reloads
     await button("Fix model access");
     expect(completed).toBe(false);
     await click("Fix model access");
-    await heading("Give your agents a model.");
+    await heading("Choose a model provider");
     expect(new URLSearchParams(location.search).get("return")).toBe(path);
     await click("Continue");
     await waitFor(() => expect(location.pathname + location.search).toBe(path));
@@ -795,7 +795,7 @@ it("offers model repair for an agent whose exact model is missing", async () => 
   overrides = (path) => path === "/api/model-access/models" ? response({ models: [models[1]] }) : undefined;
   boot("/chat/alpha?session=unrelated");
   await click("Fix model access");
-  await heading("Give your agents a model.");
+  await heading("Choose a model provider");
   expect(new URLSearchParams(location.search).get("return")).toBe("/chat/alpha?session=unrelated");
 });
 

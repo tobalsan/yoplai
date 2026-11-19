@@ -147,8 +147,8 @@ export default function Wizard() {
         </Match>
         <Match when={index() === 2}>
           <AgentMark />
-          <h1>Give your agents a model.</h1>
-          <p class="setup-subtitle">Turn on one source or more.</p>
+          <h1>Choose a model provider</h1>
+          <p class="setup-subtitle">Turn on one source or more</p>
           <ModelAccess onContinue={(list) => {
             if (returnPath && repairStep === "model") void exit(returnPath).catch(() => undefined);
             else { setModels(list); setIndex(3); }
