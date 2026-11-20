@@ -70,7 +70,7 @@ describe("optional extension loading", () => {
       },
     }));
     try {
-      const { loadExtensions, reloadExtensions } = await import("./registry.js");
+      const { loadExtensions, reconcileExternal, withExtensionMutation } = await import("./registry.js");
       await loadExtensions(GatewayConfigSchema.parse({ version: 3, extensionsPath: root, agents: [] }));
       const config = GatewayConfigSchema.parse({
         version: 3,
@@ -82,7 +82,7 @@ describe("optional extension loading", () => {
         }],
       });
 
-      const extensions = await reloadExtensions(config);
+      const extensions = await withExtensionMutation(() => reconcileExternal(config));
 
       expect(extensions.map((extension) => extension.id)).toEqual([
         "taskLifecycle", "capabilityDiscovery", "canvas", "sessionHistory", "deviceTools",

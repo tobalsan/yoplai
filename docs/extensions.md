@@ -80,6 +80,13 @@ symlink, even if its target has a valid record.
 Removal keeps the agent settings. A loaded extension that needs the target
 blocks removal. Agent use alone does not block removal.
 
+If the gateway crashes after moving the old version out but before moving the
+new version in, the extension folder may be missing. There is no automatic
+restore. With the gateway stopped, check the backup's `.install.json` under
+`<extensionsPath>/.trash/<id>-<uuid>` for the expected ID and version. If
+`<extensionsPath>/<id>` is absent, move the matching backup folder back to
+that path and restart the gateway. Do not overwrite an existing folder.
+
 Enable the extension on an agent after installation if the agent does not
 already use it. In multi-user mode, you need permission to manage the agent to
 enable the extension for the team.

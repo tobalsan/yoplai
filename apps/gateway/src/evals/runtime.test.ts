@@ -31,7 +31,7 @@ vi.mock("../extensions/registry.js", () => ({
 vi.mock("../agents/index.js", () => ({ runAgent }));
 vi.mock("../extensions/context.js", () => ({
   createExtensionContext: () => ({ ctx: true, getDataDir: () => evalHome }),
-  bindExtensionContext: (context: object, id: string) => ({ ...context, id }),
+  bindExtensionContext: (context: object, extension: { id: string }) => ({ ...context, id: extension.id }),
 }));
 
 describe("runEval", () => {

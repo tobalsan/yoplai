@@ -8,8 +8,8 @@ import { startGatewayHotReload } from "../config/hot-reload.js";
 import { listSettingsChanges } from "../audit/store.js";
 import { app } from "../server/index.js";
 import { buildInnerApi } from "../server/api.core.js";
-import { getCurrentInnerApi, getExtensionRuntime, loadExtensions, reloadExtensions, setExtensionActivator, stopCurrentExtensions } from "./registry.js";
-import { createExtensionContext } from "./context.js";
+import { getCurrentInnerApi, getExtensionRuntime, loadExtensions, setExtensionActivator, stopCurrentExtensions } from "./registry.js";
+import { bindExtensionContext, createExtensionContext } from "./context.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { fixtureRelease, packFixture } from "./release-bundle.fixture.js";
 
@@ -22,7 +22,7 @@ const multiUser = mode === "fork-race" ? {
 const agentYaml = path.join(CONFIG_DIR, "agent.yaml");
 const fixtureYaml = "id: fixture\nname: Fixture\nmodel:\n  provider: openai\n  model: fixture\n";
 const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(["selection", "double-rename"].includes(mode) ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
-  extensions: { sample: { enabled: true }, ...(mode === "recovery-routes" ? { other: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
+  extensions: { sample: { enabled: true }, ...(["recovery-routes", "restart"].includes(mode) ? { other: { enabled: true }, dependent: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
 if (multiUser) {
   const poolDir = path.join(CONFIG_DIR, "pool", "scribe");
   await fs.mkdir(poolDir, { recursive: true });
@@ -47,11 +47,11 @@ setExtensionActivator(async (extension) => {
     configAtStart.push(loadConfig().extensionCatalog?.enabled);
   }
   if (["sample", "mcp", "retained", "inactive", "dependent", "other", "mail", "drive"].includes(extension.id)) {
-    await extension.start(ctx);
+    await extension.start(bindExtensionContext(ctx, extension));
   }
 }, buildInnerApi, buildInnerApi(initial));
 
-let fixture = fixtureRelease(base, "1.0.0", { failStop: mode === "stop", oauthTokenUrl: "https://example.test/v1" });
+let fixture = fixtureRelease(base, "1.0.0", { failStop: mode === "stop", readOnStop: mode === "success", failSecondStart: mode === "restart", reportPagePrefix: mode === "prefix", oauthTokenUrl: "https://example.test/v1" });
 function gate() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
@@ -105,7 +105,7 @@ await call("GET", "/api/capabilities", 200);
 await answer(404);
 await install();
 assert.equal(await answer(), "1.0.0");
-assert.equal(await call("GET", "/x/sample/info", 200), "1.0.0");
+assert.equal(await call("GET", "/x/sample/info", 200), mode === "prefix" ? "/x/sample" : "1.0.0");
 assert.equal(await toolAnswer(), "1.0.0");
 const firstRecord = await readRecord();
 const firstSha256 = fixture.entry.sha256;
@@ -126,8 +126,39 @@ const audit = (action: string, before: string | null, after: string | null) => {
 };
 
 switch (mode) {
+  case "prefix": break;
+  case "restart": {
+    for (const id of ["other", "dependent"]) {
+      fixture = fixtureRelease(base, "1.0.0", { id, dependencies: id === "dependent" ? ["sample"] : [] });
+      await refresh();
+      await install(200, id);
+      await call("GET", `/api/${id}`, 200);
+    }
+    fixture = fixtureRelease(base, "2.0.0", { failStart: true, oauthTokenUrl: "https://example.test/v2" });
+    await refresh();
+    const error = JSON.parse(await install(409)).error;
+    await answer(404);
+    await call("GET", "/x/sample/info", 404);
+    await call("GET", "/api/dependent", 404);
+    await call("GET", "/api/other", 200);
+    assert.ok(!await getExtensionRuntime().getTool(config.agents[0], "sample_version", config));
+    assert.equal(getOAuthProvider("sampleProvider"), undefined);
+    assert.equal(await readRecord(), firstRecord);
+    assert.match(error, /Start rejected/);
+    assert.match(error, /Restart rejected/);
+
+    await fs.writeFile(getConfigPath(), JSON.stringify({ ...config, agents: [] }));
+    await reloadAfterExtensionWrite();
+    assert.equal(await answer(), "1.0.0");
+    assert.equal(await call("GET", "/x/sample/info", 200), "1.0.0");
+    assert.equal(await toolAnswer(), "1.0.0");
+    assert.equal(getOAuthProvider("sampleProvider")?.tokenUrl, "https://example.test/v1");
+    await call("GET", "/api/dependent", 200);
+    await call("GET", "/api/other", 200);
+    break;
+  }
   case "success": {
-    fixture = fixtureRelease(base, "2.0.0", { oauthTokenUrl: "https://example.test/v2" });
+    fixture = fixtureRelease(base, "2.0.0", { readOnStop: true, oauthTokenUrl: "https://example.test/v2" });
     await refresh();
     const release = gate();
     const reached = gate();
@@ -169,9 +200,8 @@ switch (mode) {
     assert.equal(getOAuthProvider("sampleProvider")?.tokenUrl, "https://example.test/v1");
     assert.equal(await readRecord(), firstRecord);
     assert.equal(await fs.readFile(path.join(root, "sample", "LICENSE"), "utf8"), "1.0.0");
-    assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0", ...(mode === "config" ? [] : [
-      "sample stop 1.0.0", ...(["start", "reload"].includes(mode) ? ["sample start 2.0.0 2.0.0", "sample stop 2.0.0"] : []), "sample start 1.0.0 1.0.0",
-    ])]);
+    assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0", "sample stop 1.0.0",
+      ...(["start", "reload"].includes(mode) ? ["sample start 2.0.0 2.0.0", "sample stop 2.0.0"] : []), "sample start 1.0.0 1.0.0"]);
     break;
   }
   case "restore": {
@@ -319,14 +349,19 @@ switch (mode) {
       }
       return rename(from, to);
     };
-    try { assert.equal(JSON.parse(await install(409)).error, "Staging rename failed."); }
+    try {
+      const error = JSON.parse(await install(409)).error;
+      assert.match(error, /Staging rename failed/);
+      if (mode !== "rename") assert.match(error, /Backup rename failed/);
+    }
     finally { fs.rename = rename; }
     if (routeFailure) {
       await answer(404);
       await call("GET", "/api/other", 404);
       await call("GET", "/api/capabilities", 200);
       await fs.unlink(marker);
-      await reloadExtensions(config);
+      await fs.writeFile(getConfigPath(), JSON.stringify({ ...config, agents: [] }));
+      await reloadAfterExtensionWrite();
       await call("GET", "/api/other", 200);
       await answer(404);
       await stopCurrentExtensions();
@@ -346,7 +381,7 @@ switch (mode) {
     }
     assert.deepEqual(await snapshot(target), firstFiles);
     assert.equal(await answer(), "1.0.0");
-    assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0"]);
+    assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0", "sample stop 1.0.0", "sample start 1.0.0 1.0.0"]);
     break;
   }
   case "bundles": {
@@ -435,7 +470,7 @@ switch (mode) {
     await refresh();
     assert.match(await install(409, "drive"), /OAuth provider google conflicts/);
     assert.deepEqual(await snapshot(drive), files);
-    assert.deepEqual(hooks, hooksBefore);
+    assert.deepEqual(hooks.slice(hooksBefore.length), ["drive stop 1.0.0", "drive start 1.0.0 1.0.0"]);
     assert.deepEqual(getOAuthProvider("google"), provider);
     await remove(200, "mail");
     assert.deepEqual(getOAuthProvider("google"), provider);
