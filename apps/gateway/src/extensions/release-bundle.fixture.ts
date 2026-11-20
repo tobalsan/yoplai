@@ -21,7 +21,7 @@ export function packFixture(files: Record<string, string>): Buffer {
   return gzipSync(Buffer.concat([...chunks, Buffer.alloc(1024)]));
 }
 
-export function fixtureRelease(base: string, version: string, options: { failStart?: boolean; failConfig?: boolean; failStop?: boolean } = {}) {
+export function fixtureRelease(base: string, version: string, options: { failStart?: boolean; failConfig?: boolean; failStop?: boolean; oauthTokenUrl?: string } = {}) {
   const id = "sample";
   const metadata = { id, name: "Sample Extension", description: "A local fixture.", tagline: "Read a sample", category: "developer", version, minYoplai: "0.11.0" };
   const bundle = packFixture({
@@ -35,6 +35,9 @@ export function fixtureRelease(base: string, version: string, options: { failSta
         configSchema: { parse: (value) => value, safeParse: (value) => ({ success: true, data: value }) },
         validateConfig: () => ({ valid: ${!options.failConfig}, errors: ${JSON.stringify(options.failConfig ? ["Config rejected."] : [])} }),
         registerRoutes: (api) => api.get("/sample", (c) => c.text(${JSON.stringify(version)})),
+        registerPageRoutes: (api) => api.get("/info", (c) => c.text(${JSON.stringify(version)})),
+        getAgentTools: () => [{ name: "sample_version", description: "Get the fixture version.", parameters: {}, execute: () => ${JSON.stringify(version)} }],
+        ${options.oauthTokenUrl ? `oauthProviders: [{ id: "sampleProvider", displayName: "Sample", authorizeUrl: "https://example.test/authorize", tokenUrl: ${JSON.stringify(options.oauthTokenUrl)}, defaultScopes: [] }],` : ""}
         capabilities: () => [],
         start: async () => {
           const sibling = readFileSync(new URL("LICENSE", import.meta.url), "utf8");
