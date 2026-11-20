@@ -9,6 +9,7 @@ import { fetchCatalogAsset, readCatalogBytes } from "./release-catalog-fetch.js"
 
 const unzip = promisify(gunzip);
 const block = 512;
+const extensionCheckTimeoutMs = 30_000;
 const allowedFiles = new Set(["index.js", "manifest.json", "icon.svg", "icon.png", "pdf.worker.mjs", "LICENSE"]);
 
 function numberField(field: Buffer): number {
@@ -50,13 +51,16 @@ export async function extractReleaseBundle(bytes: Buffer, directory: string): Pr
 async function readStagedExtensionId(indexPath: string, key: string): Promise<string> {
   const entry = import.meta.url.endsWith(".ts") ? "./release-bundle.worker.ts" : "./release-bundle.worker.js";
   const worker = new Worker(new URL(entry, import.meta.url), { workerData: { indexPath, key } });
+  let timer: NodeJS.Timeout | undefined;
   try {
     return await new Promise<string>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("The extension check timed out.")), extensionCheckTimeoutMs);
       worker.once("message", resolve);
       worker.once("error", reject);
       worker.once("exit", () => reject(new Error("The extension check stopped without a result.")));
     });
   } finally {
+    clearTimeout(timer);
     await worker.terminate();
   }
 }

@@ -90,6 +90,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
+
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.
 
 - The catalog uses theme colors for update badges and errors. It shows the gateway error on the extension row.

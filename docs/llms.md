@@ -684,6 +684,7 @@ Manual extensions with multiple files still need a restart after a rebuild.
 The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.url` selects the catalog source. `extensionCatalog.enabled: false` disables it.
 The gateway caches the last catalog with its ETag. The catalog uses HTTPS, with an HTTP exception for loopback tests.
 The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
+A worker checks the exported definition. The gateway gives the worker 30 seconds and stops it before it releases the lock.
 The install record at `<extensionsPath>/<id>/.install.json` marks a catalog install. The catalog does not replace or remove manual extensions.
 One lock protects catalog changes, file-based config reloads, and config reconciliation.
 New agent forks use the same lock to reload config. Independent reload requests wait for the lock.

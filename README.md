@@ -12,6 +12,7 @@ Open **Admin → Extensions** to browse the catalog. Use the search field or the
 Use **Install**, **Update**, or **Remove** on an extension. If an action fails, read the error on the extension row.
 Use the gateway selector for a linked gateway. In multi-user mode, the selected gateway requires a superadmin.
 Catalog changes do not require a restart. The catalog does not replace or remove extensions that you manage by hand.
+The gateway stops the bundle check after 30 seconds and reports an error.
 If the gateway cannot restore an extension, it keeps the backup.
 The gateway stops serving that extension and the extensions that need it.
 

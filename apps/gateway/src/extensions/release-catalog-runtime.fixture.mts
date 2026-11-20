@@ -377,6 +377,26 @@ switch (mode) {
     assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0"]);
     break;
   }
+  case "bundle-timeout": {
+    const next = fixtureRelease(base, "2.0.0");
+    const bundle = packFixture({
+      "index.js": "setInterval(() => {}, 1_000); await new Promise(() => {});",
+      "manifest.json": JSON.stringify({ id: "sample", version: "2.0.0" }),
+    });
+    fixture = { ...next, bundle, catalog: { ...next.catalog, extensions: [
+      { ...next.entry, size: bundle.length, sha256: createHash("sha256").update(bundle).digest("hex") },
+    ] } };
+    await refresh();
+    assert.deepEqual(JSON.parse(await install(409)), { error: "The extension check timed out." });
+    assert.deepEqual(await fs.readdir(path.join(root, ".staging")), []);
+    assert.deepEqual(await snapshot(target), firstFiles);
+    assert.equal(await answer(), "1.0.0");
+    fixture = next;
+    await refresh();
+    await install();
+    assert.equal(await answer(), "2.0.0");
+    break;
+  }
   case "selection": {
     for (const id of ["mcp", "retained", "inactive", "dependent"]) {
       fixture = fixtureRelease(base, "1.0.0", { id, dependencies: id === "dependent" ? ["sample"] : [] });
