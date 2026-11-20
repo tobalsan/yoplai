@@ -500,7 +500,8 @@ export function reservedExtensionIds(): string[] {
  * home-route owner. Pure w.r.t. runtime state — does not touch the runtime.
  */
 async function deriveExtensionsToLoad(
-  config: GatewayConfig
+  config: GatewayConfig,
+  requiredExternalId?: string
 ): Promise<{ extensions: Extension[]; homeExtensionId: string | undefined }> {
   const extensions = [...coreExtensions];
   const rawConfigs = new Map<string, Record<string, unknown>>();
@@ -558,6 +559,9 @@ async function deriveExtensionsToLoad(
   // Discover external extensions
   const extensionsPath = getExternalExtensionsPath(config);
   const external = await discoverExternalExtensions(extensionsPath);
+  if (requiredExternalId && !external.some((item) => item.id === requiredExternalId && item.install?.id === requiredExternalId)) {
+    throw new Error(`Could not load extension ${requiredExternalId}.`);
+  }
   for (const { extension, id } of external) {
     if (EXTENSION_REGISTRY[id]) {
       throw new Error(
@@ -653,7 +657,7 @@ export function reloadExtensions(config: GatewayConfig): Promise<Extension[]> {
 
 export async function reconcileExternal(
   config: GatewayConfig,
-  { restoreFiles }: { restoreFiles?: () => Promise<void> } = {}
+  { restoreFiles, requiredExternalId }: { restoreFiles?: () => Promise<void>; requiredExternalId?: string } = {}
 ): Promise<Extension[]> {
   const current = extensionRuntime.getLoadedExtensions();
   const previousHome = extensionRuntime.getHomeExtension();
@@ -663,7 +667,7 @@ export async function reconcileExternal(
   const starting: Extension[] = [];
   const start = activateExtension;
   try {
-    const { extensions, homeExtensionId } = await deriveExtensionsToLoad(config);
+    const { extensions, homeExtensionId } = await deriveExtensionsToLoad(config, requiredExternalId);
     const wanted = new Set(extensions);
     const running = new Set(current);
     const added = extensions.filter((extension) => !running.has(extension));

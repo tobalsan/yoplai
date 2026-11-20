@@ -1,3 +1,6 @@
+import { allowsCatalogWriteOrigin } from "./extension-catalog-policy.js";
+import { CatalogOperationError, installFromCatalog, listReleaseCatalog, removeFromCatalog } from "../extensions/release-catalog.js";
+import { ExtensionOperationBusyError } from "../extensions/registry.js";
 import { desktopSetupAllowed } from "../desktop/guard.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
@@ -264,6 +267,49 @@ async function isSuperadminRequest(c: Context): Promise<boolean> {
   const role = (await getRequestAuthContext(c))?.user.role;
   return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 }
+
+const extensionCatalogPath = "/admin/extension-catalog";
+api.use(`${extensionCatalogPath}/*`, async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  if (loadConfig().extensionCatalog?.enabled === false) return c.json({ error: "The catalog is disabled." }, 404);
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "Only a superadmin can use the catalog." }, 403);
+  if (c.req.method !== "GET" && !allowsCatalogWriteOrigin(c.req.header("Origin"))) {
+    return c.json({ error: "The browser origin is not allowed." }, 403);
+  }
+  await next();
+});
+
+function extensionCatalogError(c: Context, error: unknown) {
+  if (error instanceof CatalogOperationError) return c.json({ error: error.message }, error.status);
+  if (error instanceof ExtensionOperationBusyError) return c.json({ error: error.message }, 409);
+  return c.json({ error: error instanceof Error ? error.message : "The extension operation failed." }, 409);
+}
+
+api.get(extensionCatalogPath, async (c) => {
+  try { return c.json(await listReleaseCatalog(loadConfig())); }
+  catch (error) { return extensionCatalogError(c, error); }
+});
+api.post(`${extensionCatalogPath}/refresh`, async (c) => {
+  try { return c.json(await listReleaseCatalog(loadConfig(), true)); }
+  catch (error) { return extensionCatalogError(c, error); }
+});
+api.post(`${extensionCatalogPath}/:id/install`, async (c) => {
+  try {
+    const actor = await getAuditActor(c);
+    const { entry, action } = await installFromCatalog(loadConfig(), c.req.param("id"), actor.actorUserId ?? "local");
+    recordSettingsChange({ ...actor, action, targetType: "extension", targetId: entry.id, changes: [] });
+    return c.json(entry);
+  } catch (error) { return extensionCatalogError(c, error); }
+});
+api.delete(`${extensionCatalogPath}/:id`, async (c) => {
+  try {
+    const actor = await getAuditActor(c);
+    const id = c.req.param("id");
+    await removeFromCatalog(loadConfig(), id);
+    recordSettingsChange({ ...actor, action: "extension.remove", targetType: "extension", targetId: id, changes: [] });
+    return c.json({ ok: true });
+  } catch (error) { return extensionCatalogError(c, error); }
+});
 
 api.get("/top-extensions", (c) => c.json(readTopExtensions()));
 

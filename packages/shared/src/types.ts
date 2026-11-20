@@ -1340,6 +1340,7 @@ const GatewayCommonFields = {
   extensions: ExtensionsConfigSchema,
   extensionEnvAllowlist: z.array(z.string()).optional(),
   extensionsPath: z.string().optional(),
+  extensionCatalog: z.object({ url: z.string().url().optional(), enabled: z.boolean().optional() }).optional(),
   branding: z
     .object({
       name: z.string().optional(),

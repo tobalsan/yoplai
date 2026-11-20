@@ -1,3 +1,4 @@
+import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
 import { createModelAccess } from "../desktop/model-access.js";
@@ -156,7 +157,7 @@ app.use("/api/*", async (c, next) => {
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
     // These core routes are also available without multi-user.
-    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota")) continue;
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || ownsExtensionCatalogPath(path))) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
