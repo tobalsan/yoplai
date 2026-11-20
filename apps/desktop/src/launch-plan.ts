@@ -38,7 +38,7 @@ const LOOPBACK_HOST = "127.0.0.1";
  * This is the only module that knows about pnpm, tsx, and Vite.
  */
 export function createDevLaunchPlan(
-  { gatewayPort, uiPort }: Pick<LaunchPorts, "gatewayPort" | "uiPort">,
+  { gatewayPort, uiPort, appsPort }: LaunchPorts,
   { home, userHome, mode }: DevHome,
   parentEnv: NodeJS.ProcessEnv,
   oauthKeyName?: string,
@@ -93,6 +93,7 @@ export function createDevLaunchPlan(
           YOPLAI_UI_PORT: String(uiPort),
           YOPLAI_UI_HOST: LOOPBACK_HOST,
           YOPLAI_GATEWAY_HOST: LOOPBACK_HOST,
+          YOPLAI_APPS_PORT: String(appsPort),
           NODE_OPTIONS: gatewayNodeOptions,
         },
       },

@@ -14,10 +14,11 @@ it.each(["persistent", "fresh"])("isolates config overrides and child environmen
       YOPLAI_DESKTOP_KEYCHAIN: "1", OAUTH_ENCRYPTION_KEY: "sentinel", CUSTOM_KEY: "custom-sentinel",
     };
     const home = createDevHome(env, mode === "fresh" ? ["--fresh"] : [], root);
-    const plan = createDevLaunchPlan({ gatewayPort: 4001, uiPort: 3001 }, home, env, "CUSTOM_KEY");
+    const plan = createDevLaunchPlan({ gatewayPort: 4001, uiPort: 3001, appsPort: 4002 }, home, env, "CUSTOM_KEY");
     const gateway = plan.children.find((child) => child.name === "gateway")!;
     const web = plan.children.find((child) => child.name === "web")!;
     expect(gateway.env.YOPLAI_DESKTOP).toBe("1");
+    expect(gateway.env.YOPLAI_APPS_PORT).toBe("4002");
     expect(gateway.env.YOPLAI_DESKTOP_KEYCHAIN).toBe(mode === "persistent" ? "1" : "0");
     expect(gateway.env.OAUTH_ENCRYPTION_KEY).toBe("sentinel");
     expect(gateway.env.CUSTOM_KEY).toBe("custom-sentinel");
