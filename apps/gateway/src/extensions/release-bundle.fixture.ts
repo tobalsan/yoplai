@@ -21,7 +21,7 @@ export function packFixture(files: Record<string, string>, types: Record<string,
   return gzipSync(Buffer.concat([...chunks, Buffer.alloc(1024)]));
 }
 
-export function fixtureRelease(base: string, version: string, options: { id?: string; dependencies?: string[]; failStart?: boolean; failConfig?: boolean; failStop?: boolean; failReload?: boolean; writeOnStart?: boolean; oauthTokenUrl?: string; providerId?: string } = {}) {
+export function fixtureRelease(base: string, version: string, options: { id?: string; dependencies?: string[]; failStart?: boolean; failConfig?: boolean; failStop?: boolean; failReload?: boolean; failRoutesOnMarker?: boolean; writeOnStart?: boolean; oauthTokenUrl?: string; providerId?: string } = {}) {
   const id = options.id ?? "sample";
   const metadata = { id, name: "Sample Extension", description: "A local fixture.", tagline: "Read a sample", category: "developer", version, minYoplai: "0.11.0" };
   const bundle = packFixture({
@@ -29,13 +29,14 @@ export function fixtureRelease(base: string, version: string, options: { id?: st
     "LICENSE": version,
     "index.js": `
       import assert from "node:assert/strict";
-      import { readFileSync } from "node:fs";
+      import { existsSync, readFileSync } from "node:fs";
       export default {
         id: ${JSON.stringify(id)}, displayName: "Sample Extension", description: "A local fixture.", dependencies: ${JSON.stringify(options.dependencies ?? [])},
         routePrefixes: ["/api/sample"],
         configSchema: { parse: (value) => value, safeParse: (value) => ({ success: true, data: value }) },
         validateConfig: () => ({ valid: ${!options.failConfig}, errors: ${JSON.stringify(options.failConfig ? ["Config rejected."] : [])} }),
         registerRoutes: (api) => {
+          ${options.failRoutesOnMarker ? 'if (existsSync(new URL(".fail-routes", import.meta.url))) throw new Error("Route registration failed.");' : ""}
           api.get("/" + ${JSON.stringify(id)}, (c) => c.text(${JSON.stringify(version)}));
           if (${JSON.stringify(id)} === "mcp") {
             api.get("/mcp/servers", (c) => c.json({ version: ${JSON.stringify(version)}, requester: c.env.multiUserAuthContext?.user.id }));

@@ -8,7 +8,7 @@ import { startGatewayHotReload } from "../config/hot-reload.js";
 import { listSettingsChanges } from "../audit/store.js";
 import { app } from "../server/index.js";
 import { buildInnerApi } from "../server/api.core.js";
-import { getCurrentInnerApi, getExtensionRuntime, loadExtensions, setExtensionActivator, stopCurrentExtensions } from "./registry.js";
+import { getCurrentInnerApi, getExtensionRuntime, loadExtensions, reloadExtensions, setExtensionActivator, stopCurrentExtensions } from "./registry.js";
 import { createExtensionContext } from "./context.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { fixtureRelease, packFixture } from "./release-bundle.fixture.js";
@@ -22,7 +22,7 @@ const multiUser = mode === "fork-race" ? {
 const agentYaml = path.join(CONFIG_DIR, "agent.yaml");
 const fixtureYaml = "id: fixture\nname: Fixture\nmodel:\n  provider: openai\n  model: fixture\n";
 const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(["selection", "double-rename"].includes(mode) ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
-  extensions: { sample: { enabled: true }, multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
+  extensions: { sample: { enabled: true }, ...(mode === "recovery-routes" ? { other: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
 if (multiUser) {
   const poolDir = path.join(CONFIG_DIR, "pool", "scribe");
   await fs.mkdir(poolDir, { recursive: true });
@@ -46,7 +46,7 @@ setExtensionActivator(async (extension) => {
     oauthAtStart.push(getOAuthProvider("sampleProvider")?.tokenUrl);
     configAtStart.push(loadConfig().extensionCatalog?.enabled);
   }
-  if (["sample", "mcp", "retained", "inactive", "dependent", "mail", "drive"].includes(extension.id)) {
+  if (["sample", "mcp", "retained", "inactive", "dependent", "other", "mail", "drive"].includes(extension.id)) {
     await extension.start(ctx);
   }
 }, buildInnerApi, buildInnerApi(initial));
@@ -291,6 +291,7 @@ switch (mode) {
     assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0"]);
     break;
   }
+  case "recovery-routes":
   case "double-rename":
   case "rename": {
     if (mode === "double-rename") {
@@ -299,18 +300,39 @@ switch (mode) {
       await install(200, "dependent");
       await call("GET", "/api/dependent", 200);
     }
+    const routeFailure = mode === "recovery-routes";
+    const marker = path.join(root, "other", ".fail-routes");
+    if (routeFailure) {
+      fixture = fixtureRelease(base, "1.0.0", { id: "other", failRoutesOnMarker: true });
+      await refresh();
+      await install(200, "other");
+      await call("GET", "/api/other", 200);
+      await fs.writeFile(marker, "");
+    }
     fixture = fixtureRelease(base, "2.0.0");
     await refresh();
     const rename = fs.rename;
     fs.rename = async (from, to) => {
       if (String(from).startsWith(path.join(root, ".staging") + path.sep) && to === target) throw new Error("Staging rename failed.");
-      if (mode === "double-rename" && String(from).startsWith(path.join(root, ".trash") + path.sep) && to === target) {
+      if ((mode === "double-rename" || routeFailure) && String(from).startsWith(path.join(root, ".trash") + path.sep) && to === target) {
         throw new Error("Backup rename failed.");
       }
       return rename(from, to);
     };
     try { assert.equal(JSON.parse(await install(409)).error, "Staging rename failed."); }
     finally { fs.rename = rename; }
+    if (routeFailure) {
+      await answer(404);
+      await call("GET", "/api/other", 404);
+      await call("GET", "/api/capabilities", 200);
+      await fs.unlink(marker);
+      await reloadExtensions(config);
+      await call("GET", "/api/other", 200);
+      await answer(404);
+      await stopCurrentExtensions();
+      assert.equal(hooks.filter((entry) => entry === "sample stop 1.0.0").length, 1);
+      break;
+    }
     if (mode === "double-rename") {
       const backups = await fs.readdir(path.join(root, ".trash"));
       assert.equal(backups.length, 1);

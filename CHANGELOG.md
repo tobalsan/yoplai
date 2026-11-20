@@ -94,6 +94,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Config reloads wait for catalog changes. If a reload hook fails, the catalog restores the previous bundle.
 - If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.
 - The catalog reports the first error if the move of the new bundle and the backup restore both fail.
+- If the gateway cannot rebuild the extension routes during recovery, it stops the unavailable extensions and serves only core API routes.
 - New agent forks wait for catalog changes before they reload the gateway config.
 - The gateway refuses a config write from its own extension hook before it changes the file.
 - The catalog refuses removal when a manual folder uses the same extension ID.

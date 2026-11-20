@@ -695,7 +695,7 @@ export async function reconcileExternal(
       await notifyConfigReload(current);
       return current;
     }
-    const candidateApi = added.length || removed.length ? buildApi?.(extensions) : previousApi;
+    const candidateApi = added.length || removed.length || !previousApi ? buildApi?.(extensions) : previousApi;
     for (const extension of removed.reverse()) {
       stopping.push(extension);
       await extension.stop();
@@ -750,7 +750,13 @@ export async function markExtensionUnavailable(
   const available = current.filter((extension) => !unavailable.has(extension.id));
   replaceOAuthProviderState(buildOAuthProviderState(available));
   extensionRuntime.publish(available, home && !unavailable.has(home) ? home : undefined);
-  innerApi = buildApi?.(available);
+  try {
+    innerApi = buildApi?.(available);
+  } catch (error) {
+    // Without an inner API, the server uses the core API.
+    innerApi = undefined;
+    logError("Could not rebuild the extension API during recovery", error);
+  }
   for (const extension of current.slice().reverse()) {
     if (!unavailable.has(extension.id) || stopping.includes(extension)) continue;
     try { await extension.stop(); }

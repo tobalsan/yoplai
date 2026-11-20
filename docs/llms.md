@@ -691,6 +691,8 @@ The gateway publishes new routes and OAuth providers without a restart.
 If reconciliation or a reload hook fails, the gateway restores the files before it restarts the old objects.
 If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.
 The catalog reports the first error if the move of the new bundle and the backup restore both fail.
+If route registration fails during recovery, the server uses the core API and the gateway still stops the unavailable extensions.
+The next config reload or catalog change tries to build the extension API again.
 An active run can still hold an old tool.
 The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
 Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.
