@@ -712,19 +712,7 @@ export async function reconcileExternal(
         await fileChange.restore();
       } catch (failure) {
         logError("Could not restore extension files", failure);
-        const unavailable = new Set([fileChange.id]);
-        for (const extension of current) {
-          if (extension.dependencies.some((id) => unavailable.has(id))) unavailable.add(extension.id);
-        }
-        const available = current.filter((extension) => !unavailable.has(extension.id));
-        replaceOAuthProviderState(buildOAuthProviderState(available));
-        extensionRuntime.publish(available, previousHome && !unavailable.has(previousHome) ? previousHome : undefined);
-        innerApi = buildApi?.(available);
-        for (const extension of current.slice().reverse()) {
-          if (!unavailable.has(extension.id) || stopping.includes(extension)) continue;
-          try { await extension.stop(); }
-          catch (stopError) { logError(`Could not stop extension ${extension.id} during recovery`, stopError); }
-        }
+        const available = await markExtensionUnavailable(fileChange.id, { current, home: previousHome, stopping });
         await restartStopped(available);
         const message = (value: unknown) => value instanceof Error ? value.message : String(value);
         throw new AggregateError([error, failure],
@@ -738,6 +726,28 @@ export async function reconcileExternal(
     await restartStopped(current);
     throw error;
   }
+}
+
+export async function markExtensionUnavailable(
+  id: string,
+  { current, home, stopping = [] }: { current: Extension[]; home?: string; stopping?: Extension[] } = {
+    current: extensionRuntime.getLoadedExtensions(), home: extensionRuntime.getHomeExtension(),
+  },
+): Promise<Extension[]> {
+  const unavailable = new Set([id]);
+  for (const extension of current) {
+    if (extension.dependencies.some((dependency) => unavailable.has(dependency))) unavailable.add(extension.id);
+  }
+  const available = current.filter((extension) => !unavailable.has(extension.id));
+  replaceOAuthProviderState(buildOAuthProviderState(available));
+  extensionRuntime.publish(available, home && !unavailable.has(home) ? home : undefined);
+  innerApi = buildApi?.(available);
+  for (const extension of current.slice().reverse()) {
+    if (!unavailable.has(extension.id) || stopping.includes(extension)) continue;
+    try { await extension.stop(); }
+    catch (error) { logError(`Could not stop extension ${extension.id} during recovery`, error); }
+  }
+  return available;
 }
 
 export function stopCurrentExtensions(): Promise<void> {

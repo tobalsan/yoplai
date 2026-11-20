@@ -7,8 +7,9 @@ import {
   type GatewayConfig, type InstallRecord, type ReleaseCatalogEntry, type ReleaseCatalogRow, type ReleaseCatalogView,
 } from "@yoplai/shared";
 import {
-  getExternalExtensionsPath, getLoadedExtensions, reconcileExternal, reservedExtensionIds, withExtensionMutation,
+  getExternalExtensionsPath, getLoadedExtensions, markExtensionUnavailable, reconcileExternal, reservedExtensionIds, withExtensionMutation,
 } from "./registry.js";
+import { logError } from "../logging.js";
 import { defaultCatalogUrl, fetchReleaseCatalog } from "./release-catalog-fetch.js";
 import { stageReleaseBundle } from "./release-bundle.js";
 
@@ -161,7 +162,15 @@ export function installFromCatalog(config: GatewayConfig, id: string, actor: str
         if (await checkTarget(target)) throw new CatalogOperationError(409, "The extension folder changed during the operation.");
         await fs.rename(staging, target);
       } catch (error) {
-        if (previous && !(await lstat(target))) await fs.rename(trash, target);
+        if (previous) {
+          try {
+            if (await lstat(target)) throw new Error("The extension folder changed during the operation.");
+            await fs.rename(trash, target);
+          } catch (failure) {
+            logError("Could not restore extension files", failure);
+            await markExtensionUnavailable(id);
+          }
+        }
         throw error;
       }
       await reconcileExternal(config, { requiredExternalId: id, fileChange: { id, restore: async () => {
