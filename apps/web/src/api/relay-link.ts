@@ -77,9 +77,20 @@ export const fetchLinkStatus = (attemptId: string, controlToken: string): Promis
 export const cancelLink = (attemptId: string, controlToken: string): Promise<LinkAttemptView> =>
   call("/cancel", post({ attemptId }, { [CONTROL_HEADER]: controlToken }));
 
-/** Reads the saved links from the gateway. It uses POST, so the gateway applies its normal write policy. */
+const METADATA_DEADLINE_MS = 10_000;
+
+/**
+ * Reads the saved links from the gateway. It uses POST, so the gateway applies its normal write policy.
+ * A read that does not answer within the deadline is aborted, so the caller sees a failure and can read again.
+ */
 export async function fetchLinkRows(): Promise<LinkRow[]> {
-  return (await call<{ gateways: LinkRow[] }>("/metadata", post({}))).gateways;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), METADATA_DEADLINE_MS);
+  try {
+    return (await call<{ gateways: LinkRow[] }>("/metadata", { ...post({}), signal: controller.signal })).gateways;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const disconnectLink = (name: string, localOnly = false): Promise<{ name: string; revoked: string }> =>

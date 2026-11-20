@@ -30,7 +30,9 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Pr
   const url = String(input);
   sent.push({ url, headers: new Headers(init?.headers), body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined });
   if (url === "/api/relay/link/metadata") {
-    await metadataHold;
+    const signal = init?.signal;
+    const aborted = new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
+    await Promise.race([metadataHold, aborted]);
     return metadataAnswer ? metadataAnswer() : json(200, { gateways: rows });
   }
   if (url === "/api/relay/link/start") return startAnswer.clone();
@@ -494,6 +496,26 @@ describe("RemoteGateways", () => {
       release();
       await vi.advanceTimersByTimeAsync(2000);
       expect(screen.getByText("Device connected")).toBeTruthy();
+    });
+
+    it("ends a metadata read that never answers, keeps one read in flight, and recovers on the next read", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      holdReads();
+      const before = metadataReads();
+      await linkAtOnce(screen);
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(metadataReads() - before).toBe(1);
+      expect((screen.getByRole("button", { name: "Link gateway" }) as HTMLButtonElement).disabled).toBe(true);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect((screen.getByRole("button", { name: "Link gateway" }) as HTMLButtonElement).disabled).toBe(false);
+      metadataHold = undefined;
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+      expect(screen.queryByText("Loading linked gateways…")).toBeNull();
     });
 
     it("stops reading when the user disconnects", async () => {
