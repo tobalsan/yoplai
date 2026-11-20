@@ -7,6 +7,7 @@ import {
 } from "@yoplai/extension-scheduler";
 import type { GatewayConfig } from "@yoplai/shared";
 import { getConfigPath, reloadConfig, setLoadedConfig } from "./index.js";
+import { reconcileExternal, withExtensionMutation } from "../extensions/registry.js";
 import { resolveStartupConfig } from "./validate.js";
 
 export const HOT_RELOAD_INTERVAL_MS = 5000;
@@ -54,22 +55,29 @@ export function startGatewayHotReload(
       const currentSignature = signature(lastConfig);
       if (currentSignature === lastSignature) return;
 
-      const rawConfig = reloadConfig();
-      const nextConfig = await resolveStartupConfig(rawConfig);
-      const nextSignature = signature(nextConfig);
-      // resolveStartupConfig returns a new object; reloadConfig left the raw
-      // config in the cache, so install the resolved one (with $env: refs
-      // interpolated) before anything reads it via getAgent()/loadConfig().
-      setLoadedConfig(nextConfig);
-      lastConfig = nextConfig;
-      lastSignature = nextSignature;
-      if (nextConfig.extensions?.scheduler && hasSchedulerContext()) {
-        await getScheduler().refreshFromDisk();
-      }
-      await options.onReload?.(nextConfig);
-    } catch (error) {
-      setLoadedConfig(lastConfig);
-      options.onError?.(error);
+      await withExtensionMutation(async () => {
+        try {
+          const nextConfig = await resolveStartupConfig(reloadConfig());
+          const nextSignature = signature(nextConfig);
+          setLoadedConfig(nextConfig);
+          lastConfig = nextConfig;
+          lastSignature = nextSignature;
+          if (nextConfig.extensions?.scheduler && hasSchedulerContext()) {
+            await getScheduler().refreshFromDisk();
+          }
+          try {
+            await reconcileExternal(nextConfig);
+          } catch (error) {
+            console.warn(
+              `[hot-reload] Extension reconcile failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+          await options.onReload?.(nextConfig);
+        } catch (error) {
+          setLoadedConfig(lastConfig);
+          options.onError?.(error);
+        }
+      }, true);
     } finally {
       running = false;
     }

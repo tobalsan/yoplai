@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const reloadConfig = vi.fn();
 const setLoadedConfig = vi.fn();
+const reconcileExternal = vi.fn();
+
+vi.mock("../extensions/registry.js", () => ({
+  reconcileExternal,
+  withExtensionMutation: (run: () => Promise<unknown>) => run(),
+}));
+
 let configPath = "";
 
 vi.mock("@yoplai/extension-scheduler", () => ({
@@ -93,6 +100,7 @@ describe("startGatewayHotReload", () => {
     expect(reloadConfig).toHaveBeenCalledTimes(1);
     expect(resolveStartupConfig).toHaveBeenCalledWith(nextConfig);
     expect(setLoadedConfig).toHaveBeenCalledWith(resolvedConfig);
+    expect(reconcileExternal).toHaveBeenCalledWith(resolvedConfig);
     expect(onReload).toHaveBeenCalledWith(resolvedConfig);
   });
 });

@@ -12,7 +12,6 @@ import { buildInnerApi } from "../server/api.core.js";
 import {
   getExtensionRuntime,
   loadExtensions,
-  reloadExtensions,
   setExtensionActivator,
 } from "../extensions/registry.js";
 import { resetActiveTurns } from "../agents/active-turns.js";
@@ -108,15 +107,6 @@ export async function startGatewayCommand(
 
   startServer(port, opts.host, extensionRuntime);
   startGatewayHotReload(runtimeConfig, {
-    async onReload(nextConfig) {
-      try {
-        await reloadExtensions(nextConfig);
-      } catch (error) {
-        console.warn(
-          `[hot-reload] Extension reconcile failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    },
     onError(error) {
       console.warn(
         `[hot-reload] Reload failed; keeping last good config: ${error instanceof Error ? error.message : String(error)}`
