@@ -90,6 +90,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The catalog uses the app theme and shows the gateway error on the extension row.
+- `pnpm dev` does not restart the gateway when the catalog changes a bundle in the gateway home.
+
 - The extension catalog records the actor and bundle digests for installs, updates, and removals.
 - Config reloads wait for catalog changes. If a reload hook fails, the catalog restores the previous bundle.
 - If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.

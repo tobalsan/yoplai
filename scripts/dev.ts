@@ -13,7 +13,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
-import { readEnv, resolveConfigPath } from "../packages/shared/src/config-path.js";
+import { readEnv, resolveConfigPath, resolveHomeDir } from "../packages/shared/src/config-path.js";
 
 interface Config {
   ui?: {
@@ -118,6 +118,7 @@ async function waitForExit(pids: number[], timeoutMs: number): Promise<number[]>
 }
 
 async function main() {
+  const homeDir = resolveHomeDir();
   const config = loadConfig();
   const uiEnabled = config.ui?.enabled !== false; // default true
 
@@ -163,11 +164,11 @@ async function main() {
   const gatewayNodeOptions = [process.env.NODE_OPTIONS, "--conditions=development"].filter(Boolean).join(" ");
   const gateway = spawn(
     "pnpm",
-    ["--filter", "@yoplai/gateway", "exec", "tsx", "watch", "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
+    ["--filter", "@yoplai/gateway", "exec", "tsx", "watch", "--exclude", path.join(homeDir, "extensions", "**"), "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
     {
       stdio: "inherit",
       cwd: rootDir,
-      env: { ...process.env, YOPLAI_SKIP_WEB: "1", YOPLAI_DEV: "1", YOPLAI_WORKSPACE_ROOT: rootDir, YOPLAI_GATEWAY_PORT: String(gatewayPort), NODE_OPTIONS: gatewayNodeOptions, ...(uiPort ? { YOPLAI_UI_PORT: String(uiPort) } : {}) },
+      env: { ...process.env, YOPLAI_HOME: homeDir, YOPLAI_SKIP_WEB: "1", YOPLAI_DEV: "1", YOPLAI_WORKSPACE_ROOT: rootDir, YOPLAI_GATEWAY_PORT: String(gatewayPort), NODE_OPTIONS: gatewayNodeOptions, ...(uiPort ? { YOPLAI_UI_PORT: String(uiPort) } : {}) },
     }
   );
 

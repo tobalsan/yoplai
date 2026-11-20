@@ -8,7 +8,8 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 
 ## Extension catalog
 
-Open **Admin → Extensions** to browse the catalog. Use **Install**, **Update**, or **Remove** on an extension.
+Open **Admin → Extensions** to browse the catalog. Use the search field or the category filters to find an extension.
+Use **Install**, **Update**, or **Remove** on an extension. If an action fails, read the error on the extension row.
 Use the gateway selector for a linked gateway. In multi-user mode, the selected gateway requires a superadmin.
 Catalog changes do not require a restart. The catalog does not replace or remove extensions that you manage by hand.
 If the gateway cannot restore an extension, it keeps the backup.

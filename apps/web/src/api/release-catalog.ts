@@ -15,7 +15,10 @@ export async function fetchReleaseCatalog(gateway: GatewayName, refresh = false)
 export async function changeReleaseCatalog(gateway: GatewayName, id: string, remove: boolean): Promise<ReleaseCatalogRow | undefined> {
   const target = `${path}/${encodeURIComponent(id)}${remove ? "" : "/install"}`;
   const response = await apiFetch(gatewayApiPath(gateway, target), { method: remove ? "DELETE" : "POST" });
-  if (!response.ok) throw new Error(await refusalMessage(response, "The extension operation failed."));
+  if (!response.ok) {
+    const body: { error?: unknown } | undefined = await response.json().catch(() => undefined);
+    throw new Error(typeof body?.error === "string" && body.error.trim() ? body.error : "The extension operation failed.");
+  }
   if (!remove) return response.json();
 }
 
