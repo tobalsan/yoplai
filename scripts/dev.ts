@@ -13,9 +13,13 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import { parseEnv } from "node:util";
+import { isEnvRef, resolveSecretValue } from "../apps/gateway/src/config/secrets.js";
 import { readEnv, resolveConfigPath, resolveHomeDir } from "../packages/shared/src/config-path.js";
 
 interface Config {
+  extensionsPath?: string;
+  env?: Record<string, string>;
   ui?: {
     enabled?: boolean;
     port?: number;
@@ -123,6 +127,22 @@ async function main() {
   const uiEnabled = config.ui?.enabled !== false; // default true
 
   const rootDir = path.dirname(path.dirname(new URL(import.meta.url).pathname));
+  let extensionsPath = config.extensionsPath ?? path.join(homeDir, "extensions");
+  if (isEnvRef(extensionsPath)) {
+    const envPath = path.join(homeDir, ".env");
+    const env = {
+      ...(fs.existsSync(envPath) ? parseEnv(fs.readFileSync(envPath, "utf8")) : {}),
+      ...process.env,
+    };
+    for (const [key, value] of Object.entries(config.env ?? {})) {
+      if (!env[key]?.trim()) env[key] = value;
+    }
+    extensionsPath = await resolveSecretValue(extensionsPath, env);
+  }
+  const extensionsDir = path.resolve(rootDir, "apps/gateway", extensionsPath);
+  fs.mkdirSync(extensionsDir, { recursive: true });
+  const extensionWatchExcludes = [...new Set([extensionsDir, fs.realpathSync(extensionsDir)])]
+    .flatMap((dir) => ["--exclude", path.join(dir, "**")]);
 
   // Find free ports
   const baseGatewayPort = config.gateway?.port ?? 4000;
@@ -164,7 +184,7 @@ async function main() {
   const gatewayNodeOptions = [process.env.NODE_OPTIONS, "--conditions=development"].filter(Boolean).join(" ");
   const gateway = spawn(
     "pnpm",
-    ["--filter", "@yoplai/gateway", "exec", "tsx", "watch", "--exclude", path.join(homeDir, "extensions", "**"), "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
+    ["--filter", "@yoplai/gateway", "exec", "tsx", "watch", ...extensionWatchExcludes, "src/cli/index.ts", "gateway", "--dev", "--port", String(gatewayPort)],
     {
       stdio: "inherit",
       cwd: rootDir,

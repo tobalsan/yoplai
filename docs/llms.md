@@ -695,7 +695,9 @@ If route registration fails during recovery, the server uses the core API and th
 The next config reload or catalog change tries to build the extension API again.
 An active run can still hold an old tool.
 The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
-The catalog shows the gateway error on the extension row. `scripts/dev.ts` excludes the gateway home extensions folder from `tsx watch`.
+The catalog shows the gateway error on the extension row.
+`scripts/dev.ts` excludes both paths to the extension folder from `tsx watch`: the configured path and its real path.
+The default folder is `$YOPLAI_HOME/extensions`.
 Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.
 The extension and MCP settings forms use team credentials in single-user mode.
 

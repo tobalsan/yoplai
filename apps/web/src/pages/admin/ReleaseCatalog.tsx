@@ -180,11 +180,11 @@ export function ReleaseCatalog(props: {
         color: var(--text-primary);
       }
       .release-catalog-badge[data-state="update"] {
-        background: color-mix(in srgb, var(--tone-warning, #b7791f) 18%, var(--bg-raised));
+        background: color-mix(in srgb, var(--tone-live) 18%, var(--bg-raised));
         color: var(--text-primary);
       }
       .release-catalog-detail { margin: 0; padding: 0 18px 12px; color: var(--text-secondary); font-size: 0.875rem; }
-      .release-catalog-detail.top-error { color: var(--tone-error, #ef4444); }
+      .release-catalog-detail.top-error { color: var(--tone-error); }
       .release-catalog-detail p { margin: 0 0 6px; max-width: 70ch; text-wrap: pretty; }
       .release-catalog-detail a { color: var(--text-primary); text-decoration: underline; }
       @media (max-width: 680px) {
