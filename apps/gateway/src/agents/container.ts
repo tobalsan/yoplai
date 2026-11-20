@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readEnv, resolveHomeDir } from "@yoplai/shared";
+import { getAgentDataDir, readEnv, resolveHomeDir, sanitizePathSegment } from "@yoplai/shared";
 import type {
   AgentConfig,
   GlobalSandboxConfig,
@@ -23,6 +23,7 @@ export type ContainerVolumeMount = {
 
 const DEFAULT_IMAGE = "yoplai-agent:latest";
 const AGENT_IMAGE_HASH_LABEL = "yoplai.agent-runner.hash";
+const SCRIPT_HOME_LABEL = "yoplai.script.home";
 const DEFAULT_MEMORY = "2g";
 const DEFAULT_CPUS = 1;
 const DEFAULT_NETWORK = "yoplai-agents";
@@ -35,6 +36,7 @@ export const CONTAINER_GATEWAY_SOCKET_PATH = `${CONTAINER_GATEWAY_SOCKET_DIR}/${
 export const CONTAINER_DATA_DIR = "/workspace/data";
 export const CONTAINER_UPLOADS_DIR = "/workspace/uploads";
 export const CONTAINER_PROJECT_FILES_DIR = "/project-files";
+export { getAgentDataDir };
 
 function createContainerName(agentId: string): string {
   return `yoplai-agent-${agentId}-${randomUUID()}`;
@@ -113,19 +115,6 @@ function addMount(
   readonly: boolean
 ): void {
   mounts.push({ source, target, readonly });
-}
-
-function sanitizePathSegment(segment: string): string {
-  return segment.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
-}
-
-export function getAgentDataDir(homeDir: string, agentId: string): string {
-  return path.join(
-    resolveHostPath(homeDir),
-    "agents",
-    sanitizePathSegment(agentId),
-    "data"
-  );
 }
 
 /**
@@ -219,7 +208,7 @@ export function buildVolumeMounts(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
   homeDir: string,
-  ipcDir: string,
+  ipcDir: string | undefined,
   userId?: string,
   onecli?: OnecliConfig,
   sessionId?: string
@@ -270,8 +259,10 @@ export function buildVolumeMounts(
     );
   }
 
-  addMount(mounts, path.join(home, "sessions", agent.id), "/sessions", false);
-  addMount(mounts, ipcDir, "/workspace/ipc", false);
+  if (ipcDir !== undefined) {
+    addMount(mounts, path.join(home, "sessions", agent.id), "/sessions", false);
+    addMount(mounts, ipcDir, "/workspace/ipc", false);
+  }
 
   if (usesGatewaySocket(globalSandbox)) {
     const socketDir = getGatewaySocketDir(homeDir);
@@ -282,14 +273,14 @@ export function buildVolumeMounts(
   }
 
   const modelsPath = path.join(home, "models.json");
-  if (fs.existsSync(modelsPath)) {
+  if (ipcDir !== undefined && fs.existsSync(modelsPath)) {
     addMount(mounts, modelsPath, "/sessions/models.json", true);
   }
 
   // Refreshed model catalog (written by `yoplai models refresh`); without it
   // the sandboxed runner only sees the Pi SDK's baked-in model list.
   const modelsStorePath = path.join(home, "models-store.json");
-  if (fs.existsSync(modelsStorePath)) {
+  if (ipcDir !== undefined && fs.existsSync(modelsStorePath)) {
     addMount(mounts, modelsStorePath, "/sessions/models-store.json", true);
   }
 
@@ -374,23 +365,26 @@ function buildContainerOnecliProxyUrl(
   return url.toString().replace(/\/$/, "");
 }
 
+export function resolveSandboxNetwork(agent: AgentConfig, globalSandbox: GlobalSandboxConfig): string {
+  return agent.sandbox?.network ?? globalSandbox.network?.name ?? DEFAULT_NETWORK;
+}
+
 export function buildContainerArgs(
   agent: AgentConfig,
   globalSandbox: GlobalSandboxConfig,
   mounts: ContainerVolumeMount[],
-  _homeDir: string,
+  homeDir: string,
   _userId?: string,
   onecli?: OnecliConfig,
-  configEnv?: Record<string, string>
+  configEnv?: Record<string, string>,
+  script?: { name: string; command: string; args: string[]; env?: Record<string, string>; keepStdin: boolean }
 ): string[] {
   const sandbox = agent.sandbox;
   const onecliEnabled = onecli?.enabled !== false && !!onecli?.gatewayUrl;
   const args = [
-    "run",
-    "-i",
-    "--rm",
+    ...(script ? ["create", ...(script.keepStdin ? ["-i"] : [])] : ["run", "-i", "--rm"]),
     "--name",
-    createContainerName(agent.id),
+    script?.name ?? createContainerName(agent.id),
     "--user",
     // Rootless Docker maps the daemon owner's host uid to container uid 0, so
     // the gateway's own uid names an id that owns nothing there and every bind
@@ -403,7 +397,7 @@ export function buildContainerArgs(
     "--cpus",
     String(sandbox?.cpus ?? DEFAULT_CPUS),
     "--network",
-    sandbox?.network ?? globalSandbox.network?.name ?? DEFAULT_NETWORK,
+    resolveSandboxNetwork(agent, globalSandbox),
     "--add-host",
     "host.docker.internal:host-gateway",
   ];
@@ -447,10 +441,14 @@ export function buildContainerArgs(
   };
 
   for (const [key, value] of Object.entries(env)) {
-    args.push("--env", `${key}=${value}`);
+    if (!script?.env || !Object.hasOwn(script.env, key)) args.push("--env", `${key}=${value}`);
   }
 
-  args.push(sandbox?.image ?? DEFAULT_IMAGE);
+  if (script) {
+    for (const key of Object.keys(script.env ?? {})) args.push("--env", key);
+    args.push("--label", scriptHomeLabel(homeDir), "--workdir", "/workspace", "--entrypoint", script.command);
+  }
+  args.push(sandbox?.image ?? DEFAULT_IMAGE, ...(script?.args ?? []));
 
   return args;
 }
@@ -629,6 +627,19 @@ export function cleanupOrphanContainers(): void {
   }
 
   cleanupOrphanIpcNamespaces();
+}
+
+function scriptHomeLabel(homeDir: string): string {
+  const id = createHash("sha256").update(resolveHostPath(homeDir)).digest("hex");
+  return `${SCRIPT_HOME_LABEL}=${id}`;
+}
+
+/** Reap script containers left created or stopped by a previous gateway process. */
+export function cleanupOrphanScriptContainers(homeDir = resolveHomeDir()): void {
+  const ids = execFileSync("docker", ["ps", "-a", "-q", "--filter", `label=${scriptHomeLabel(homeDir)}`], {
+    encoding: "utf8", timeout: 5000,
+  }).trim().split("\n").filter(Boolean);
+  if (ids.length) execFileSync("docker", ["rm", "-f", ...ids], { stdio: "ignore", timeout: 5000 });
 }
 
 /**

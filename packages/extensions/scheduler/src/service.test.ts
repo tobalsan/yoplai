@@ -11,7 +11,7 @@ import type {
   SchedulePayload,
   UserNotifier,
 } from "@yoplai/shared";
-import { DEVICE_OFFLINE_CALL_TEXT } from "@yoplai/shared";
+import { AgentSandboxConfigSchema, DEVICE_OFFLINE_CALL_TEXT } from "@yoplai/shared";
 import { DELIVERY_TIMEOUT_MS, MAX_DELIVERY_CHARS } from "./deliver.js";
 import { PerAgentScheduleStore } from "./store.js";
 import * as scriptRunner from "./script.js";
@@ -1901,6 +1901,53 @@ describe("SchedulerService script jobs", () => {
       lastRunAtMs?: number;
     };
   };
+
+  it("runs a sandboxed script-only job through the host runner and records its output", async () => {
+    const { scheduler, ctx, runAgent } = await setup("exit 49\n");
+    ctx.getAgent("alpha")!.sandbox = AgentSandboxConfigSchema.parse({ enabled: true });
+    ctx.mintToolToken = () => ({ token: "fixture-token", gatewayUrl: "http://fixture.test", socketPath: "/run/yoplai/gateway.sock", revoke() {} });
+    ctx.runAgentScript = async ({ agentId, env }) => ({
+      stdout: `${agentId} ${env?.YOPLAI_TOOL_SOCKET}\n`, stderr: "", finalStdoutLine: "done",
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Sandbox check", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+    });
+
+    const result = await scheduler.runNow("alpha", job.id);
+    expect(result.status).toBe("ok");
+    expect(await fs.readFile(result.outputPath!, "utf8")).toContain("alpha /run/yoplai/gateway.sock");
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it("reports an unavailable sandbox runner without running the script on the host", async () => {
+    const { scheduler, ctx } = await setup("echo unexpected-host-output\n");
+    ctx.getAgent("alpha")!.sandbox = AgentSandboxConfigSchema.parse({ enabled: true });
+    const job = await scheduler.add("alpha", {
+      name: "Sandbox check", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", noAgent: true }),
+    });
+
+    expect(await scheduler.runNow("alpha", job.id)).toMatchObject({
+      status: "error", error: "Sandbox script runner is unavailable",
+    });
+  });
+
+  it("honors the sandbox runner's final gate line", async () => {
+    const { scheduler, ctx, runAgent } = await setup("exit 49\n");
+    ctx.getAgent("alpha")!.sandbox = AgentSandboxConfigSchema.parse({ enabled: true });
+    ctx.runAgentScript = async () => ({
+      stdout: "fixture evaluated\n[output truncated]", stderr: "", finalStdoutLine: '{"wakeAgent":false}',
+    });
+    const job = await scheduler.add("alpha", {
+      name: "Sandbox gate", schedule: { cron: "0 8 * * *", tz: "UTC" },
+      payload: jobPayload({ script: "bin/gate.sh", message: "Check" }),
+    });
+
+    expect(await scheduler.runNow("alpha", job.id)).toMatchObject({ status: "ok" });
+    expect(await scheduler.list("alpha")).toMatchObject([{ state: { lastRunKind: "silent_tick" } }]);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
 
   it.each(["owner", "team"] as const)("gives %s scripts a fresh tool identity until the script settles without monitoring", async (credentialMode) => {
     const { scheduler, ctx } = await setup("echo done\n");

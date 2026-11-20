@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { Hono } from "hono";
 import type { Extension } from "@yoplai/shared";
 
 let home: string;
@@ -16,12 +17,18 @@ beforeEach(async () => {
   vi.resetModules();
   const { writeTestV3Config } = await import("../test-utils/v3-config.js");
   await writeTestV3Config(home, {
-    agents: [{ id: "alpha", extraYaml: "extensions:\n  probe:\n    enabled: true" }],
+    agents: [
+      { id: "alpha", extraYaml: "extensions:\n  probe:\n    enabled: true" },
+      { id: "sandboxed", extraYaml: "sandbox:\n  enabled: true" },
+    ],
     extensions: {
       probe: { apiToken: "team-fixture" },
       multiUser: { enabled: true, sessionSecret: "fixture-session-secret-at-least-32-characters", emailAndPassword: { enabled: true } },
     },
-    extraConfig: { oauth: { encryptionKey: "fixture-encryption-key" } },
+    extraConfig: {
+      oauth: { encryptionKey: "fixture-encryption-key" },
+      sandbox: { gatewayTransport: "socket" },
+    },
   });
 });
 
@@ -39,8 +46,8 @@ async function fixture() {
   const { createInternalTools } = await import("../server/internal-tools.js");
   const config = loadConfig();
   const ctx = createExtensionContext(config);
-  const mint = (userId?: string) => {
-    const minted = ctx.mintToolToken!({ agentId: "alpha", userId, sessionId: "scheduler:job:run", runId: "run" });
+  const mint = (userId?: string, agentId = "alpha") => {
+    const minted = ctx.mintToolToken!({ agentId, userId, sessionId: "scheduler:job:run", runId: "run" });
     revokers.push(minted.revoke);
     return minted;
   };
@@ -53,6 +60,32 @@ function post(app: { request(input: string, init: RequestInit): Response | Promi
     body: JSON.stringify({ tool: "probe_read", args: {}, agentId, agentToken: token, sessionId: "scheduler:job:run", runId: "run" }),
   }));
 }
+
+it("maps sandboxed script tool requests to agent data and keeps uploads isolated", async () => {
+  const { config, createInternalTools, mint } = await fixture();
+  const workspace = path.join(home, "agents", "sandboxed");
+  const data = path.join(workspace, "data");
+  await fs.mkdir(data, { recursive: true });
+  await fs.writeFile(path.join(data, "report.png"), "agent data");
+  await fs.writeFile(path.join(workspace, "report.png"), "workspace file");
+  const app = new Hono().route("/internal", createInternalTools({
+    getConfig: () => config,
+    describeImage: async (bytes) => bytes.toString(),
+  }));
+  const minted = mint(undefined, "sandboxed");
+  const describe = (requestedPath: string) => app.request("/internal/tools", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      tool: "describe_image", args: { path: requestedPath }, agentId: "sandboxed",
+      agentToken: minted.token, sessionId: "scheduler:job:run", runId: "run",
+    }),
+  });
+
+  const fromData = await describe("/workspace/data/report.png");
+  const fromUploads = await describe("/workspace/uploads/report.png");
+  expect(await fromData.json()).toEqual({ description: "agent data" });
+  expect(await fromUploads.json()).toEqual({ error: "Image was not found under an approved container root" });
+});
 
 it("forwards minted owner identity, refuses cross-agent use and refuses calls after revocation", async () => {
   const { config, createInternalTools, mint } = await fixture();

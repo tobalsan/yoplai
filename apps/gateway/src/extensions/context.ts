@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
+import { mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import { clearTimeout, setTimeout } from "node:timers";
-import { resolveAgentConfigRoute, resolveBindHost, sanitizeAgentToolName } from "@yoplai/shared";
+import { getAgentDataDir, resolveAgentConfigRoute, resolveBindHost, sanitizeAgentToolName } from "@yoplai/shared";
 import type {
   DeliverySink,
   UserNotifier,
@@ -55,7 +58,11 @@ import { updateAgentExtensionConfig } from "./agent-config-writer.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { getLoadedExtensions } from "./registry.js";
 import { getTask } from "../tasks/store.js";
+import { CONTAINER_GATEWAY_SOCKET_PATH, usesGatewaySocket } from "../agents/container.js";
+import { resolveContainerGatewayUrl } from "../sdk/container/input-builder.js";
 import { registerContainerToken, removeContainerToken } from "../sdk/container/tokens.js";
+import { runScript, ScriptExecutionError } from "@yoplai/shared/node/script";
+import { runSandboxedScript } from "./sandbox-script.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
@@ -109,27 +116,51 @@ export function createExtensionContext(
         session: { id: "extension-page-token", userId: account.id },
       }, agentId);
     },
+    runAgentScript: async ({ agentId, ...input }) => {
+      const agent = getAgent(agentId);
+      if (!agent) throw new ScriptExecutionError(`Unknown agent: ${agentId}`, "spawn", "");
+      if (!agent.sandbox?.enabled) return runScript(input);
+      return runSandboxedScript(agent, loadConfig(), CONFIG_DIR, {
+        ...input, workspaceDir: resolveWorkspaceDir(agent.workspace),
+      });
+    },
     mintToolToken: ({ agentId, userId, sessionId, runId }) => {
       const agent = getAgent(agentId);
       if (!agent) throw new Error(`Unknown agent: ${agentId}`);
-      const workspace = resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace);
+      const sandboxed = agent.sandbox?.enabled;
+      const workspace = resolveWorkspaceDir(sandboxed ? agent.workspace : agent.workspaceDir ?? agent.workspace);
       const config = loadConfig();
       const bindHost = config.gateway?.host ?? resolveBindHost(config.gateway?.bind);
       const host = bindHost === "0.0.0.0" || bindHost === "::" ? "127.0.0.1" : bindHost;
       const port = process.env.YOPLAI_GATEWAY_PORT ?? config.gateway?.port ?? 4000;
+      const gatewayUrl = sandboxed
+        ? resolveContainerGatewayUrl(config)
+        : `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+      const socketPath = sandboxed && usesGatewaySocket(config.sandbox ?? {})
+        ? CONTAINER_GATEWAY_SOCKET_PATH : undefined;
       const token = randomUUID();
+      const data = sandboxed ? getAgentDataDir(CONFIG_DIR, agentId) : workspace;
+      // Sandbox scripts have no upload mount. Keep the tools path isolated from workspace files.
+      let uploads = sandboxed ? mkdtempSync(path.join(os.tmpdir(), "yoplai-script-uploads-")) : undefined;
       registerContainerToken(token, {
         agentId, userId, sessionId, runId,
         actorKind: "service",
         source: "system",
         background: true,
         containerName: `host-script:${runId}`,
-        roots: { workspace, data: workspace, uploads: workspace },
+        roots: { workspace, data, uploads: uploads ?? workspace },
       });
       return {
         token,
-        gatewayUrl: `http://${host.includes(":") ? `[${host}]` : host}:${port}`,
-        revoke: () => removeContainerToken(token),
+        gatewayUrl,
+        ...(socketPath === undefined ? {} : { socketPath }),
+        revoke() {
+          removeContainerToken(token);
+          if (uploads) {
+            rmSync(uploads, { recursive: true, force: true });
+            uploads = undefined;
+          }
+        },
       };
     },
     updateAgentExtensionConfig: async (agentId, extensionId, patch) => {

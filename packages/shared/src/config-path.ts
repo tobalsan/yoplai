@@ -9,6 +9,15 @@ export function expandPath(rawPath: string): string {
   return path.resolve(rawPath);
 }
 
+export function sanitizePathSegment(segment: string): string {
+  return segment.replace(/[^a-zA-Z0-9._-]/g, "_") || "default";
+}
+
+export function getAgentDataDir(homeDir: string, agentId: string): string {
+  const root = homeDir === "~" || homeDir.startsWith("~/") ? expandPath(homeDir) : path.resolve(homeDir);
+  return path.join(root, "agents", sanitizePathSegment(agentId), "data");
+}
+
 function trimValue(value: string | undefined): string | undefined {
   const next = value?.trim();
   return next ? next : undefined;

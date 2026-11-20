@@ -255,9 +255,12 @@ export class SchedulerService {
     // Script children are detached, so without this a shutdown mid-run leaves
     // them running with no timeout left to enforce and a second copy spawning
     // when the gateway comes back.
-    terminateRunningScripts();
-    // Finish pending persistence before a restart can load the job files.
-    await Promise.all(this.agentSaveChains.values());
+    try {
+      await terminateRunningScripts();
+    } finally {
+      // Finish pending persistence before a restart can load the job files.
+      await Promise.all(this.agentSaveChains.values());
+    }
     console.log("[scheduler] Stopped");
   }
 
@@ -806,7 +809,7 @@ export class SchedulerService {
           runId,
         });
         try {
-          script = await runScript({
+          const input = {
             workspaceDir,
             script: payload.script,
             timeoutMs,
@@ -816,8 +819,17 @@ export class SchedulerService {
               YOPLAI_AGENT_ID: agent.id,
               YOPLAI_SESSION_ID: scriptSessionId,
               YOPLAI_RUN_ID: runId,
+              ...(toolToken.socketPath && { YOPLAI_TOOL_SOCKET: toolToken.socketPath }),
             } }),
-          });
+          };
+          if (ctx.runAgentScript) {
+            script = await ctx.runAgentScript({ ...input, agentId: agent.id });
+          } else {
+            if (agent.sandbox?.enabled) {
+              throw new ScriptExecutionError("Sandbox script runner is unavailable", "spawn", "");
+            }
+            script = await runScript(input);
+          }
         } finally {
           toolToken?.revoke();
         }

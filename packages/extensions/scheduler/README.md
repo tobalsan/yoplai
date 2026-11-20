@@ -144,7 +144,7 @@ There is no `kind` field. A job's `payload` shape decides what fires. All three 
 | Shape                          | Payload                             | What runs                                                                                                                                 |
 | ------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | Agent job (default, unchanged) | `message` only                      | `runAgent` with `message` as the prompt                                                                                                   |
-| Script-only                    | `script` + `noAgent: true`          | The script runs as a subprocess; the **exit code** decides `ok`/`error`. `runAgent` is never called. `message` is rejected on this shape. |
+| Script-only                    | `script` + `noAgent: true`          | The script's **exit code** decides `ok`/`error`. `runAgent` is never called. `message` is rejected on this shape.                            |
 | Gated agent job                | `script` + `message` (no `noAgent`) | The script runs first as a $0 gate; its final stdout line decides whether `runAgent` fires at all.                                        |
 
 `script` is a path relative to the agent's workspace directory (never absolute, never containing a `..` segment — see Containment below).
@@ -208,30 +208,36 @@ their script runs. Mine (`credentialMode: "owner"`) uses the owner's personal
 connection with team fallback; Team uses team credentials only. The scheduler
 checks the owner's agent access before starting an owner-mode script.
 
-The host provides these environment variables when it supports script tool tokens:
+The gateway provides these environment variables when it supports script tool tokens:
 
 | Variable | Value |
 | --- | --- |
-| `YOPLAI_TOOL_URL` | Gateway base URL reachable from the host subprocess |
+| `YOPLAI_TOOL_URL` | Base URL for gateway tool requests from the script |
+| `YOPLAI_TOOL_SOCKET` | Unix socket path for HTTP requests when a sandboxed script uses socket transport |
 | `YOPLAI_TOOL_TOKEN` | Temporary bearer token scoped to this agent and script run |
 | `YOPLAI_AGENT_ID` | Job's agent ID |
 | `YOPLAI_SESSION_ID` | Synthetic `scheduler:<jobId>:<runId>` session, separate from any pinned agent session |
 | `YOPLAI_RUN_ID` | Unique script run ID, including when run monitoring is disabled |
 
-The scheduler adds no raw provider credentials. Scripts still inherit the gateway
-process environment. Older hosts without this capability keep their existing
-script environment.
+The scheduler adds no raw provider credentials. Host scripts inherit the gateway
+process environment. Sandboxed scripts use the configured sandbox environment
+and receive the run variables listed above.
 
 Send `POST <YOPLAI_TOOL_URL>/internal/tools` with JSON
 `{ tool, args, agentId, agentToken, sessionId, runId }`. Optional `X-Agent-Id`
 and `X-Agent-Token` headers must match the body when sent. These examples list
 scheduled jobs; replace `tool` and `args` with the agent tool you need.
 
-Shell script using curl and jq:
+This shell script uses curl and jq over either transport.
 
 ```bash
 #!/bin/bash
 set -euo pipefail
+
+set --
+if [[ -n "${YOPLAI_TOOL_SOCKET:-}" ]]; then
+  set -- --unix-socket "$YOPLAI_TOOL_SOCKET"
+fi
 
 jq -n '{
   tool: "scheduler.list_jobs",
@@ -240,7 +246,7 @@ jq -n '{
   agentToken: env.YOPLAI_TOOL_TOKEN,
   sessionId: env.YOPLAI_SESSION_ID,
   runId: env.YOPLAI_RUN_ID
-}' | curl --silent --show-error --fail-with-body --max-time 30 \
+}' | curl "$@" --silent --show-error --fail-with-body --max-time 30 \
   -H 'Content-Type: application/json' \
   --data-binary @- "$YOPLAI_TOOL_URL/internal/tools"
 
@@ -248,7 +254,7 @@ jq -n '{
 printf '\n{"wakeAgent": false}\n'
 ```
 
-Node.js script using fetch (save as an executable `.mjs` file):
+This Node.js script uses fetch over HTTP transport. Save it as an executable `.mjs` file.
 
 ```javascript
 #!/usr/bin/env node
@@ -281,8 +287,10 @@ Do not save or forward the token. The scheduler replaces its exact value with
 `[redacted]` in captured stdout, stderr and errors before recording, logging or
 delivery; encoded variants are not covered.
 
-The URL uses the running gateway port and configured bind host, with loopback
-for wildcard binds. A CLI `--host` override must agree with that configuration.
+For host scripts, the URL uses the running gateway port and configured bind
+host, with loopback for wildcard binds. A CLI `--host` override must agree with
+that configuration. Sandboxed scripts use the configured
+[gateway transport](../../../docs/container-isolation.md#gateway-transport).
 
 ## The wakeAgent gate
 
@@ -311,14 +319,14 @@ Gate context:
 
 ### Sample gate script: a file-change gate
 
-A gate script must print exactly one JSON line as the _last_ line of stdout — everything before it is free-form and gets stored as the gate output in the run's log. This example wakes the agent only when a watched file's content hash changed since the last tick:
+A gate script must print exactly one JSON line as the _last_ line of stdout — everything before it is free-form and gets stored as the gate output in the run's log. This example wakes the agent only when the watched file's checksum changes.
 
 ```bash
 #!/bin/bash
 # scripts/inbox-gate.sh — wakes the agent only when inbox.json changed.
 set -euo pipefail
 
-STATE_FILE=".gate-state/inbox.sha256"
+STATE_FILE="data/gate-state/inbox.cksum"
 WATCH_FILE="inbox.json"
 
 mkdir -p "$(dirname "$STATE_FILE")"
@@ -328,16 +336,16 @@ if [ ! -f "$WATCH_FILE" ]; then
   exit 0
 fi
 
-current_hash=$(shasum -a 256 "$WATCH_FILE" | cut -d' ' -f1)
-previous_hash=$(cat "$STATE_FILE" 2>/dev/null || echo "")
+current_checksum=$(cksum < "$WATCH_FILE")
+previous_checksum=$(cat "$STATE_FILE" 2>/dev/null || echo "")
 
-if [ "$current_hash" = "$previous_hash" ]; then
+if [ "$current_checksum" = "$previous_checksum" ]; then
   echo "no change"
   echo '{"wakeAgent": false}'
   exit 0
 fi
 
-echo "$current_hash" > "$STATE_FILE"
+echo "$current_checksum" > "$STATE_FILE"
 new_count=$(jq 'length' "$WATCH_FILE")
 
 echo "inbox.json changed, $new_count entries"
@@ -346,16 +354,29 @@ echo "{\"wakeAgent\": true, \"context\": {\"newCount\": $new_count}}"
 
 This runs under `bash` because of its `.sh` extension (see Interpreter policy below), so it does not need the executable bit set. Every line before the final JSON line — `"no change"`, `"inbox.json changed, N entries"` — is captured as the gate's stdout and, on a woke run, shown in the output file's `## Gate Output` section.
 
+## Script runtime
+
+Scripts for sandboxed agents run in a fresh container from `/workspace`.
+Use `/workspace/data` for writes with the default read-only workspace or use
+workspace-relative paths such as `data/gate-state` from the working directory.
+The script sees the agent's workspace and configured mounts, with session
+uploads and conversation-file mounts excluded. A normal directory in the
+workspace remains visible. See
+[script isolation](../../../docs/container-isolation.md#scheduler-scripts-and-webhook-gates).
+Scripts for agents without sandboxing run on the gateway host from the agent's
+workspace directory.
+
 ## Interpreter policy
 
-No shebang guessing — the extension picks the interpreter from the file extension alone:
+- `.sh` and `.bash` scripts run as `bash <script-path>` without requiring the executable bit.
+- Other scripts run directly. Add a shebang and set the executable bit with `chmod +x`.
 
-- `.sh` or `.bash` → spawned as `bash <script-path>`. The executable bit is not required.
-- Any other extension → spawned **directly** (`<script-path>` as the command). The file **must** have the executable bit set (`chmod +x`), or the run fails immediately with `script <path> is not executable: add a shebang ... and chmod +x it`.
+The runner captures stdout and stderr up to 64 KiB per stream and appends
+`[output truncated]` when a stream exceeds the cap.
 
-`cwd` for the subprocess is always the agent's workspace directory. stdout/stderr are piped and captured; each stream is capped at 64 KiB while streaming (a `[output truncated]` marker is appended past the cap), so a chatty script can't buffer unbounded output in memory.
-
-A script gets its own process group (POSIX `detached: true`); on timeout the scheduler kills the whole group (`SIGKILL`), so a shell script's foreground child (e.g. something it `wait`s on) is killed too — no orphaned process survives a timeout.
+On timeout, the host runner kills the whole script process group, including
+child processes. Script containers are cleaned up on failure, timeout, or
+extension shutdown.
 
 ## Containment rules
 
@@ -366,7 +387,11 @@ A script gets its own process group (POSIX `detached: true`); on timeout the sch
 - At fire time the resolved path's **realpath** is checked against the workspace directory's realpath, so a symlink inside the workspace that points outside it is also rejected (`script path escapes workspace: <script>`) — schema validation alone can't catch that, since it only sees the literal string.
 - A script path that doesn't resolve to an existing file fails with `script not found: <path>`.
 
-The agent tools `scheduler.create_job` and `scheduler.update_job` apply the same containment, existence and executable-bit checks when a `script` is saved (create, or update with a new `script`), so a bad path is rejected immediately with a hint instead of failing at the first run. Updates that don't change `script` (rename, pause, schedule) skip the check. Scripts run on the gateway host, not in the agent container: inside a container, `/workspace/files` (the conversation folder) and `/workspace/uploads` are not under the workspace root, so job scripts must live under the workspace root and must not reference `/workspace/...` paths.
+The agent tools `scheduler.create_job` and `scheduler.update_job` apply the
+same containment, existence, and executable-bit checks when saving a new
+`script`. Updates that leave `script` unchanged skip the check. Save the path
+as `scripts/check-status.sh`. The script itself can use paths under
+`/workspace` when it runs in a sandbox.
 
 ## Delivery (`deliver`)
 

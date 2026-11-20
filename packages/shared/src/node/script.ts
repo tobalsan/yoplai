@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { getAgentDataDir } from "../config-path.js";
+import type { AgentConfig } from "../types.js";
 
 const MAX_OUTPUT_BYTES = 64 * 1024;
 // The head cap above throws away the tail of a chatty stream, but the wakeAgent
@@ -15,7 +17,7 @@ const KILL_GRACE_MS = 5_000;
 
 // Scripts are spawned detached (own process group), so nothing else would clean
 // them up when the gateway shuts down; see `terminateRunningScripts`.
-const runningChildren = new Map<ChildProcess, string | undefined>();
+const runningScripts = new Map<() => void | Promise<void>, string | undefined>();
 
 export type RunScriptInput = {
   workspaceDir: string;
@@ -37,9 +39,10 @@ export class ScriptExecutionError extends Error {
     message: string,
     readonly reason: "exit" | "timeout" | "signal" | "spawn",
     readonly stderrTail: string,
-    readonly exitCode?: number
+    readonly exitCode?: number,
+    options?: ErrorOptions
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -53,6 +56,19 @@ export type WakeAgentResult = {
 /** Invalid containment, distinct from a missing or unlaunchable script. */
 export class ScriptPathError extends Error {}
 
+export type ScriptMounts = {
+  dataDir: string;
+  shadowedPaths?: readonly string[];
+};
+
+export function getScriptMounts(agent: AgentConfig, homeDir: string): ScriptMounts | undefined {
+  if (!agent.sandbox?.enabled) return undefined;
+  return {
+    dataDir: getAgentDataDir(homeDir, agent.id),
+    shadowedPaths: agent.sandbox.mounts?.map((mount) => mount.container),
+  };
+}
+
 /**
  * Resolves a job's `script` path against `workspaceDir` and rejects anything
  * that could escape it: absolute paths, `..` segments, and symlink escapes
@@ -60,8 +76,13 @@ export class ScriptPathError extends Error {}
  */
 export async function resolveScriptPath(
   workspaceDir: string,
-  script: string
+  script: string,
+  mounts?: ScriptMounts
 ): Promise<string> {
+  return (await resolveScriptTarget(workspaceDir, script, mounts)).hostPath;
+}
+
+async function resolveScriptTarget(workspaceDir: string, script: string, mounts?: ScriptMounts) {
   if (path.isAbsolute(script)) {
     throw new ScriptPathError(`script path must be relative: ${script}`);
   }
@@ -69,9 +90,17 @@ export async function resolveScriptPath(
     throw new ScriptPathError(`script path must not contain '..': ${script}`);
   }
 
-  const resolved = path.resolve(workspaceDir, script);
-  const workspaceReal = await fs.realpath(workspaceDir);
+  const parts = path.normalize(script).split(path.sep);
+  const inData = !!mounts && parts[0] === "data";
+  const root = inData ? mounts.dataDir : workspaceDir;
+  const resolved = path.resolve(root, ...(inData ? parts.slice(1) : parts));
+  const isShadowed = (target: string) => target === "/workspace/.env" ||
+    mounts?.shadowedPaths?.some((mount) => isAtOrUnder(target, path.posix.resolve(mount)));
+  if (mounts && isShadowed(path.posix.join("/workspace", ...parts))) {
+    throw new ScriptPathError(`script path resolves to a shadowed workspace path: ${script}`);
+  }
 
+  const rootReal = await fs.realpath(root);
   let scriptReal: string;
   try {
     scriptReal = await fs.realpath(resolved);
@@ -79,12 +108,31 @@ export async function resolveScriptPath(
     throw new Error(`script not found: ${resolved}`);
   }
 
-  const relative = path.relative(workspaceReal, scriptReal);
+  const relative = path.relative(rootReal, scriptReal);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new ScriptPathError(`script path escapes workspace: ${script}`);
   }
 
-  return scriptReal;
+  if (!mounts) return { hostPath: scriptReal };
+
+  const containerPath = path.posix.join(
+    inData ? "/workspace/data" : "/workspace",
+    ...relative.split(path.sep)
+  );
+  if (!inData && isAtOrUnder(containerPath, "/workspace/data")) {
+    const dataReal = await fs.realpath(mounts.dataDir).catch(() => undefined);
+    if (dataReal !== path.join(rootReal, "data")) {
+      throw new ScriptPathError(`script path resolves to a shadowed workspace path: ${script}`);
+    }
+  }
+  if (isShadowed(containerPath)) {
+    throw new ScriptPathError(`script path resolves to a shadowed workspace path: ${script}`);
+  }
+  return { hostPath: scriptReal, containerPath };
+}
+
+function isAtOrUnder(target: string, root: string): boolean {
+  return target === root || target.startsWith(root === "/" ? root : `${root}/`);
 }
 
 /**
@@ -95,22 +143,23 @@ export async function resolveScriptPath(
  */
 export async function resolveScriptLaunch(
   workspaceDir: string,
-  script: string
-): Promise<{ command: string; args: string[] }> {
-  const scriptPath = await resolveScriptPath(workspaceDir, script);
+  script: string,
+  mounts?: ScriptMounts
+): Promise<{ command: string; args: string[]; containerPath?: string }> {
+  const { hostPath: scriptPath, containerPath } = await resolveScriptTarget(workspaceDir, script, mounts);
   const stat = await fs.stat(scriptPath);
   if (!stat.isFile()) throw new Error(`script ${scriptPath} is not a file`);
 
   const ext = path.extname(scriptPath);
   if (ext === ".sh" || ext === ".bash") {
-    return { command: "bash", args: [scriptPath] };
+    return { command: "bash", args: [scriptPath], ...(containerPath && { containerPath }) };
   }
   if ((stat.mode & 0o111) === 0) {
     throw new Error(
       `script ${scriptPath} is not executable: add a shebang (e.g. #!/usr/bin/env python3) and chmod +x it`
     );
   }
-  return { command: scriptPath, args: [] };
+  return { command: scriptPath, args: [], ...(containerPath && { containerPath }) };
 }
 
 /**
@@ -136,16 +185,36 @@ export async function runScript(
 }
 
 async function executeScript(input: RunScriptInput): Promise<RunScriptResult> {
-  const { workspaceDir, script, timeoutMs } = input;
+  const { workspaceDir, script } = input;
   const { command, args } = await resolveScriptLaunch(workspaceDir, script);
-
-  const child = spawn(command, args, {
+  return runScriptProcess(command, args, input, {
     cwd: workspaceDir,
     env: input.env === undefined ? undefined : { ...process.env, ...input.env },
+    track: true,
+  });
+}
+
+/** Runs a launch command with the same bounded output and timeouts as a host script. */
+export async function runScriptProcess(
+  command: string,
+  args: string[],
+  input: Pick<RunScriptInput, "timeoutMs" | "stdin" | "owner">,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal; track?: boolean } = {}
+): Promise<RunScriptResult> {
+  const { timeoutMs } = input;
+  if (options.signal?.aborted) {
+    if (isTimeoutAbort(options.signal)) {
+      throw new ScriptExecutionError(`script exceeded the ${timeoutMs}ms timeout and was killed`, "timeout", "");
+    }
+    throw new ScriptExecutionError("script failed (exit signal)", "signal", "");
+  }
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
     detached: process.platform !== "win32",
     stdio: [input.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
-  runningChildren.set(child, input.owner);
+  const untrack = options.track ? trackRunningScript(input.owner, () => killScriptProcess(child)) : undefined;
 
   const stdoutCap = createOutputCap();
   const stderrCap = createOutputCap();
@@ -161,9 +230,9 @@ async function executeScript(input: RunScriptInput): Promise<RunScriptResult> {
   let code: number | null;
   let signal: NodeJS.Signals | null;
   try {
-    ({ timedOut, code, signal } = await waitForExit(child, timeoutMs));
+    ({ timedOut, code, signal } = await waitForExit(child, timeoutMs, options.signal));
   } finally {
-    runningChildren.delete(child);
+    untrack?.();
   }
   await drainStdio(child, STDIO_DRAIN_MS);
 
@@ -197,17 +266,30 @@ async function executeScript(input: RunScriptInput): Promise<RunScriptResult> {
  * Kills tracked scripts, optionally scoped to one extension's owner tag.
  * With no owner, shutdown retains the scheduler's process-wide cleanup.
  */
-export function terminateRunningScripts(owner?: string): void {
-  for (const [child, childOwner] of runningChildren) {
-    if (owner !== undefined && childOwner !== owner) continue;
-    killScriptProcess(child);
-    runningChildren.delete(child);
+export function trackRunningScript(owner: string | undefined, terminate: () => void | Promise<void>): () => void {
+  runningScripts.set(terminate, owner);
+  return () => runningScripts.delete(terminate);
+}
+
+export async function terminateRunningScripts(owner?: string): Promise<void> {
+  const pending = [];
+  for (const [terminate, scriptOwner] of runningScripts) {
+    if (owner !== undefined && scriptOwner !== owner) continue;
+    pending.push(terminate());
   }
+  const results = await Promise.allSettled(pending);
+  const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  if (failures.length) throw new AggregateError(failures, "Could not terminate all scripts");
+}
+
+function isTimeoutAbort(signal: AbortSignal | undefined): boolean {
+  return signal?.reason instanceof Error && signal.reason.name === "TimeoutError";
 }
 
 function waitForExit(
   child: ChildProcess,
-  timeoutMs: number
+  timeoutMs: number,
+  abortSignal?: AbortSignal
 ): Promise<{
   timedOut: boolean;
   code: number | null;
@@ -222,20 +304,29 @@ function waitForExit(
       settled = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
+      abortSignal?.removeEventListener("abort", onAbort);
     };
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
+      if (killTimer !== undefined) return;
       killScriptProcess(child);
       // SIGKILL normally lands at once, but settle on a bounded grace anyway so
       // a child that never reports its exit cannot hang the job forever.
       killTimer = setTimeout(() => {
         if (settled) return;
         finish();
-        resolve({ timedOut: true, code: null, signal: "SIGKILL" });
+        resolve({ timedOut, code: null, signal: "SIGKILL" });
       }, KILL_GRACE_MS);
       killTimer.unref?.();
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
     }, timeoutMs);
+    const onAbort = () => {
+      timedOut ||= isTimeoutAbort(abortSignal);
+      kill();
+    };
 
     child.on("error", (error) => {
       if (settled) return;
@@ -251,6 +342,8 @@ function waitForExit(
       finish();
       resolve({ timedOut, code: exitCode, signal: exitSignal });
     });
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (abortSignal?.aborted) onAbort();
   });
 }
 

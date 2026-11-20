@@ -124,11 +124,17 @@ Gate findings: $WEBHOOK_GATE_CONTEXT
 | `script` | None | Gate path relative to the agent workspace. Absolute paths, `..` segments, and symlink escapes are rejected. |
 | `scriptTimeoutMs` | `30000` | Positive gate timeout in milliseconds. |
 
-The gate runs in the agent workspace. `.sh` and `.bash` files run under Bash
-without an executable bit; other files must be executable. Stdin receives the
-raw POST body, or the serialized query string for GET. The inherited environment
-is supplemented with `WEBHOOK_AGENT_ID`, `WEBHOOK_NAME`, `WEBHOOK_REQUEST_ID`,
-`WEBHOOK_ORIGIN_URL`, and `WEBHOOK_HEADERS` (JSON).
+For a sandboxed agent, each gate runs in its own container from `/workspace`.
+It can use `/workspace/data` for writes and sees the agent's configured mounts.
+Session uploads and conversation files are excluded. For an agent without
+sandboxing, the gate runs on the gateway host from the agent's workspace.
+See [script isolation](container-isolation.md#scheduler-scripts-and-webhook-gates).
+
+`.sh` and `.bash` files run under Bash without an executable bit. Other files
+need a shebang and `chmod +x`. Stdin receives the raw POST body or the serialized
+query string for GET. The gate receives `WEBHOOK_AGENT_ID`, `WEBHOOK_NAME`,
+`WEBHOOK_REQUEST_ID`, `WEBHOOK_ORIGIN_URL`, and `WEBHOOK_HEADERS` (JSON) in its
+environment.
 
 The last non-empty stdout line can return these JSON fields:
 
