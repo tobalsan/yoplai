@@ -1191,7 +1191,7 @@ describe("AgentSidebar", () => {
     expect(await render_({ multiUser: false })).toBeUndefined();
   });
 
-  it("shows a Slack pairings entry for a local user with linked gateways, and no entry for a multi-user gateway or without links", async () => {
+  it("shows a Pairings entry for a local user with linked gateways, and no entry for a multi-user gateway or without links", async () => {
     vi.useFakeTimers();
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     setPathname("/chat/alpha");
@@ -1202,7 +1202,7 @@ describe("AgentSidebar", () => {
       document.body.appendChild(container);
       const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
       await vi.advanceTimersByTimeAsync(5);
-      const link = Array.from(container.querySelectorAll("a")).find((item) => item.textContent?.includes("Slack pairings"));
+      const link = Array.from(container.querySelectorAll("a")).find((item) => item.textContent?.includes("Pairings"));
       dispose();
       container.remove();
       return link?.getAttribute("href");

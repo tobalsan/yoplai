@@ -105,8 +105,8 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
                       navigate("/account/connections");
                     }}
                   >
-                    <i class="fa-solid fa-plug" aria-hidden="true" />
-                    Account connections
+                    <i class="fa-solid fa-user-group" aria-hidden="true" />
+                    Pairings
                   </button>
                   <button
                     type="button"

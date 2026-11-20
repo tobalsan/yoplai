@@ -872,9 +872,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </Suspense>
           </Show>
           <Show when={!capabilities.multiUser && (relayGateways()?.length ?? 0) > 0}>
-            <A href={`/account/connections?gateway=${encodeURIComponent(relayGateways()![0])}`} class="archive-link" title="Slack pairings of a linked gateway">
-              <i class="fa-brands fa-slack" aria-hidden="true" />
-              <span class="archive-label">Slack pairings</span>
+            <A href={`/account/connections?gateway=${encodeURIComponent(relayGateways()![0])}`} class="archive-link" title="Pairings of a linked gateway">
+              <i class="fa-solid fa-user-group" aria-hidden="true" />
+              <span class="archive-label">Pairings</span>
             </A>
           </Show>
           <Show when={capabilities.relayLink?.available === true}>

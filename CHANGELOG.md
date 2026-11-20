@@ -31,9 +31,13 @@ Agents can generate images, and compaction summaries follow a fixed template for
 - Account connections only shows the Threadit and Mattermost section when a local account link exists.
 - In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
 - The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.
+- The linked gateways page now shows "Device connecting…" and updates the device state about every 2 seconds after a link, for up to one minute. Before, the row stayed on "Device not connected" until you did something else.
 
 ### Changed
 
+- The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
+- After you link a gateway, the row reads "Device connecting…" until the device connects. "Device not connected" shows only when the device stays offline after the check ends.
+- The page for Slack pairings is now **Pairings**, with a Slack section. The sidebar item and the account menu item use the same name. A gateway with no Slack, or with no multi-user sign-in, shows "No pairings on this gateway." instead of a red error.
 - `better-sqlite3` is now version 13, because Electron 45 needs it.
 - `YOPLAI_UI_HOST` sets the bind host of the web UI. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. `pnpm desktop` sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`.
 - Run `pnpm desktop` to open Yoplai in a desktop window (Electron). It starts a local gateway and the web UI from repo source on free ports, and stops both when you close the window. OAuth popups open in-app. Other links open in your system browser. If start fails, the window shows the last 50 log lines and a Restart link.

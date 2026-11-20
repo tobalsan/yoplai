@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createResource, createSignal, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createResource, createSignal, onCleanup } from "solid-js";
 import { LeftNavShell } from "../components/LeftNavShell";
 import {
   RelayLinkApiError,
@@ -16,6 +16,9 @@ import {
 import { capabilities } from "../lib/capabilities";
 
 const POLL_MS = 1500;
+/** Wait between two reads of the link rows after a link, and the most reads in one cycle. */
+const REFRESH_MS = 2000;
+const REFRESH_TRIES = 30;
 
 const KEY_LABEL: Record<LinkKeyState, string> = {
   active: "Key active",
@@ -27,7 +30,7 @@ const KEY_LABEL: Record<LinkKeyState, string> = {
 
 const CONNECTION_LABEL: Record<LinkConnectionState, string> = {
   connected: "Device connected",
-  connecting: "Device not connected",
+  connecting: "Device connecting…",
   replaced: "Device link replaced by another device of the same account",
   unauthorized: "Device link refused by the remote",
   offline: "Device not connected",
@@ -68,6 +71,67 @@ export function RemoteGateways() {
   };
   onCleanup(stopPolling);
 
+  // The device socket opens after the link is saved, on the next scan of the device manager. So the row reads
+  // `offline` or `connecting` for a few seconds after a link. A refresh cycle reads the rows again until the
+  // watched rows settle. Only a new link, a page load with a `connecting` row, or a disconnect (which ends the cycle)
+  // changes the cycle.
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let refreshCycle = 0;
+  // The rows of the running cycle. Such a row that reads `offline` shows "Device connecting…", not a failure.
+  const [watching, setWatching] = createSignal<string[]>([]);
+  let unmounted = false;
+  const stopRefresh = () => {
+    refreshCycle += 1;
+    clearTimeout(refreshTimer);
+    setWatching([]);
+  };
+  onCleanup(() => { unmounted = true; stopRefresh(); });
+  // One read at a time: the timer and the link paths share the read that is pending.
+  let pendingRead: Promise<void> | undefined;
+  const readRows = (): Promise<void> => {
+    if (unmounted) return Promise.resolve();
+    pendingRead ??= (async () => {
+      try { await refetch(); } catch { /* The error state of the resource tells the result. */ }
+      finally { pendingRead = undefined; }
+    })();
+    return pendingRead;
+  };
+  const startRefresh = (names: string[]) => {
+    stopRefresh();
+    if (unmounted || names.length === 0) return;
+    const cycle = refreshCycle;
+    setWatching(names);
+    let tries = 0;
+    const settled = (list: LinkRow[]) =>
+      names.every((watched) => {
+        const row = list.find((item) => item.name === watched);
+        return row !== undefined && row.connection !== "offline" && row.connection !== "connecting";
+      });
+    const next = () => {
+      refreshTimer = setTimeout(async () => {
+        if (unmounted || cycle !== refreshCycle) return;
+        await readRows();
+        if (unmounted || cycle !== refreshCycle) return;
+        tries += 1;
+        const list = rows.error ? undefined : rows.latest;
+        if ((list && settled(list)) || tries >= REFRESH_TRIES) {
+          setWatching([]);
+          return;
+        }
+        next();
+      }, REFRESH_MS);
+    };
+    next();
+  };
+  // On page load, a row that is `connecting` starts a cycle.
+  let loadChecked = false;
+  createEffect(() => {
+    const list = rows.error ? undefined : rows.latest;
+    if (!list || loadChecked) return;
+    loadChecked = true;
+    startRefresh(list.filter((row) => row.connection === "connecting").map((row) => row.name));
+  });
+
   const poll = (attempt: Pending) => {
     const round = ++polling;
     const tick = async () => {
@@ -77,7 +141,8 @@ export function RemoteGateways() {
         if (TERMINAL.includes(view.status)) {
           setPending(undefined);
           setResult(view);
-          await refetch();
+          await readRows();
+          if (view.status === "linked" && view.name) startRefresh([view.name]);
           return;
         }
       } catch (cause) {
@@ -101,7 +166,8 @@ export function RemoteGateways() {
       const started = await startLink(remoteAddress, gatewayName);
       if (started.kind === "linked") {
         setNotice(`Linked ${started.name}. This gateway needs no sign-in.`);
-        await refetch();
+        await readRows();
+        startRefresh([started.name]);
         return;
       }
       const next: Pending = { attemptId: started.attemptId, controlToken: started.controlToken, consentUrl: started.consentUrl, remote: remoteAddress, name: gatewayName };
@@ -137,6 +203,7 @@ export function RemoteGateways() {
     setError(undefined);
     setNotice(undefined);
     try {
+      stopRefresh();
       await disconnectLink(row.name, localOnly);
       setFailedDisconnect(undefined);
       setNotice(localOnly ? `Removed ${row.name} from this computer. The remote key stays valid until it is revoked or it expires.` : `Disconnected ${row.name}.`);
@@ -235,7 +302,7 @@ export function RemoteGateways() {
                             {KEY_LABEL[row.keyState]}
                             <Show when={row.expiresAt}> · Expires {new Date(row.expiresAt!).toLocaleDateString()}</Show>
                           </span>
-                          <span>{CONNECTION_LABEL[row.connection]}</span>
+                          <span>{row.connection === "offline" && watching().includes(row.name) ? CONNECTION_LABEL.connecting : CONNECTION_LABEL[row.connection]}</span>
                         </div>
                         <div class="remote-gateways-actions">
                           <Show when={row.kind === "browser" && capabilities.relayLink?.available === true}>
