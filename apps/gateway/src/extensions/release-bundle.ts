@@ -3,7 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { gunzip } from "node:zlib";
-import { importExternalExtension, type ReleaseCatalogEntry } from "@yoplai/shared";
+import { Worker } from "node:worker_threads";
+import type { ReleaseCatalogEntry } from "@yoplai/shared";
 import { fetchCatalogAsset, readCatalogBytes } from "./release-catalog-fetch.js";
 
 const unzip = promisify(gunzip);
@@ -46,6 +47,20 @@ export async function extractReleaseBundle(bytes: Buffer, directory: string): Pr
   throw new Error("The archive does not contain a complete extension.");
 }
 
+async function readStagedExtensionId(indexPath: string, key: string): Promise<string> {
+  const entry = import.meta.url.endsWith(".ts") ? "./release-bundle.worker.ts" : "./release-bundle.worker.js";
+  const worker = new Worker(new URL(entry, import.meta.url), { workerData: { indexPath, key } });
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", () => reject(new Error("The extension check stopped without a result.")));
+    });
+  } finally {
+    await worker.terminate();
+  }
+}
+
 export async function stageReleaseBundle(entry: ReleaseCatalogEntry, directory: string): Promise<void> {
   const response = await fetchCatalogAsset(entry.url);
   if (!response.ok) {
@@ -63,6 +78,6 @@ export async function stageReleaseBundle(entry: ReleaseCatalogEntry, directory: 
     throw new Error("The manifest ID or version does not match the catalog.");
   }
   await fs.writeFile(path.join(directory, "package.json"), '{"type":"module"}');
-  const extension = await importExternalExtension(path.join(directory, "index.js"), entry.sha256);
-  if (extension.id !== entry.id) throw new Error("The extension ID does not match the catalog.");
+  const id = await readStagedExtensionId(path.join(directory, "index.js"), entry.sha256);
+  if (id !== entry.id) throw new Error("The extension ID does not match the catalog.");
 }
