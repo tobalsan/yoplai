@@ -25,24 +25,27 @@ export function createOwnerRows<Row>(options: {
   const [unavailable, setUnavailable] = createSignal(false);
   const [unknown, setUnknown] = createSignal(false);
   let requestId = 0;
-  let activeUserId: string | undefined;
+  // Each owner change starts a new visit object. An answer compares it by reference, so a held request of an
+  // earlier visit changes nothing, also when the same owner comes back.
+  type Visit = { userId: string };
+  let activeVisit: Visit | undefined;
   let disposed = false;
-  onCleanup(() => { disposed = true; requestId++; });
-  const current = (userId: string) => !disposed && activeUserId === userId;
+  onCleanup(() => { disposed = true; activeVisit = undefined; requestId++; });
+  const current = (visit: Visit) => !disposed && activeVisit === visit;
 
-  const refresh = async (userId: string): Promise<boolean> => {
+  const refresh = async (visit: Visit): Promise<boolean> => {
     const currentRequest = ++requestId;
     setLoading(true);
     setError(undefined);
     try {
       const next = await options.list();
-      if (!current(userId) || currentRequest !== requestId) return false;
+      if (!current(visit) || currentRequest !== requestId) return false;
       setRows(next);
       setUnavailable(false);
       options.onAvailable(true);
       return true;
     } catch (cause) {
-      if (current(userId) && currentRequest === requestId) {
+      if (current(visit) && currentRequest === requestId) {
         setRows([]);
         // After a failed remote remove, an "unavailable" answer must not hide the error and Retry.
         if (options.isUnavailable(cause) && !unknown()) {
@@ -56,19 +59,20 @@ export function createOwnerRows<Row>(options: {
       }
       return false;
     } finally {
-      if (current(userId) && currentRequest === requestId) setLoading(false);
+      if (current(visit) && currentRequest === requestId) setLoading(false);
     }
   };
 
   createEffect(() => {
     const userId = options.ownerId();
-    activeUserId = userId;
+    const visit: Visit | undefined = userId ? { userId } : undefined;
+    activeVisit = visit;
     setRows([]);
     setError(undefined);
     setPending(undefined);
     setUnknown(false);
     setUnavailable(false);
-    if (userId) void refresh(userId);
+    if (visit) void refresh(visit);
     else {
       requestId++;
       setLoading(false);
@@ -76,37 +80,37 @@ export function createOwnerRows<Row>(options: {
   });
 
   const retry = async () => {
-    const userId = activeUserId;
-    if (!userId) return;
-    const ok = await refresh(userId);
-    if (current(userId) && ok) setUnknown(false);
+    const visit = activeVisit;
+    if (!visit) return;
+    const ok = await refresh(visit);
+    if (current(visit) && ok) setUnknown(false);
   };
 
   /** `key` names the row in `pending`. */
   const remove = async (row: Row, key: string) => {
-    const userId = activeUserId;
-    if (!userId || unknown()) return;
+    const visit = activeVisit;
+    if (!visit || unknown()) return;
     setPending(key);
     setError(undefined);
     let failed = false;
     try {
       await options.remove(row);
-      if (current(userId)) await refresh(userId);
+      if (current(visit)) await refresh(visit);
     } catch (cause) {
       failed = true;
-      if (current(userId)) {
+      if (current(visit)) {
         setError(cause instanceof Error ? cause.message : options.removeFailure);
         // Lock the controls before `pending` clears, so no click starts another write while the recovery read runs.
         if (options.uncertainRemove) setUnknown(true);
       }
     } finally {
-      if (current(userId)) setPending(undefined);
+      if (current(visit)) setPending(undefined);
     }
-    if (failed && options.uncertainRemove && current(userId)) {
+    if (failed && options.uncertainRemove && current(visit)) {
       const message = error();
-      const ok = await refresh(userId);
+      const ok = await refresh(visit);
       // The lock stays until the same owner completes a successful read.
-      if (current(userId)) {
+      if (current(visit)) {
         if (ok) setUnknown(false);
         if (message) setError(message);
       }

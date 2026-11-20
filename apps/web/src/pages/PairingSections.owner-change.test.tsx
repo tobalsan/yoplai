@@ -63,3 +63,29 @@ it.each(sections)("$name: the new owner can act while the answer of the previous
   expect(within(root).queryByText(section.label("alice"))).toBeNull();
   expect(deletes).toHaveLength(2);
 });
+
+it.each(sections)("$name: an old visit of the same owner changes nothing after A, B, A", async (section) => {
+  let releaseOld = () => {};
+  let held = true;
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") {
+      if (held) { held = false; await new Promise<void>((resolve) => { releaseOld = resolve; }); return Response.json({ error: "gateway_offline" }, { status: 502 }); }
+      return Response.json({ ok: true });
+    }
+    return Response.json({ [section.key]: [section.row("alice")] });
+  }));
+  const [owner, setOwner] = createSignal<string | undefined>("alice");
+  dispose = render(() => section.mount(owner), root);
+  await tick();
+  fireEvent.click(within(root).getByRole("button", { name: section.button }));
+  await tick();
+  setOwner("bob");
+  await tick();
+  setOwner("alice");
+  await tick();
+  expect((within(root).getByRole("button", { name: section.button }) as HTMLButtonElement).disabled).toBe(false);
+  releaseOld();
+  await tick();
+  expect(within(root).queryByRole("alert")).toBeNull();
+  expect((within(root).getByRole("button", { name: section.button }) as HTMLButtonElement).disabled).toBe(false);
+});
