@@ -40,42 +40,54 @@ it("refuses key commands and environment references", async () => {
 });
 
 it.each([
-  { source: "external", stopReason: "stop", status: 200 },
-  { source: "external", stopReason: "error", status: 429 },
-  { source: "owned", stopReason: "error", status: 401 },
-] as const)("sanitizes $source provider results without losing HTTP $status", async ({ source, stopReason, status }) => {
+  { source: "external", stopReason: "stop", status: 200, reason: "", kind: "generic", retry: false, fallback: false },
+  { source: "external", stopReason: "error", status: 429, reason: "", kind: "rate_limit", retry: true, fallback: true },
+  { source: "owned", stopReason: "error", status: 401, reason: "", kind: "generic", retry: false, fallback: false },
+  { source: "external", stopReason: "error", status: 400, reason: "Maximum context length exceeded", kind: "context_overflow", retry: false, fallback: false },
+  { source: "owned", stopReason: "error", status: 403, reason: "Billing access denied", kind: "quota", retry: false, fallback: false },
+  { source: "owned", stopReason: "error", status: 429, reason: "Quota exceeded", kind: "quota", retry: true, fallback: true },
+] as const)("sanitizes $source provider results with HTTP $status ($kind)", async ({ source, stopReason, status, reason, kind, retry, fallback }) => {
   const { isRetryableProviderError, isFallbackEligibleError } = await import("@yoplai/shared");
+  const { classifyRunFailure } = await import("@yoplai/shared/run-failure");
   const { createAssistantMessageEventStream } = await import("@earendil-works/pi-ai");
   const { createModelAuth } = await import("./model-auth.js");
   if (source === "owned") await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned" } }));
   const { runtime } = await createModelAuth({ readExternal: async () => ({ type: "api_key", key: "fake-external", source: "test" }) });
   const provider = runtime.getProvider("openai")!;
   const model = runtime.getModels(provider.id)[0];
-  const response = {
-    role: "assistant" as const, content: [{ type: "text" as const, text: "Test reply." }],
-    provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(), stopReason,
+  const response: import("@earendil-works/pi-ai").AssistantMessage = {
+    role: "assistant", content: stopReason === "stop" ? [{ type: "text", text: "Test reply." }] : [],
+    provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(), stopReason: "stop",
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    diagnostics: [{ type: "provider_transport_failure", timestamp: Date.now(), error: { message: "fake-private-diagnostic", stack: "fake-private-stack" } }],
-    ...(stopReason === "error" && { errorMessage: "fake-private-error" }),
   };
+  const providerStream = createAssistantMessageEventStream();
   runtime.registerNativeProvider({ ...provider, streamSimple: (_model, _context, options) => {
-    const stream = createAssistantMessageEventStream();
     void options?.onResponse?.({ status, headers: {} }, model);
-    stream.push({ type: "start", partial: response });
-    if (stopReason === "error") stream.push({ type: "error", reason: stopReason, error: response });
-    else stream.push({ type: "done", reason: stopReason, message: response });
-    stream.end(response);
-    return stream;
+    providerStream.push({ type: "start", partial: response });
+    return providerStream;
   } });
   const stream = runtime.streamSimple(model, { messages: [] });
   const events = [];
-  for await (const event of stream) events.push(event);
+  for await (const event of stream) {
+    events.push(event);
+    if (event.type !== "start") continue;
+    expect(event.partial).not.toHaveProperty("diagnostics");
+    expect(event.partial).not.toHaveProperty("errorMessage");
+    response.diagnostics = [{ type: "provider_transport_failure", timestamp: Date.now(), error: { message: "fake-private-diagnostic", stack: "fake-private-stack" } }];
+    response.stopReason = stopReason;
+    if (stopReason === "error") {
+      response.errorMessage = `${reason} fake-private-error`;
+      providerStream.push({ type: "error", reason: stopReason, error: response });
+    } else providerStream.push({ type: "done", reason: stopReason, message: response });
+    providerStream.end(response);
+  }
   const final = await stream.result();
   expect(final.stopReason).toBe(stopReason);
   expect(events.map((event) => event.type)).toEqual(["start", stopReason === "stop" ? "done" : "error"]);
-  expect(JSON.stringify({ events, final }).includes("fake-private-")).toBe(false);
+  expect.soft(JSON.stringify({ events, final }).includes("fake-private-")).toBe(false);
   expect(final).not.toHaveProperty("diagnostics");
   const message = final.errorMessage ?? "";
-  expect(isRetryableProviderError(final, message)).toBe(status === 429);
-  expect(isFallbackEligibleError(final, message)).toBe(status === 429);
+  expect.soft(classifyRunFailure(final, message)).toBe(kind);
+  expect.soft(isRetryableProviderError(final, message)).toBe(retry);
+  expect.soft(isFallbackEligibleError(final, message)).toBe(fallback);
 });

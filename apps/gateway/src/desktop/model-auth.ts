@@ -31,8 +31,10 @@ function safeProviderError(provider: string, external: boolean, status: number |
   }
   switch (classifyRunFailure(response, message)) {
     case "safety_refusal": return "The model refused to complete the request.";
-    case "context_overflow": return category === "invalid_request" ? "400 invalid_request_error: context window exceeded." : "The context window was exceeded.";
-    case "quota": return "Provider quota exceeded.";
+    case "context_overflow": return category === "invalid_request" ? "400 invalid_request_error: context window exceeded." : "Context window exceeded.";
+    case "quota":
+      if (category === "invalid_request") return "400 invalid_request_error: provider billing refusal.";
+      return isRetryableProviderError(response, message) ? "Provider quota exceeded." : "Provider billing refusal.";
     case "rate_limit": return "429 Provider rate limit.";
     case "overloaded": return "529 Provider overloaded.";
   }
@@ -192,7 +194,7 @@ export async function createModelAuth(options: {
     const push = result.push.bind(result);
     const end = result.end.bind(result);
     function safe(message: AssistantMessage): AssistantMessage {
-      if (!message.diagnostics && message.stopReason !== "error" && message.errorMessage === undefined) return message;
+      // The provider can add diagnostics after emitting a clean partial.
       const clean = { ...message };
       delete clean.diagnostics;
       if (clean.stopReason === "error" || clean.errorMessage !== undefined) {
