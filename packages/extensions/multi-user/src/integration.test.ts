@@ -445,6 +445,7 @@ describe("multi-user integration", () => {
         multiUser: false,
         enableCronMonitoring: false,
         forkedAgents: false,
+        desktopSetup: false,
         dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       });
 
@@ -513,6 +514,7 @@ describe("multi-user integration", () => {
         multiUser: false,
         enableCronMonitoring: false,
         forkedAgents: false,
+        desktopSetup: false,
         dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       });
     } finally {
