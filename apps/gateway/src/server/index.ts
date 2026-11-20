@@ -387,7 +387,7 @@ export function startServer(
     resolveGatewayBindHost(config.gateway?.bind);
   configureRelay(
     resolvedHost,
-    runtime.isEnabled("multiUser"),
+    () => runtime.isEnabled("multiUser"),
     config.ui?.tailscale?.mode === "serve",
     readEnv("UI_HOST") ?? resolveBindHost(config.ui?.bind)
   );

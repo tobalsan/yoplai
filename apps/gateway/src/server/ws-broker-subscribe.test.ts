@@ -17,6 +17,7 @@ vi.mock("../sessions/index.js", () => ({ getSessionEntry: vi.fn() }));
 vi.mock("./run-request.js", () => ({ normalizeRunRequest: vi.fn() }));
 vi.mock("../relay/state.js", () => ({
   getLinkedGateways: () => [{ name: "ams", url: remote.url }],
+  isRelayEnabled: () => true,
   isTrustedRequest: () => true,
   resolveRemoteAgent: (agentId: string) =>
     agentId.endsWith("@ams") ? { agentId: agentId.slice(0, -4), gateway: "ams" } : { agentId },

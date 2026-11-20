@@ -36,7 +36,12 @@ export async function createModelAuth(options: {
   const { ModelRuntime, readStoredCredential } = await import("@earendil-works/pi-coding-agent");
   const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
   const home = options.home ?? CONFIG_DIR;
-  const readExternal = options.readExternal ?? (isRelayEnabled() ? getExternalSources(home).resolve : undefined);
+  const canReadExternal = () => desktopEnabled() && isRelayEnabled();
+  const readExternal: ReadExternal = async (provider, model, mode) => {
+    if (!canReadExternal()) return undefined;
+    const credential = await (options.readExternal ?? getExternalSources(home).resolve)(provider, model, mode);
+    return canReadExternal() ? credential : undefined;
+  };
   const authPath = path.join(home, "auth.json");
   const modelsPath = path.join(home, "models.json");
   const runtime = await ModelRuntime.create(options.submitted ? {
@@ -76,7 +81,7 @@ export async function createModelAuth(options: {
     }
 
     let external: ExternalCredential | undefined;
-    if (desktopEnabled() && readExternal) {
+    if (canReadExternal()) {
       if (scope) scope.external = true;
       external = await readExternal(provider, model, mode);
       if (scope) scope.external = external !== undefined;
@@ -130,12 +135,12 @@ export async function createModelAuth(options: {
   }
   if (!desktopEnabled() && !options.submitted) return { runtime, resolveModelAuth, requireModelAuth };
   runtime.getAuth = resolveModelAuth;
-  if (readExternal && !options.submitted) {
+  if (!options.submitted) {
     const nativeCheck = runtime.checkAuth.bind(runtime);
     runtime.checkAuth = async (provider, checkOptions) => {
       const native = await nativeCheck(provider, checkOptions);
       const model = checkedModels.get(provider);
-      if (native || !model || !desktopEnabled() || checkOptions?.signal?.aborted) return native;
+      if (native || !model || checkOptions?.signal?.aborted) return native;
       // Pi checks the provider before a prompt or a model switch. Check the selected model again.
       const mode = provider === options.primaryProvider ? options.mode : undefined;
       const external = await readExternal(provider, model, mode);

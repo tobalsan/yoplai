@@ -86,7 +86,11 @@ async function checkPackages(app, reference) {
   const home = path.join(root, "home");
   const userHome = path.join(root, "user");
   const tmp = path.join(root, "tmp");
+  // Both packaged gateways reach Docker through PATH; a stub keeps them off the real daemon.
+  const stubBin = path.join(root, "bin");
   try {
+    await fs.mkdir(stubBin);
+    await fs.writeFile(path.join(stubBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const source = `http://127.0.0.1:${server.address().port}`;
@@ -114,7 +118,7 @@ async function checkPackages(app, reference) {
       const resourcesPath = path.join(path.resolve(appPath), "Contents", "Resources");
       const { children: [child] } = createPackagedLaunchPlan(ports, {
         execPath: path.resolve(appPath, "Contents", "MacOS", "Yoplai"), resourcesPath, home,
-        shellPath: process.env.PATH, parentEnv: { HOME: userHome, TMPDIR: tmp },
+        shellPath: `${stubBin}${path.delimiter}${process.env.PATH}`, parentEnv: { HOME: userHome, TMPDIR: tmp },
       });
       return { ...child, resourcesPath };
     }

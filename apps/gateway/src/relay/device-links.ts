@@ -2,7 +2,7 @@ import { getDeviceApprovals } from "./device-approvals.js";
 import { DeviceExecutor } from "./device-exec.js";
 import { DeviceLinkManager, type DeviceLinkState } from "./device-link-client.js";
 import { getDeviceSettingsStore } from "./device-settings.js";
-import { getLinkedGateways } from "./state.js";
+import { getLinkedGateways, isRelayEnabled } from "./state.js";
 
 let manager: DeviceLinkManager | undefined;
 
@@ -12,6 +12,7 @@ export function startDeviceLinks(): () => void {
   const started = new DeviceLinkManager({
     executor: new DeviceExecutor({ settings: getDeviceSettingsStore(), approvals: getDeviceApprovals() }),
     getGateways: getLinkedGateways,
+    isRelayEnabled,
   });
   manager = started;
   started.start();

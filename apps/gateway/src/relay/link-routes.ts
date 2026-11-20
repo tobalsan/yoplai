@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import { loopbackForwarding, loopbackGatewayHosts, requestPeerAddress } from "../server/loopback-request.js";
 import { allowedCorsOrigins } from "../server/origins.js";
 import { LINK_NAMESPACE, ownsLinkPath } from "@yoplai/shared/secret-paths";
 import { RelayLinkService, defaultDeviceLabel, type LinkResult } from "./link.js";
@@ -43,14 +44,6 @@ export function getRelayLinkService(): RelayLinkService {
   return sharedService;
 }
 
-export function requestPeerAddress(c: Context): string | undefined {
-  return (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-}
-
-export function loopbackGatewayHosts(port: number): string[] {
-  return ["127.0.0.1", "localhost", "[::1]"].map((name) => `${name}:${port}`);
-}
-
 const defaultDeps: LinkRoutesDeps = {
   service: getRelayLinkService,
   isEnabled: isRelayEnabled,
@@ -58,31 +51,6 @@ const defaultDeps: LinkRoutesDeps = {
   configuredOrigins: allowedCorsOrigins,
   peerAddress: requestPeerAddress,
 };
-
-export { isLoopbackAddress } from "./state.js";
-
-/** A forwarded value without quotes, brackets, or a port. */
-function forwardedHost(raw: string): string {
-  const value = raw.trim().replace(/^"|"$/g, "");
-  if (value.startsWith("[")) return value.slice(1, value.indexOf("]") === -1 ? undefined : value.indexOf("]"));
-  return /^[^:]+:\d+$/.test(value) ? value.slice(0, value.lastIndexOf(":")) : value;
-}
-
-/** True when no forwarding header names an address outside loopback. A value that cannot be read counts as outside. */
-function forwardedAddressesAreLoopback(headers: Headers): boolean {
-  const forwardedFor = headers.get("x-forwarded-for");
-  if (forwardedFor !== null && !forwardedFor.split(",").every((entry) => isLoopbackAddress(forwardedHost(entry)))) return false;
-  const realIp = headers.get("x-real-ip");
-  if (realIp !== null && !isLoopbackAddress(forwardedHost(realIp))) return false;
-  const forwarded = headers.get("forwarded");
-  if (forwarded !== null) {
-    for (const part of forwarded.split(/[,;]/)) {
-      const match = /^\s*for\s*=\s*(.+)$/i.exec(part);
-      if (match && !isLoopbackAddress(forwardedHost(match[1]))) return false;
-    }
-  }
-  return true;
-}
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -239,7 +207,7 @@ export function relayLinkApi(overrides: Partial<LinkRoutesDeps> = {}): Middlewar
     const listener = deps.listener();
     const peer = deps.peerAddress(c);
     if (!listener || peer === undefined || !isLoopbackAddress(peer)) return refuse(403, "untrusted_peer", "This route answers only on this computer.");
-    if (!forwardedAddressesAreLoopback(c.req.raw.headers)) return refuse(403, "untrusted_peer", "This route answers only on this computer.");
+    if (!loopbackForwarding(c.req.raw.headers)) return refuse(403, "untrusted_peer", "This route answers only on this computer.");
     const host = c.req.header("host");
     const allowedHosts = loopbackGatewayHosts(listener.port);
     // The UI port is the port of the browser page. A proxy from that page rewrites Host to the gateway, so only the gateway port counts.

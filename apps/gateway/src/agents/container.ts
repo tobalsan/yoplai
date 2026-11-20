@@ -24,6 +24,7 @@ export type ContainerVolumeMount = {
 const DEFAULT_IMAGE = "yoplai-agent:latest";
 const AGENT_IMAGE_HASH_LABEL = "yoplai.agent-runner.hash";
 const SCRIPT_HOME_LABEL = "yoplai.script.home";
+const AGENT_HOME_LABEL = "yoplai.agent.home";
 const DEFAULT_MEMORY = "2g";
 const DEFAULT_CPUS = 1;
 const DEFAULT_NETWORK = "yoplai-agents";
@@ -444,6 +445,7 @@ export function buildContainerArgs(
     if (!script?.env || !Object.hasOwn(script.env, key)) args.push("--env", `${key}=${value}`);
   }
 
+  if (!script) args.push("--label", agentHomeLabel(homeDir));
   if (script) {
     for (const key of Object.keys(script.env ?? {})) args.push("--env", key);
     args.push("--label", scriptHomeLabel(homeDir), "--workdir", "/workspace", "--entrypoint", script.command);
@@ -602,20 +604,15 @@ export function ensureAgentImage(
   }
 }
 
-export function cleanupOrphanContainers(): void {
-  // Match containers named by both the current and pre-rename gateway so
-  // containers left behind by an older gateway (named `aihub-agent-*`) are
-  // still reaped. Multiple `--filter name=` values are OR'd by docker.
+/**
+ * Removes agent containers launched by this gateway home. Scoped by the home
+ * label so a second gateway on the same Docker daemon keeps its containers;
+ * unlabeled containers from older gateways are left alone.
+ */
+export function cleanupOrphanContainers(homeDir: string = resolveHomeDir()): void {
   const containerIds = execFileSync(
     "docker",
-    [
-      "ps",
-      "-q",
-      "--filter",
-      "name=yoplai-agent-",
-      "--filter",
-      "name=aihub-agent-",
-    ],
+    ["ps", "-q", "--filter", `label=${agentHomeLabel(homeDir)}`],
     { encoding: "utf8" }
   )
     .split("\n")
@@ -626,12 +623,21 @@ export function cleanupOrphanContainers(): void {
     execFileSync("docker", ["rm", "-f", ...containerIds], { stdio: "ignore" });
   }
 
-  cleanupOrphanIpcNamespaces();
+  cleanupOrphanIpcNamespaces(homeDir);
+}
+
+function homeLabel(label: string, homeDir: string): string {
+  const id = createHash("sha256").update(homeDir).digest("hex");
+  return `${label}=${id}`;
+}
+
+function agentHomeLabel(homeDir: string): string {
+  const resolved = resolveHostPath(homeDir);
+  return homeLabel(AGENT_HOME_LABEL, fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved);
 }
 
 function scriptHomeLabel(homeDir: string): string {
-  const id = createHash("sha256").update(resolveHostPath(homeDir)).digest("hex");
-  return `${SCRIPT_HOME_LABEL}=${id}`;
+  return homeLabel(SCRIPT_HOME_LABEL, resolveHostPath(homeDir));
 }
 
 /** Reap script containers left created or stopped by a previous gateway process. */
@@ -647,7 +653,7 @@ export function cleanupOrphanScriptContainers(homeDir = resolveHomeDir()): void 
  * normally removed when its run settles, but a crashed or force-killed gateway
  * takes that deleter with it, and per-run namespaces would otherwise pile up
  * forever. Only safe next to cleanupOrphanContainers, which has just removed
- * every agent container, so no live poller can own a namespace.
+ * this home's agent containers, so no live poller from this gateway can own a namespace.
  */
 export function cleanupOrphanIpcNamespaces(
   homeDir: string = resolveHomeDir()
