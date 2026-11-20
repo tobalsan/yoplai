@@ -159,6 +159,23 @@ it("reports a failed turn and refuses invalid or untrusted sends", async () => {
 });
 
 
+it("lets only one retry replace a current failed first greeting", async () => {
+  run.mockRejectedValue(new Error("Fixture failure."));
+  const app = await boot();
+  const firstChat = { agentId: "alpha", sessionId: "first", turnId: randomUUID() };
+  expect((await app.saveSetup({ firstChat })).status).toBe(200);
+  const retry = (next = { ...firstChat, turnId: randomUUID() }) => app.saveSetup({ firstChat: next, retryOf: firstChat.turnId });
+  expect((await retry()).status).toBe(409); // Not claimed yet.
+  expect(await app.send(firstChat)).toMatchObject({ type: "error" });
+  expect(await app.state(firstChat.sessionId, firstChat.turnId)).toEqual({ state: "failed" });
+  const attempts = await Promise.all([retry(), retry()]);
+  expect(attempts.map(({ status }) => status).sort()).toEqual([200, 409]);
+  const winner = await attempts.find(({ status }) => status === 200)!.json();
+  expect(winner.firstChat).toMatchObject({ agentId: firstChat.agentId, sessionId: firstChat.sessionId });
+  expect(winner.firstChat.turnId).not.toBe(firstChat.turnId);
+  expect(await app.setup()).toMatchObject({ firstChat: winner.firstChat, completed: false });
+});
+
 it.each(["changes", "clears"])("resets completion when a partial update %s the saved first chat", async (action) => {
   run.mockImplementation(async (params: SdkRunParams) => {
     params.onHistoryEvent({ type: "assistant_text", text: "Ready", timestamp: Date.now() });

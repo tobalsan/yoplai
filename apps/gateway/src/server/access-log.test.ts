@@ -48,6 +48,19 @@ describe("accessLogger", () => {
     );
   });
 
+  it("uses the shared redacted target in a polling error record", async () => {
+    const app = new Hono();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    const path = "/d-assets/..%2Fapi/model-access/oauth/synthetic-attempt";
+    app.use("*", accessLogger());
+
+    const response = await app.request(`${path}?x=synthetic-query`);
+
+    expect(response.status).toBe(404);
+    expect(log.mock.calls).toEqual([["--> GET /api/model-access/[redacted] 404 0ms"]]);
+  });
+
   it.each(quietPaths)(
     "suppresses fast successful GET %s with a query",
     async (path) => {

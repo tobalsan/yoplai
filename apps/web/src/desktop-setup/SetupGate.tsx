@@ -4,13 +4,13 @@ import type { DesktopSetupState } from "@yoplai/shared/types";
 import { capabilities } from "../lib/capabilities";
 import { chatRouteSession, stripBase } from "../lib/path";
 import { MissingItems } from "./MissingItems";
-import { readModels, readSetup, saveSetup, type Model } from "./api";
+import { readModels, readSetup, saveSetup, type Model, type SetupUpdate } from "./api";
 
 const Setup = createContext<{
   state: () => DesktopSetupState | undefined;
   models: () => Model[] | undefined;
-  save: (update: Partial<DesktopSetupState>, when?: () => boolean) => Promise<void>;
-  refresh: () => Promise<void>;
+  save: (update: SetupUpdate, when?: () => boolean) => Promise<void>;
+  refresh: () => Promise<boolean>;
 }>();
 export const useOptionalSetup = () => useContext(Setup);
 export const useSetup = () => useOptionalSetup()!;
@@ -43,14 +43,19 @@ export function SetupGate(props: { children: JSX.Element }) {
     return result;
   };
   const [refreshError, setRefreshError] = createSignal(false);
-  const refresh = () => enqueue(async () => {
-    try {
-      mutate(await readSetup());
-      setRefreshError(false);
-    } catch {
-      setRefreshError(true);
-    }
-  });
+  const refresh = async () => {
+    let ok = false;
+    await enqueue(async () => {
+      try {
+        mutate(await readSetup());
+        setRefreshError(false);
+        ok = true;
+      } catch {
+        setRefreshError(true);
+      }
+    });
+    return ok;
+  };
   const show = () => enabled()
     ? !state.loading && !!state() && (onSetup() || state()?.wizardExited === true || pendingChat())
     : !onSetup();

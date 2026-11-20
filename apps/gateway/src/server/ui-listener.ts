@@ -3,13 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { getMimeType } from "hono/utils/mime";
-import {
-  DASHBOARD_VIEW_NAMESPACE,
-  LINK_NAMESPACE,
-  REMOTE_LINK_NAMESPACE,
-  ownsDashboardViewPath,
-  ownsRedactedPath,
-} from "@yoplai/shared/secret-paths";
+import { redactedTarget } from "@yoplai/shared/secret-paths";
 import { logWarn } from "../logging.js";
 import { loopbackGatewayHosts } from "./loopback-request.js";
 
@@ -74,14 +68,8 @@ export function isForwardedPath(pathname: string): boolean {
   });
 }
 
-/** Secret paths show as a namespace only. */
-export function redactedTarget(target: string | undefined): string {
-  const pathname = pathnameOf(target);
-  if (ownsRedactedPath(pathname, "/api/model-access")) return "/api/model-access/[redacted]";
-  if (ownsDashboardViewPath(pathname)) return `${DASHBOARD_VIEW_NAMESPACE}/[redacted]`;
-  if (ownsRedactedPath(pathname, LINK_NAMESPACE)) return `${LINK_NAMESPACE}/[redacted]`;
-  if (ownsRedactedPath(pathname, REMOTE_LINK_NAMESPACE)) return `${REMOTE_LINK_NAMESPACE}/[redacted]`;
-  return pathname;
+function logTarget(target: string | undefined): string {
+  return redactedTarget(target) ?? pathnameOf(target);
 }
 
 function forwardedHeaders(request: IncomingMessage, gatewayHost: string, gatewayPort: number): http.OutgoingHttpHeaders {
@@ -116,7 +104,7 @@ function forwardRequest(request: IncomingMessage, response: ServerResponse, opti
     }
   );
   upstream.on("error", (error) => {
-    logWarn("UI listener forward failed", { target: redactedTarget(request.url), message: error.message });
+    logWarn("UI listener forward failed", { target: logTarget(request.url), message: error.message });
     if (!response.headersSent) response.writeHead(502, { "Content-Type": "text/plain" });
     response.end("Bad Gateway");
   });
@@ -146,7 +134,7 @@ function forwardUpgrade(request: IncomingMessage, socket: net.Socket, head: Buff
     upstream.destroy();
   };
   upstream.on("error", (error) => {
-    logWarn("UI listener upgrade failed", { target: redactedTarget(request.url), message: error.message });
+    logWarn("UI listener upgrade failed", { target: logTarget(request.url), message: error.message });
     closeBoth();
   });
   socket.on("error", closeBoth);

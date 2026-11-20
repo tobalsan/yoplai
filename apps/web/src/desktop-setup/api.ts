@@ -18,7 +18,8 @@ export async function request<T>(path: string, method = "GET", body?: unknown): 
 }
 
 export const readSetup = () => request<DesktopSetupState>("desktop-setup");
-export const saveSetup = (body: Partial<DesktopSetupState>) => request<DesktopSetupState>("desktop-setup", "PUT", body);
+export type SetupUpdate = Partial<DesktopSetupState> & { retryOf?: string };
+export const saveSetup = (body: SetupUpdate) => request<DesktopSetupState>("desktop-setup", "PUT", body);
 
 export type Model = { provider: string; model: string; name: string; source: string; default: boolean; ready: boolean; free: boolean };
 export type Attempt = { provider: string; handle: string; state: "waiting-browser" | "waiting-code" | "done" | "failed" | "cancelled"; message?: string };

@@ -86,10 +86,10 @@ it("discovers synthetic Codex and Claude credentials only with the dev Keychain 
 
 it("asks for the Claude warning, records a denial, and does not read on disable", async () => {
   const { createExternalSources } = await import("./external-sources.js");
-  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAccess } = await import("./model-access.js");
   const read = vi.fn(async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt: Date.now() + 60_000 } }));
   const external = createExternalSources(home, { keychain: { exists: async () => true, read } });
-  const routes = createModelAccessRoutes(home, { external });
+  const { routes } = createModelAccess(home, { external });
   const post = (body: unknown) => routes.request("/external/claude-code", { method: "POST", body: JSON.stringify(body) });
   expect((await post({ enabled: true })).status).toBe(409);
   expect(read).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ it.each([
   { source: "opencode", provider: "openai", entry: { type: "other", token: { access: "sk-ant-oat-fake" } } },
 ] as const)("skips a Claude login in $source for $provider ($entry.type)", async ({ source, provider, entry }) => {
   const { createExternalSources } = await import("./external-sources.js");
-  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAccess } = await import("./model-access.js");
   const { createModelAuth } = await import("./model-auth.js");
   vi.stubEnv("ANTHROPIC_API_KEY", "fake-env-anthropic");
   vi.stubEnv("OPENAI_API_KEY", "fake-env-openai");
@@ -236,7 +236,7 @@ it.each([
   const records = { ...keys, [provider]: { ...entry, expires: Date.now() + 60_000 } };
   await fixture(source, records);
   const external = createExternalSources(home);
-  const routes = createModelAccessRoutes(home, { external });
+  const { routes } = createModelAccess(home, { external });
   const response = await routes.request(`/external/${source}`, { method: "POST", body: '{"enabled":true}' });
   expect(response.status).toBe(200);
   const text = await response.text();

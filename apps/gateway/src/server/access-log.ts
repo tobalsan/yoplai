@@ -1,13 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { logger } from "hono/logger";
-import {
-  DASHBOARD_VIEW_NAMESPACE,
-  LINK_NAMESPACE,
-  REMOTE_LINK_NAMESPACE,
-  ownsDashboardViewPath,
-  ownsLinkPath,
-  ownsRemoteLinkPath,
-} from "@yoplai/shared/secret-paths";
+import { redactedTarget } from "@yoplai/shared/secret-paths";
 
 const SLOW_REQUEST_MS = 500;
 const SECRET_QUERY_NAMES = new Set([
@@ -77,32 +70,17 @@ function isPollingOrHealthPath(path: string): boolean {
   );
 }
 
-/** Hides the whole target of an owned viewer request, because every part of it can carry a snapshot handle. */
-function redactViewerTarget(message: string): string {
-  const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
-  if (!parts || !ownsDashboardViewPath(parts[2].split("?")[0])) return message;
-  return `${parts[1]}${DASHBOARD_VIEW_NAMESPACE}/[redacted]${parts[3]}`;
-}
-
-/**
- * Hides the whole target of a link request on either side, because a path can hold an attempt ID or a request ID and
- * a query can hold a verifier or a code. A rejected request is hidden in the same way.
- */
-function redactLinkTarget(message: string): string {
-  const parts = /^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/.exec(message);
-  if (!parts) return message;
-  const path = parts[2].split("?")[0];
-  if (path === "/api/desktop-setup") return `${parts[1]}${path}${parts[3]}`;
-  if (/^\/api\/model-access(?:[/?]|$)/i.test(path)) return `${parts[1]}/api/model-access/[redacted]${parts[3]}`;
-  if (ownsLinkPath(path)) return `${parts[1]}${LINK_NAMESPACE}/[redacted]${parts[3]}`;
-  if (ownsRemoteLinkPath(path)) return `${parts[1]}${REMOTE_LINK_NAMESPACE}/[redacted]${parts[3]}`;
-  return message;
+function redactRequestTarget(message: string): string {
+  return message.replace(/^(--> \S+ )([\s\S]+?)( \d{3} \S+)$/, (_, prefix: string, target: string, suffix: string) => {
+    const path = target.split("?")[0];
+    return prefix + (redactedTarget(target) ?? (path === "/api/desktop-setup" ? path : target)) + suffix;
+  });
 }
 
 export function accessLogger(): MiddlewareHandler {
   const normalLogger = logger((message) => {
     if (message.startsWith("<-- ")) return;
-    const safeMessage = redactLinkTarget(redactViewerTarget(stripAnsi(message))).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
+    const safeMessage = redactRequestTarget(stripAnsi(message)).replace(/\/(sandbox|content|open)\/[^/?\s]+(?:\?[^\s]*)?/g, "/$1/[redacted]").replace(
       /(\/api\/surface-links\/pair\/|%2fapi%2fsurface-links%2fpair%2f)[A-Za-z0-9_-]+/gi,
       "$1[redacted]"
     ).replace(
@@ -124,7 +102,7 @@ export function accessLogger(): MiddlewareHandler {
     if (c.res.status < 300 && elapsedMs <= SLOW_REQUEST_MS) return;
 
     console.log(
-      `--> ${c.req.method} ${c.req.path} ${c.res.status} ${elapsedMs}ms`
+      `--> ${c.req.method} ${redactedTarget(c.req.path) ?? c.req.path} ${c.res.status} ${elapsedMs}ms`
     );
   };
 }

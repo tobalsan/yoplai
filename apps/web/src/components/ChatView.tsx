@@ -958,6 +958,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
       <Show when={firstChat.failed() || missingModel()}>
         <div class="desktop-chat-repair">
           <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
+          <Show when={firstChat.failed()}><Button onClick={() => void firstChat.retry()}>Try again</Button></Show>
           <Button onClick={() => navigate(repairModel())}>Fix model access</Button>
         </div>
       </Show>

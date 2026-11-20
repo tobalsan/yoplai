@@ -97,6 +97,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop setup checks and uses the current model endpoint, sends Claude subscription users to sign-in, and can use a valid Pi login when the Codex CLI login expired.
+- Desktop model calls preserve retryable errors without exposing provider diagnostics, and setup request logs hide OAuth attempt handles and queries.
+- After repairing model access, retry a failed first greeting in the same chat. Reloading does not resend a claimed greeting. If the connection failed before the gateway received the greeting, Try again resends it without replacing the turn. If setup status cannot be refreshed, Try again sends nothing.
 - Gateway startup and shutdown now remove only the agent containers launched from their own home (labelled `yoplai.agent.home`), so a second gateway on the same Docker daemon keeps its containers. Containers left by older gateways are no longer reaped.
 - Switching a running gateway to multi-user mode disables gateway linking and access to desktop CLI credentials without requiring a restart.
 - Open relay connections stop carrying chat traffic and dispatching device calls when multi-user mode turns on.
