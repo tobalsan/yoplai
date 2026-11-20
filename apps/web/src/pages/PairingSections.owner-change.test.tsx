@@ -64,6 +64,35 @@ it.each(sections)("$name: the new owner can act while the answer of the previous
   expect(deletes).toHaveLength(2);
 });
 
+it.each(sections)("$name: republishing the same owner preserves a pending unlink", async (section) => {
+  let release = () => {};
+  let listed = [section.row("alice")];
+  vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "DELETE") {
+      await new Promise<void>((resolve) => { release = resolve; });
+      listed = [];
+      return Response.json({ ok: true });
+    }
+    return Response.json({ [section.key]: listed });
+  }));
+  const [session, setSession] = createSignal({ ownerId: "alice" });
+  dispose = render(() => section.mount(() => session().ownerId), root);
+  await tick();
+  const screen = within(root);
+  const control = () => screen.getByRole("button", { name: /Unpair|Unlink|Removing/ }) as HTMLButtonElement;
+  fireEvent.click(control());
+  await tick();
+  expect(control().disabled).toBe(true);
+  setSession({ ownerId: "alice" });
+  await tick();
+  const stayedLocked = control().disabled;
+  release();
+  await tick();
+
+  expect(screen.queryByText(section.label("alice"))).toBeNull();
+  expect(stayedLocked).toBe(true);
+});
+
 it.each(sections)("$name: an old visit of the same owner changes nothing after A, B, A", async (section) => {
   let releaseOld = () => {};
   let held = true;

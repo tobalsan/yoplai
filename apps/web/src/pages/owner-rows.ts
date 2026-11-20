@@ -65,6 +65,7 @@ export function createOwnerRows<Row>(options: {
 
   createEffect(() => {
     const userId = options.ownerId();
+    if (userId === activeVisit?.userId) return;
     const visit: Visit | undefined = userId ? { userId } : undefined;
     activeVisit = visit;
     setRows([]);
