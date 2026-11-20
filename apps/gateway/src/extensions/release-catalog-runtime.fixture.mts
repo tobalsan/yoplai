@@ -22,7 +22,7 @@ const multiUser = mode === "fork-race" ? {
 const agentYaml = path.join(CONFIG_DIR, "agent.yaml");
 const fixtureYaml = "id: fixture\nname: Fixture\nmodel:\n  provider: openai\n  model: fixture\n";
 const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(["selection", "double-rename"].includes(mode) ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
-  extensions: { sample: { enabled: true }, ...(["recovery-routes", "restart"].includes(mode) ? { other: { enabled: true }, dependent: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
+  extensions: { sample: { enabled: true }, ...(["recovery-routes", "restart", "status-race"].includes(mode) ? { other: { enabled: true }, dependent: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
 if (multiUser) {
   const poolDir = path.join(CONFIG_DIR, "pool", "scribe");
   await fs.mkdir(poolDir, { recursive: true });
@@ -185,6 +185,38 @@ switch (mode) {
     await assert.rejects(readRecord, { code: "ENOENT" });
     await stopCurrentExtensions();
     assert.equal(hooks.filter((entry) => entry === "sample stop 2.0.0").length, 1);
+    break;
+  }
+  case "status-race": {
+    fixture = fixtureRelease(base, "1.0.0", { id: "other", failStart: true });
+    await refresh();
+    const otherTarget = path.join(root, "other");
+    const rename = fs.rename;
+    const renamed = gate();
+    const release = gate();
+    fs.rename = async (from, to) => {
+      await rename(from, to);
+      if (String(from).startsWith(path.join(root, ".staging") + path.sep) && to === otherTarget) {
+        renamed.resolve();
+        await release.promise;
+      }
+    };
+    try {
+      const pending = install(409, "other");
+      await renamed.promise;
+      const state = async (method: string, url: string) =>
+        (JSON.parse(await call(method, url, 200)).entries as { id: string; state: string }[]).find((entry) => entry.id === "other")?.state;
+      const reads = [state("GET", collection), state("POST", `${collection}/refresh`)];
+      const early = await Promise.race([Promise.all(reads), new Promise<undefined>((done) => setTimeout(done, 200))]);
+      assert.equal(early, undefined, "status read did not wait for the install");
+      release.resolve();
+      await pending;
+      assert.deepEqual(await Promise.all(reads), ["available", "available"]);
+      assert.equal(await state("GET", collection), "available");
+    } finally {
+      release.resolve();
+      fs.rename = rename;
+    }
     break;
   }
   case "start":

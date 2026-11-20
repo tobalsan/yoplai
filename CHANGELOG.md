@@ -13,6 +13,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
 
+### Fixed
+
+- The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
+
 ### Added
 
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.

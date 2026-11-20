@@ -20,6 +20,6 @@ async function runFixture(mode: string, timeout = 15_000) {
 }
 
 // Node preserves ESM import query keys. The Vitest module loader does not.
-it.each(["success", "prefix", "restart", "start", "stop", "config", "reload", "restore", "write-race", "watch-race", "fork-race", "nested-write", "ownership", "rename", "double-rename", "recovery-routes", "bundles", "selection", "owners"])("reconciles catalog changes through the HTTP app: %s", (mode) => runFixture(mode), 20_000);
+it.each(["success", "prefix", "restart", "status-race", "start", "stop", "config", "reload", "restore", "write-race", "watch-race", "fork-race", "nested-write", "ownership", "rename", "double-rename", "recovery-routes", "bundles", "selection", "owners"])("reconciles catalog changes through the HTTP app: %s", (mode) => runFixture(mode), 20_000);
 
 it("ends a stalled bundle check and permits the next install", () => runFixture("bundle-timeout", 50_000), 55_000);
