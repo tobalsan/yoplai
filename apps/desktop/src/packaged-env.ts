@@ -54,12 +54,12 @@ export function resolveHome(parentEnv: NodeJS.ProcessEnv, appSupportDir: string)
 }
 
 /**
- * The first-run config: no agents and loopback bind. Slice 6 adds the real setup.
+ * The first-run config finds agents in the home and uses the loopback address.
  * OAuth tokens need an encryption key, and an app user cannot set one, so the seed makes one in `.env`.
  */
 export const SEED_CONFIG = {
   version: 3,
-  agents: [],
+  agents: "$YOPLAI_HOME/agents/*",
   gateway: { bind: "loopback" },
   ui: { bind: "loopback" },
   oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
@@ -67,10 +67,39 @@ export const SEED_CONFIG = {
 
 const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
 
-/** Create the home and write the seed config when no config file exists. Returns true when it wrote the seed. */
+function migrateAgentDiscovery(file: string): void {
+  const configPath = fs.realpathSync(file);
+  const raw = fs.readFileSync(configPath, "utf8");
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch {
+    throw new Error("Correct the JSON in the desktop config. Select Restart.");
+  }
+  if (!Array.isArray(config?.agents) || config.agents.length !== 0) return;
+  config.agents = SEED_CONFIG.agents;
+  const temp = `${configPath}.${randomBytes(8).toString("hex")}.tmp`;
+  const fd = fs.openSync(temp, "wx", fs.statSync(configPath).mode & 0o777);
+  try {
+    try {
+      fs.writeFileSync(fd, `${JSON.stringify(config, null, 2)}\n`);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temp, configPath);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+/** Prepare the desktop config. Return true only for a new seed. */
 export function seedHome(home: string): boolean {
   fs.mkdirSync(home, { recursive: true });
-  if (CONFIG_NAMES.some((name) => fs.existsSync(path.join(home, name)))) return false;
+  const config = CONFIG_NAMES.map((name) => path.join(home, name)).find((file) => fs.existsSync(file));
+  if (config) {
+    migrateAgentDiscovery(config);
+    return false;
+  }
   // The gateway loads `$YOPLAI_HOME/.env`. Append, so a `.env` that exists keeps its other values.
   const key = randomBytes(32).toString("base64url");
   fs.appendFileSync(path.join(home, ".env"), `OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });

@@ -18,6 +18,14 @@ Agents can generate images, and compaction summaries follow a fixed template for
 ### Added
 
 - Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
+- The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.
+- The desktop gateway creates agents with a selected avatar and model. A retry with the same request ID returns the same agent.
+- The desktop gateway lists available models and marks a model Ready after a successful call.
+- The desktop gateway can use local CLI credentials with consent. It does not save or refresh them.
+- The desktop gateway checks API keys and opens the system browser for model sign-in.
+- The browser shows a Yoplai page after a model sign-in.
+- The local desktop gateway reports setup access and saves setup state.
+- `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
 - Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an unsigned `Yoplai.app` and a `.dmg` in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
 - `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. That port answers only a loopback Host name of the port, as Vite does. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files. The port variables take 1 to 65535. With `YOPLAI_WEB_DIST` set, the gateway exits when the MCP Apps port cannot bind, and the app shows its error page with Restart. `YOPLAI_HOME=~/x` expands `~` in the app. A new app home also gets a random `OAUTH_ENCRYPTION_KEY` in its `.env` (mode 0600), so Connect works for local agents.
 - An agent with no avatar now shows one of ten default images on the Agents page, the sidebar, the chat header, and the other agent lists. The same agent always gets the same image.
@@ -29,12 +37,20 @@ Agents can generate images, and compaction summaries follow a fixed template for
 ### Fixed
 
 - Account connections only shows the Threadit and Mattermost section when a local account link exists.
+- Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
+- Desktop setup keeps config links during migration. Restart works after you correct a config error.
+- Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
+- Desktop setup lists only providers that need no input other than the API key.
+- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
+- The desktop guard rejects IPv4 forwarding addresses in brackets.
+- The desktop model picker respects the model list for the signed-in account.
 - In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
 - The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.
 - The linked gateways page now shows "Device connecting…" and updates the device state about every 2 seconds after a link, for up to one minute. Before, the row stayed on "Device not connected" until you did something else.
 
 ### Changed
 
+- Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.
 - The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
 - After you link a gateway, the row reads "Device connecting…" until the device connects. "Device not connected" shows only when the device stays offline after the check ends.
 - The page for Slack pairings is now **Pairings**, with a Slack section. The sidebar item and the account menu item use the same name. A gateway with no Slack, or with no multi-user sign-in, shows "No pairings on this gateway." instead of a red error.
@@ -53,13 +69,6 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 - **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
 
 ### Added
-
-- The desktop gateway lists available models and marks a model Ready after a successful call.
-- The desktop gateway can use local CLI credentials with consent. It does not save or refresh them.
-- The desktop gateway checks API keys and opens the system browser for model sign-in.
-- The browser shows a Yoplai page after a model sign-in.
-- The local desktop gateway reports setup access and saves setup state.
-- `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
 
 - Extension tools receive trusted messaging reply origins on Pi and container runs; Slack delivery supports thread destinations, and Threadit adds a reply delivery sink.
 - External extensions can serve authenticated browser pages and cookie-free token POSTs, re-check viewer access, and open their own pages as reusable sandboxed chat-panel frames.
@@ -96,11 +105,6 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 
 - Multi-user gateways return 404 for Better Auth's admin endpoints. Yoplai admins retain access to the built-in user and team administration screens.
 - Owned live chats on shared agents limit session details and controls to the chat owner while keeping agent-wide activity visible.
-- Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
-- Desktop setup lists only providers that need no input other than the API key.
-- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
-- The desktop guard rejects IPv4 forwarding addresses in brackets.
-- The desktop model picker respects the model list for the signed-in account.
 - Threadit isolates agent sessions by top-level message so a failed turn cannot carry its saved history into other branches of the thread.
 - Gateway `send_file` finishes when a file in `/workspace/data` shrinks during delivery and cleans up incomplete copies on cancellation.
 - Extension catalogs mask channel credentials and display non-secret environment references by name. Agent extension blocks can use names from their workspace `.env` or `extensionEnvAllowlist` in `yoplai.json`.

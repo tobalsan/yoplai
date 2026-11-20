@@ -112,7 +112,7 @@ it("applies every refusal to every desktop route before it reads state", async (
     ["POST", "model-access/oauth/anthropic"], ["GET", "model-access/oauth/attempts/test"],
     ["POST", "model-access/oauth/attempts/test/answer"], ["POST", "model-access/oauth/attempts/test/cancel"],
     ["POST", "model-access/api-key"], ["POST", "model-access/external/pi"], ["DELETE", "model-access/openai"],
-    ["GET", "model-access/models"], ["POST", "model-access/models/check"],
+    ["GET", "model-access/models"], ["POST", "model-access/models/check"], ["POST", "agents"],
   ];
   state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
   const variants: Array<{ headers?: Record<string, string>; peer?: string; flag?: string; relay?: [string, boolean, boolean, string] }> = [

@@ -110,7 +110,7 @@ describe("home", () => {
 
     expect(JSON.parse(fs.readFileSync(path.join(home, "yoplai.json"), "utf8"))).toEqual({
       version: 3,
-      agents: [],
+      agents: "$YOPLAI_HOME/agents/*",
       gateway: { bind: "loopback" },
       ui: { bind: "loopback" },
       oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
@@ -146,6 +146,33 @@ describe("home", () => {
     expect(seedHome(home)).toBe(false);
 
     expect(fs.readFileSync(path.join(home, "yoplai.json"), "utf8")).toBe('{"version":3,"agents":["x"]}');
+  });
+
+  it.each(["yoplai.json", "aihub.json"])("changes only the empty agents array in %s", (name) => {
+    const home = tempDir();
+    const file = path.join(home, name);
+    const config = { version: 3, agents: [], pool: "team/*", ui: { port: 3100 }, other: { value: true } };
+    fs.writeFileSync(file, JSON.stringify(config), { mode: 0o600 });
+
+    expect(seedHome(home)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ ...config, agents: "$YOPLAI_HOME/agents/*" });
+    expect(fs.readdirSync(home)).toEqual([name]);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("migrates the target of a config link and keeps the link", () => {
+    const home = tempDir();
+    const targetDir = tempDir();
+    const target = path.join(targetDir, "config.json");
+    const link = path.join(home, "yoplai.json");
+    const config = { version: 3, agents: [], pool: "team/*" };
+    fs.writeFileSync(target, JSON.stringify(config));
+    fs.symlinkSync(path.relative(home, target), link);
+
+    expect(seedHome(home)).toBe(false);
+    expect(fs.readlinkSync(link)).toBe(path.relative(home, target));
+    expect(JSON.parse(fs.readFileSync(target, "utf8"))).toEqual({ ...config, agents: "$YOPLAI_HOME/agents/*" });
+    expect(fs.readdirSync(targetDir)).toEqual(["config.json"]);
   });
 
   it("keeps a legacy config file", () => {
