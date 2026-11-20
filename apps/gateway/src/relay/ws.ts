@@ -235,6 +235,14 @@ export class RelayWsBridge {
     let finished = false;
     socket.on("open", () => {
       if (turnToken === undefined) this.statusRetries.delete(gateway.name);
+      if (!isRelayEnabled()) {
+        link.queue.length = 0;
+        link.chat = false;
+        finished = true;
+        if (turnToken !== undefined) getDeviceTurns().end(turnToken);
+        socket.close();
+        return;
+      }
       for (const queued of link.queue.splice(0)) socket.send(queued);
     });
     socket.on("message", (data) => {
@@ -250,7 +258,7 @@ export class RelayWsBridge {
       this.toPage(gateway.name, JSON.stringify({ type: "error", message: `Gateway ${gateway.name} is offline` }), turnToken);
       if (turnToken !== undefined) {
         finished = true;
-        this.page.close();
+        if (isRelayEnabled()) this.page.close();
       }
     });
     // A failed chat stream looks like a local agent whose socket closes: the page sees the close.
@@ -259,9 +267,11 @@ export class RelayWsBridge {
       if (this.links.get(gateway.name) === link) this.links.delete(gateway.name);
       if (turnToken !== undefined) {
         this.sendLinks.delete(link);
-        if (!finished) this.page.close();
-      } else if (link.chat) this.page.close();
-      else this.retryStatus(gateway);
+        if (!finished && isRelayEnabled()) this.page.close();
+      } else if (isRelayEnabled()) {
+        if (link.chat) this.page.close();
+        else this.retryStatus(gateway);
+      }
     });
   }
 
@@ -294,6 +304,7 @@ export class RelayWsBridge {
       if (typeof event.type === "string" && event.type.startsWith("device_approval_")) return false;
       const terminal = event.type === "error" || (event.type === "done" && (event.meta as { queued?: boolean } | undefined)?.queued !== true);
       if (terminal && turnToken !== undefined) getDeviceTurns().end(turnToken);
+      if (!isRelayEnabled()) return terminal;
       if (typeof event.agentId === "string") {
         event.agentId = addGatewaySuffix(event.agentId, gatewayName);
         if (getAgent(event.agentId)) return terminal;
@@ -301,7 +312,7 @@ export class RelayWsBridge {
       if (this.page.readyState === WebSocket.OPEN) this.page.send(JSON.stringify(event));
       return terminal;
     } catch {
-      if (this.page.readyState === WebSocket.OPEN) this.page.send(raw);
+      if (this.page.readyState === WebSocket.OPEN && isRelayEnabled()) this.page.send(raw);
       return false;
     }
   }
