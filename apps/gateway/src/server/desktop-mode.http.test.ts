@@ -23,13 +23,14 @@ it("closes setup, links and external chat credentials on a live multi-user reloa
     const config = await import("../config/index.js");
     const registry = await import("../extensions/registry.js");
     const { createExtensionContext, bindExtensionContext } = await import("../extensions/context.js");
+    const { reloadAfterExtensionWrite } = await import("../extensions/reload.js");
     const { buildInnerApi } = await import("./api.core.js");
     const initialConfig = config.loadConfig();
     const extensions = await registry.loadExtensions(initialConfig);
     const context = createExtensionContext(initialConfig);
-    for (const extension of extensions) await extension.start(bindExtensionContext(context, extension.id));
+    for (const extension of extensions) await extension.start(bindExtensionContext(context, extension));
     closers.push(registry.stopCurrentExtensions);
-    registry.setExtensionActivator(async (extension) => { await extension.start(bindExtensionContext(context, extension.id)); }, buildInnerApi, buildInnerApi(extensions));
+    registry.setExtensionActivator(async (extension) => { await extension.start(bindExtensionContext(context, extension)); }, buildInnerApi, buildInnerApi(extensions));
     const signals = ["SIGTERM", "SIGINT"] as const;
     const previous = signals.map((signal) => process.listeners(signal));
     const { startServer } = await import("./index.js");
@@ -61,9 +62,7 @@ it("closes setup, links and external chat credentials on a live multi-user reloa
       extraConfig,
       extensions: { multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "x".repeat(32) } },
     });
-    const nextConfig = config.reloadConfig();
-    config.setLoadedConfig(nextConfig);
-    await registry.reloadExtensions(nextConfig);
+    await reloadAfterExtensionWrite();
     readExternal.mockClear();
 
     const [setupStatus, linkStatus, oldAuth, oldCheck, newAuth] = await Promise.all([
