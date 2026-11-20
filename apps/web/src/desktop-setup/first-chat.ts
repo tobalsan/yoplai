@@ -66,5 +66,13 @@ export function createFirstChat(input: {
     };
     void check();
   });
-  return { failed: () => !!pending() && failed(), readError: () => !!pending() && readError() };
+  const retry = async () => {
+    const first = pending();
+    if (!first || !setup || !failed()) return;
+    await setup.refresh();
+    const latest = setup.state()?.firstChat;
+    if (setup.state()?.completed || latest?.agentId !== first.agentId || latest.sessionId !== first.sessionId || latest.turnId !== first.turnId) return;
+    await setup.save({ firstChat: { ...first, turnId: crypto.randomUUID() } });
+  };
+  return { retry, failed: () => !!pending() && failed(), readError: () => !!pending() && readError() };
 }

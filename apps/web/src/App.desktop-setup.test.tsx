@@ -724,6 +724,48 @@ it("does not show a raw error from the tagged socket", async () => {
   expect(completed).toBe(false);
 });
 
+it("retries a failed first greeting with a fresh turn in the same session, and a reload never resends", async () => {
+  enableGreetingSocket();
+  wizardExited = true; firstChat = oldChat;
+  const failedTurns = new Set(["old-turn"]);
+  overrides = (path) => {
+    const turn = path.match(/desktop-setup\/turns\/alpha\/old-session\/(.+)$/)?.[1];
+    if (turn) return response({ state: failedTurns.has(turn) ? "failed" : "none" });
+    if (path.endsWith("/history")) return response({ messages: [message("user", FIRST_GREETING, 1)] });
+  };
+  const path = "/chat/alpha?session=old-session";
+  boot(path);
+  await button("Fix model access");
+  expect(GreetingSocket.wires).toHaveLength(0);
+  dispose?.();
+  boot(path);
+  await button("Try again");
+  expect(GreetingSocket.wires).toHaveLength(0);
+  await click("Try again");
+  await waitFor(() => expect(GreetingSocket.wires).toHaveLength(1), { timeout: 2000 });
+  expect(firstChat).toMatchObject({ agentId: "alpha", sessionId: "old-session" });
+  expect(firstChat?.turnId).not.toBe("old-turn");
+  expect(GreetingSocket.wires[0].payload).toMatchObject({ ...firstChat, message: FIRST_GREETING });
+  expect(completed).toBe(false);
+});
+
+it("does not retry when the failed first chat is no longer current", async () => {
+  enableGreetingSocket();
+  wizardExited = true; firstChat = oldChat;
+  overrides = (path, method) => {
+    if (path.includes("desktop-setup/turns/")) return response({ state: "failed" });
+    if (path === "/api/desktop-setup" && method === "GET" && setupReads > 1) return response({ wizardExited: true, firstChat: { ...oldChat, turnId: "other-turn" }, completed: false });
+    if (path.endsWith("/history")) return response({ messages: [message("user", FIRST_GREETING, 1)] });
+  };
+  boot("/chat/alpha?session=old-session");
+  const retry = await button("Try again") as HTMLButtonElement;
+  firstChat = { ...oldChat, turnId: "other-turn" };
+  fireEvent.click(retry);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(GreetingSocket.wires).toHaveLength(0);
+  expect(setupWrites.filter((write) => (write as { firstChat?: { turnId: string } }).firstChat?.turnId !== "other-turn")).toHaveLength(0);
+});
+
 it("lists missing local items, and keeps the bar closed until a new app start", async () => {
   wizardExited = true;
   overrides = (path) => {
