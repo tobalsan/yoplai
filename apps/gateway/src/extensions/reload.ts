@@ -1,20 +1,28 @@
 import type { GatewayConfig } from "@yoplai/shared";
-import { reloadConfig, setLoadedConfig } from "../config/index.js";
+import { loadConfig, reloadConfig, setLoadedConfig } from "../config/index.js";
 import { resolveStartupConfig } from "../config/validate.js";
 import { reconcileExternal, withExtensionMutation } from "./registry.js";
 
 /** Read and publish the config under the extension mutation lock. */
-export async function reloadAfterExtensionWrite(): Promise<GatewayConfig> {
+export async function reloadAfterExtensionWrite(verify?: () => Promise<void>): Promise<GatewayConfig> {
   return withExtensionMutation(async () => {
-    const reloaded = await resolveStartupConfig(reloadConfig());
-    setLoadedConfig(reloaded);
+    const previous = verify ? loadConfig() : undefined;
     try {
-      await reconcileExternal(reloaded);
+      const reloaded = await resolveStartupConfig(reloadConfig());
+      setLoadedConfig(reloaded);
+      await verify?.();
+      try {
+        await reconcileExternal(reloaded);
+      } catch (error) {
+        if (verify) throw error;
+        console.warn(
+          `[extensions] runtime reconcile after enable failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      return reloaded;
     } catch (error) {
-      console.warn(
-        `[extensions] runtime reconcile after enable failed: ${error instanceof Error ? error.message : String(error)}`
-      );
+      if (previous) setLoadedConfig(previous);
+      throw error;
     }
-    return reloaded;
   }, true);
 }

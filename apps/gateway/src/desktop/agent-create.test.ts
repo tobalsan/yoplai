@@ -376,6 +376,40 @@ it("recovers a rename without a reload while a new create waits for the recovery
   expect((await list()).map(({ id }: { id: string }) => id)).toEqual(["new", "recovered"]);
 });
 
+it("keeps the last successful publication when a queued create fails", async () => {
+  const { withExtensionMutation } = await import("../extensions/registry.js");
+  const { reloadAfterExtensionWrite } = await import("../extensions/reload.js");
+  expect(await list()).toEqual([]);
+  const resume = deferred();
+  const held = withExtensionMutation(() => resume.promise);
+  const renamed = deferred();
+  beforeRename.next = async () => { renamed.resolve(); };
+  const publish = reloadAfterExtensionWrite();
+  const input = body("Queued");
+  const pending = create(input);
+  try {
+    await renamed.promise;
+    await fixture(dir("latest"));
+    await config({ agents: "agents/latest" });
+    // The public create should now be queued behind the successful reload.
+    expect(await Promise.race([pending.then(() => "returned"), new Promise((resolve) => setTimeout(resolve, 80, "waiting"))])).toBe("waiting");
+    await fs.access(path.join(dir("queued"), ".desktop-create.json"));
+  } finally {
+    resume.resolve();
+  }
+  await held;
+  await publish;
+  const result = await pending;
+  expect(result.status).toBe(500);
+  expect(await result.json()).toMatchObject({ error: "reload_failed" });
+  expect(await list()).toEqual([expect.objectContaining({ id: "latest" })]);
+  await config();
+  const retry = await create(input);
+  expect(retry.status).toBe(200);
+  expect(await retry.json()).toEqual({ id: "queued", instructions: "template" });
+  expect(await fs.readdir(dir(""))).toEqual(["latest", "queued"]);
+});
+
 it("keeps the agent on disk after a reload failure and reloads it on retry", async () => {
   const input = body("Repair");
   validate.next = async () => { throw new Error("Internal test detail."); };
