@@ -41,11 +41,9 @@ export function AreasOverviewRouteShell(): JSX.Element {
 
 export function ProjectsRouteShell(): JSX.Element {
   return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyProjectsBoard withSidebar={false} />
-      </Suspense>
-    </LeftNavShell>
+    <Suspense>
+      <LazyProjectsBoard />
+    </Suspense>
   );
 }
 

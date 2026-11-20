@@ -18,6 +18,12 @@ Agents can generate images, and compaction summaries follow a fixed template for
 ### Added
 
 - Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
+- The desktop app shows a splash while the gateway starts. Use the app menu to turn the splash off.
+- Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload. A different first chat clears completion. A stale tab refreshes setup without checking its old turn again.
+- Desktop setup shows missing items and links to model access. The app menu can start setup again.
+- The desktop window uses a hidden title bar with a strip for window movement.
+- Desktop setup guides the user through model access or a server link. It can create the first local agent.
+- The desktop gateway accepts the first chat turn once and reports its state after a restart.
 - The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.
 - The desktop gateway creates agents with a selected avatar and model. A retry with the same request ID returns the same agent.
 - The desktop gateway lists available models and marks a model Ready after a successful call.
@@ -50,6 +56,14 @@ Agents can generate images, and compaction summaries follow a fixed template for
 
 ### Changed
 
+- The desktop app uses the new Yoplai icon in the Dock.
+- The desktop sidebar header omits the brand text. The browser sidebar keeps it.
+- The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.
+- The desktop wizard keeps its footer visible. Searchable pickers replace the provider and model selects. Free models show a Free badge.
+- A full-width toolbar holds the sidebar toggle on each page. The sidebar starts below it. The chat status is a dot after the agent name.
+- A context ring in the composer replaces the context usage text.
+- The theme setting offers Light, Dark, and System. System is the default and follows the OS appearance.
+- The setup wordmark shows YOPLAI with no period. The splash keeps its period.
 - Desktop homes with an empty agent list now find agents in the home. Other discovery rules stay the same.
 - The Pairings page of a linked gateway now lists and unlinks Threadit and Mattermost accounts, as it does for Slack. The remote gateway needs this version to accept the request. An older remote shows "The remote gateway refused this action."
 - After you link a gateway, the row reads "Device connecting…" until the device connects. "Device not connected" shows only when the device stays offline after the check ends.

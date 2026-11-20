@@ -48,7 +48,7 @@ import type {
   SubagentListItem,
   SubagentLogEvent,
 } from "../api/types";
-import { AgentSidebar } from "./AgentSidebar";
+import { LeftNavShell } from "./LeftNavShell";
 import { ContextPanel } from "./ContextPanel";
 import { formatCreatedRelative, formatRunRelative } from "../lib/format";
 import { extractBlockText } from "../lib/history";
@@ -1141,7 +1141,6 @@ export function ProjectsBoard(
   >(null);
   const [dragOverColumn, setDragOverColumn] = createSignal<string | null>(null);
   const [filterText, setFilterText] = createSignal("");
-  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [isMobile, setIsMobile] = createSignal(false);
 
   const matchingAreas = createMemo(() => {
@@ -1266,7 +1265,6 @@ export function ProjectsBoard(
       isMobile,
       (mobile) => {
         if (mobile) {
-          if (showSidebar()) setSidebarCollapsed(true);
           setRightPanelCollapsedPersistent(true);
           return;
         }
@@ -2343,22 +2341,41 @@ export function ProjectsBoard(
     onCleanup(() => window.removeEventListener("keydown", handler));
   });
 
-  return (
-    <div
-      class="app-layout"
-      classList={{ "left-collapsed": showSidebar() && sidebarCollapsed() }}
-      onClick={(e) => {
-        if (!showSidebar()) return;
-        if (!isMobile() || sidebarCollapsed()) return;
-        const target = e.target as HTMLElement;
-        if (
-          target.closest(".agent-sidebar") ||
-          target.closest(".mobile-sidebar-toggle")
-        )
-          return;
-        setSidebarCollapsed(true);
-      }}
-    >
+  const toolbar = () => (
+    <div class="projects-header">
+      <div class="projects-header-context">
+        <Show
+          when={areaFilterId()}
+          fallback={
+            <span class="projects-scope-label">All Projects Kanban</span>
+          }
+        >
+          <a class="back-areas-link" href="/">
+            Back to Areas
+          </a>
+          <span class="projects-scope-label">{areaFilterName()}</span>
+        </Show>
+      </div>
+      <input
+        class="filter-input"
+        aria-label="Filter projects"
+        type="text"
+        placeholder="Filter by title or ID..."
+        value={filterText()}
+        onInput={(e) => setFilterText(e.currentTarget.value)}
+      />
+      <button
+        class="archive-link"
+        type="button"
+        onClick={() => navigate("/projects/archive")}
+      >
+        Archive
+      </button>
+    </div>
+  );
+
+  const board = () => (
+    <div class="app-layout">
       <Show when={createSuccess()}>
         <div class="create-success" onClick={() => setCreateSuccess(null)}>
           <div class="create-success-card">
@@ -2375,60 +2392,9 @@ export function ProjectsBoard(
           </div>
         </div>
       </Show>
-      <Show when={showSidebar()}>
-        <AgentSidebar
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
-        />
-      </Show>
-      <Show when={showSidebar() && isMobile()}>
-        <button
-          class="mobile-sidebar-toggle"
-          type="button"
-          onClick={() => setSidebarCollapsed((prev) => !prev)}
-          aria-label="Toggle sidebar"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          </svg>
-        </button>
-      </Show>
       <main class="kanban-main">
         <div class="projects-page">
-          <header class="projects-header">
-            <div class="projects-header-context">
-              <Show
-                when={areaFilterId()}
-                fallback={
-                  <span class="projects-scope-label">All Projects Kanban</span>
-                }
-              >
-                <a class="back-areas-link" href="/">
-                  Back to Areas
-                </a>
-                <span class="projects-scope-label">{areaFilterName()}</span>
-              </Show>
-            </div>
-            <input
-              class="filter-input"
-              type="text"
-              placeholder="Filter by title or ID..."
-              value={filterText()}
-              onInput={(e) => setFilterText(e.currentTarget.value)}
-            />
-            <button
-              class="archive-link"
-              type="button"
-              onClick={() => navigate("/projects/archive")}
-            >
-              Archive
-            </button>
-          </header>
+          <Show when={!showSidebar()}><header>{toolbar()}</header></Show>
 
           <Show when={projects.loading}>
             <div class="projects-loading">Loading projects...</div>
@@ -3818,12 +3784,8 @@ export function ProjectsBoard(
           <style>{`
         .app-layout {
           display: flex;
-          height: 100vh;
+          height: 100%;
           overflow: hidden;
-        }
-
-        .mobile-sidebar-toggle {
-          display: none;
         }
 
         .kanban-main {
@@ -3847,12 +3809,9 @@ export function ProjectsBoard(
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 16px 20px;
-          border-bottom: 1px solid var(--border-subtle);
-          position: sticky;
-          top: 0;
-          background: var(--bg-inset);
-          z-index: 5;
+          min-height: 48px;
+          padding: 4px 10px;
+          font-family: "Adwaita Sans", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
         }
 
         .projects-header-context {
@@ -6162,8 +6121,8 @@ export function ProjectsBoard(
           }
 
           .projects-header {
-            padding: 16px;
-            padding-left: 56px;
+            gap: 6px;
+            padding-inline: 0;
           }
 
           .projects-header-context {
@@ -6174,32 +6133,6 @@ export function ProjectsBoard(
             max-width: 32vw;
           }
 
-          .mobile-sidebar-toggle {
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 840;
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            border: 1px solid var(--border-default);
-            background: var(--bg-surface);
-            color: var(--text-primary);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          }
-
-          .mobile-sidebar-toggle:focus-visible {
-            outline: 2px solid rgba(59, 130, 246, 0.6);
-            outline-offset: 2px;
-          }
-
-          .mobile-sidebar-toggle svg {
-            width: 16px;
-            height: 16px;
-          }
         }
 
         @keyframes overlay-in {
@@ -6232,4 +6165,6 @@ export function ProjectsBoard(
       />
     </div>
   );
+
+  return showSidebar() ? <LeftNavShell toolbar={toolbar()}>{board()}</LeftNavShell> : board();
 }

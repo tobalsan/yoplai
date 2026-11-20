@@ -4,6 +4,7 @@ import { fireEvent, getByRole, queryByRole, waitFor } from "@testing-library/dom
 import { Route, Router, useLocation } from "@solidjs/router";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView } from "./ChatView";
+import { ToolbarOnlyShell } from "./ChatView.test-shell";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
@@ -41,7 +42,7 @@ function mountChat() {
   const ChatRoute = () => {
     const location = useLocation();
     readRouteState = () => location.state;
-    return <ChatView />;
+    return <ChatView shell={ToolbarOnlyShell} />;
   };
   const stop = render(() => <Router><Route path="/chat/:agentId/:view?" component={ChatRoute} /></Router>, container);
   const dispose = () => {

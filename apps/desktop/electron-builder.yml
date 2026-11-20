@@ -20,6 +20,7 @@ extraResources:
   - from: ../../docs/templates
     to: templates
 mac:
+  icon: resources/icon.icns
   category: public.app-category.productivity
   # Keep the ad-hoc signature until slice 5b adds Developer ID signing.
   identity: "-"

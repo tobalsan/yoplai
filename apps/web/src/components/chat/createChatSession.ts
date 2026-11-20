@@ -81,6 +81,8 @@ export type CompactStatus = {
 type HistoryLoaded = { scope: string; sessionId: string | undefined; empty: boolean; request: number; refresh: boolean };
 type SendRequest = {
   text: string;
+  turnId?: string;
+  onTaggedError?: () => void;
   // The composer captures this before restore/compaction; later selections belong to the next send.
   pendingFiles: readonly PendingFile[];
 };
@@ -221,45 +223,38 @@ export function createChatSession(input: ChatSessionInput) {
   const ownsDisplayedDirectStream = () =>
     cleanup !== null && directStreamSession === currentSession();
 
-  const estimatedContextUsagePct = createMemo(() => {
+  const contextUsage = createMemo(() => {
     const active = activeContextUsage();
     if (active) {
-      const pct = (active.inputTokens / getMaxContextTokens(active.model)) * 100;
-      return pct > 0 && pct < 1 ? 1 : Math.max(0, Math.min(100, Math.round(pct)));
+      return { inputTokens: active.inputTokens, maxTokens: getMaxContextTokens(active.model) };
     }
     let highestInputTokens = 0;
+    let hasUsage = false;
     let modelName: string | undefined;
-    const messages = contextFullMessages();
-    for (const message of messages) {
+    for (const message of contextFullMessages()) {
       if (message.role !== "assistant") continue;
       const meta = message.meta;
       if (meta?.model) modelName = meta.model;
-      const rawUsage = meta?.usage;
-      if (!rawUsage) continue;
+      const usage = meta?.usage;
+      if (!usage) continue;
+      const { input, cacheRead, cacheWrite } = usage;
+      hasUsage ||= [input, cacheRead, cacheWrite].some((value) => typeof value === "number");
       const inputTokens =
-        (typeof rawUsage.input === "number" ? rawUsage.input : 0) +
-        (typeof rawUsage.cacheRead === "number" ? rawUsage.cacheRead : 0) +
-        (typeof rawUsage.cacheWrite === "number" ? rawUsage.cacheWrite : 0);
+        (typeof input === "number" ? input : 0) +
+        (typeof cacheRead === "number" ? cacheRead : 0) +
+        (typeof cacheWrite === "number" ? cacheWrite : 0);
       if (inputTokens > highestInputTokens) highestInputTokens = inputTokens;
     }
     const maxTokens = getMaxContextTokens(modelName);
-    if (maxTokens <= 0 || highestInputTokens <= 0) return 0;
-    const rawPct = (highestInputTokens / maxTokens) * 100;
-    if (rawPct > 0 && rawPct < 1) return 1;
-    return Math.max(0, Math.min(100, Math.round(rawPct)));
+    return hasUsage && maxTokens > 0 ? { inputTokens: highestInputTokens, maxTokens } : null;
   });
 
-  const contextUsageDisplay = createMemo(() => {
-    const pct = estimatedContextUsagePct();
-    return {
-      text: pct > 0 ? `~${pct}% context used` : "0% context used",
-      unavailable: false,
-    };
+  const estimatedContextUsagePct = createMemo(() => {
+    const usage = contextUsage();
+    if (!usage) return 0;
+    const pct = (usage.inputTokens / usage.maxTokens) * 100;
+    return pct > 0 && pct < 1 ? 1 : Math.max(0, Math.min(100, Math.round(pct)));
   });
-
-  const isContextUsageDanger = createMemo(
-    () => estimatedContextUsagePct() >= 75
-  );
 
   const shouldAutoCompact = createMemo(() => estimatedContextUsagePct() >= 80);
 
@@ -1275,10 +1270,14 @@ export function createChatSession(input: ChatSessionInput) {
   const restoreArchived = () => restoreSession("Failed to restore session.");
 
   const performSend = async (
-    { text, pendingFiles }: SendRequest,
+    { text, pendingFiles, turnId, onTaggedError }: SendRequest,
     resolve: (result: SendResult) => void,
     beforeSubmit?: () => void,
   ): Promise<void> => {
+    if (turnId && (!explicitSessionId() || input.isArchived() || isStreaming() || loading())) {
+      resolve({ kind: "blocked" });
+      return;
+    }
     if (input.isArchived() && !(await restoreSession("Failed to restore session. Try again.")).ok) {
       resolve({ kind: "blocked" });
       return;
@@ -1290,7 +1289,7 @@ export function createChatSession(input: ChatSessionInput) {
       text === "/reset" ||
       text.startsWith("/reset ");
 
-    if (!isResetCommand && !isStreaming() && shouldAutoCompact()) {
+    if (!turnId && !isResetCommand && !isStreaming() && shouldAutoCompact()) {
       try {
         await compactCurrentSession();
       } catch {
@@ -1321,6 +1320,7 @@ export function createChatSession(input: ChatSessionInput) {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const streamOptions = {
+      ...(turnId ? { turnId } : {}),
       ...(input.projectId() ? { projectId: input.projectId() } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
@@ -1722,6 +1722,14 @@ export function createChatSession(input: ChatSessionInput) {
       },
       (error) => {
         if (!isCurrentDirectStream()) return;
+        if (turnId) {
+          onTaggedError?.();
+          resetStreamingState();
+          cleanup?.();
+          cleanup = null;
+          void loadHistory(viewMode());
+          return;
+        }
         const content = error;
         const notice: Message = {
           id: crypto.randomUUID(),
@@ -1743,6 +1751,13 @@ export function createChatSession(input: ChatSessionInput) {
         cleanup = null;
       },
       {
+        onTurnExists: () => {
+          if (!turnId || !isCurrentDirectStream()) return;
+          resetStreamingState();
+          cleanup?.();
+          cleanup = null;
+          void loadHistory(viewMode());
+        },
         onThinking: (chunk) => {
           if (!isCurrentDirectStream()) return;
           setStreamingFinished(false);
@@ -1936,7 +1951,7 @@ export function createChatSession(input: ChatSessionInput) {
     streamingFinished, activeTools, isStreaming, loading, stopping, showInterrupted,
     pendingQueuedMessages, historyCursor, loadingEarlier, historyError, historyLoaded,
     historyRequests: () => latestHistoryRequest,
-    contextUsageDisplay, isContextUsageDanger, contextWarning,
+    contextUsage, contextWarning,
     compactStatusForCurrentSession, compactStatuses,
     copyTurnFor, shouldAnimate,
     deviceApprovals, isDeviceApprovalShown, deviceChatName, deviceConnectionLost, answerDeviceApproval,

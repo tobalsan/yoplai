@@ -9,6 +9,7 @@ const defaultCapabilities: CapabilitiesResponse = {
   extensions: {},
   agents: [],
   multiUser: false,
+  desktopSetup: false,
   forkedAgents: false,
   enableCronMonitoring: false,
   relayLink: { available: false },
@@ -27,6 +28,7 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
       // A store merge keeps a field that the new answer omits, so each optional link field is set on every load.
       setCapabilities({
         ...data,
+        desktopSetup: data.desktopSetup === true,
         apps: data.apps ?? { available: false },
         enableCronMonitoring: data.enableCronMonitoring ?? false,
         relayLink: data.relayLink ?? { available: false },
@@ -74,6 +76,7 @@ export function setCapabilitiesForTests(
     extensions: value.extensions ?? defaultCapabilities.extensions,
     agents: value.agents ?? defaultCapabilities.agents,
     multiUser: value.multiUser ?? defaultCapabilities.multiUser,
+    desktopSetup: value.desktopSetup === true,
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,

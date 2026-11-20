@@ -136,7 +136,7 @@ const setupGuard = desktopSetupGuard(
   () => currentExtensionRuntime().isEnabled("multiUser"),
   () => loadConfig().ui?.port ?? 3000
 );
-app.use("/api/desktop-setup", setupGuard);
+app.use("/api/desktop-setup/*", setupGuard);
 app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
 app.use("/api/model-access/*", setupGuard);
 const modelAccess = createModelAccess(CONFIG_DIR);

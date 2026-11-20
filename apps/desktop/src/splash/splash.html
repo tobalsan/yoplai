@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'unsafe-inline'">
+<title>Yoplai</title>
+<link rel="stylesheet" href="splash.css">
+</head>
+<body>
+<div id="visuals">
+  <canvas id="c" role="img" aria-label="YOPLAI."></canvas>
+  <div id="loading" role="status" aria-label="Loading" hidden></div>
+</div>
+<div id="drag-strip" aria-hidden="true"></div>
+<script>
+'use strict';
+const R = 35;
+const BIG = 57;
+const DOT = 3.5;
+const BRUSH = 126;
+const ROLL = 75;
+const BLOT_TIME = 0.11;
+const BLOT_END = 82;
+const RUN_BASE = 0.08, RUN_SPEED = 1700;
+const HOP_BASE = 0.10, HOP_SPEED = 2200;
+const CENTER = { x: 582.5, y: 119 };
+const PERIOD = { x: 1130, y: 203 };
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = x => { x = clamp01(x); return x * x * (3 - 2 * x); };
+const easeIO = x => { x = clamp01(x); return x < 0.5 ? 2 * x * x : 1 - 2 * (1 - x) * (1 - x); };
+const easeOut = x => { x = clamp01(x); return 1 - (1 - x) ** 3; };
+const easeInBack = x => { x = clamp01(x); return 2.7 * x * x * x - 1.7 * x * x; };
+const norm = (x, y) => { const l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; };
+const springStep = (tau, w, z) => {
+  if (tau <= 0) return 0;
+  const wd = w * Math.sqrt(1 - z * z);
+  return 1 - Math.exp(-z * w * tau) * (Math.cos(wd * tau) + (z * w / wd) * Math.sin(wd * tau));
+};
+const ring = tau => (tau <= 0 ? 0 : Math.exp(-9 * tau) * Math.sin(30 * tau) / 0.652);
+
+function arc(cx, cy, r, a0, a1) {
+  const n = Math.max(2, Math.ceil(Math.abs(a1 - a0) * r / 2));
+  const out = [];
+  for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+  return out;
+}
+function rounded(pts) {
+  const out = [[pts[0][0], pts[0][1]]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1], [cx, cy, r] = pts[i], [nx, ny] = pts[i + 1];
+    if (!r) { out.push([cx, cy]); continue; }
+    const a = norm(px - cx, py - cy), b = norm(nx - cx, ny - cy);
+    const half = Math.acos(a.x * b.x + a.y * b.y) / 2;
+    const tan = r / Math.tan(half), dist = r / Math.sin(half);
+    const bis = norm(a.x + b.x, a.y + b.y);
+    const ox = cx + bis.x * dist, oy = cy + bis.y * dist;
+    const a0 = Math.atan2(cy + a.y * tan - oy, cx + a.x * tan - ox);
+    let da = Math.atan2(cy + b.y * tan - oy, cx + b.x * tan - ox) - a0;
+    while (da > Math.PI) da -= 2 * Math.PI;
+    while (da < -Math.PI) da += 2 * Math.PI;
+    out.push(...arc(ox, oy, r, a0, a0 + da));
+  }
+  const last = pts[pts.length - 1];
+  out.push([last[0], last[1]]);
+  return out;
+}
+function resample(pts) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = cum[cum.length - 1], n = Math.max(1, Math.round(L / 2)), out = [];
+  let j = 0;
+  for (let k = 0; k <= n; k++) {
+    const s = L * k / n;
+    while (j < pts.length - 2 && cum[j + 1] < s) j++;
+    const f = (s - cum[j]) / ((cum[j + 1] - cum[j]) || 1);
+    out.push([pts[j][0] + (pts[j + 1][0] - pts[j][0]) * f, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * f]);
+  }
+  return { pts: out, L, ds: L / n };
+}
+function poly(...rings) {
+  const p = new Path2D();
+  for (const ring of rings) { p.moveTo(ring[0][0], ring[0][1]); for (let i = 1; i < ring.length; i++) p.lineTo(ring[i][0], ring[i][1]); p.closePath(); }
+  return p;
+}
+
+const glyphs = {
+  Y: poly([[0, 0], [79, 0], [118, 69], [157, 0], [236, 0], [153, 135], [153, 238], [83, 238], [83, 135]]),
+  O: (() => { const p = new Path2D(); p.arc(320.5, 119, 123, 0, 2 * Math.PI); p.moveTo(371.5, 119); p.arc(320.5, 119, 51, 0, 2 * Math.PI); return p; })(),
+  P: (() => {
+    const p = new Path2D();
+    p.moveTo(451, 0); p.lineTo(548, 0); p.arc(548, 83.5, 83.5, -Math.PI / 2, Math.PI / 2); p.lineTo(521, 167); p.lineTo(521, 238); p.lineTo(451, 238); p.closePath();
+    p.moveTo(521, 67); p.lineTo(545, 67); p.arc(545, 85.5, 18.5, -Math.PI / 2, Math.PI / 2); p.lineTo(521, 104); p.closePath();
+    return p;
+  })(),
+  L: poly([[640, 0], [710, 0], [710, 169], [767, 169], [767, 238], [640, 238]]),
+  A: poly([[852, 0], [926, 0], [1005, 238], [934, 238], [922, 198], [856, 198], [844, 238], [773, 238]], [[889, 87], [907, 143], [871, 143]]),
+  I: poly([[1008, 0], [1078, 0], [1078, 238], [1008, 238]]),
+};
+const parts = {
+  yLeft: poly([[0, 0], [79, 0], [118, 69], [83, 135]]),
+  pStem: poly([[451, 0], [521, 0], [521, 238], [451, 238]]),
+  aLeft: poly([[852, 0], [893, 0], [893, 87], [889, 87], [871, 143], [844, 238], [773, 238]]),
+  aLegs: poly([[852, 0], [926, 0], [1005, 238], [934, 238], [907, 143], [889, 87], [871, 143], [844, 238], [773, 238]]),
+};
+
+function makeRun(glyph, raw, regions, opt = {}) {
+  const { pts, L, ds } = resample(raw);
+  const n = pts.length - 1;
+  const run = {
+    glyph, pts, L, ds, pre: opt.pre ?? ROLL, post: opt.post ?? ROLL, startDot: !!opt.startDot, brush: opt.brush ?? BRUSH, hold: opt.hold ?? 0, clean: !!opt.clean,
+    d0: norm(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]),
+    d1: norm(pts[n][0] - pts[n - 1][0], pts[n][1] - pts[n - 1][1]),
+  };
+  const sWhere = test => { const i = pts.findIndex(test); return (i < 0 ? n : i) * ds; };
+  run.regions = regions.map(r => ({
+    path: r.path,
+    s0: r.from ? sWhere(r.from) + (r.fromPad || 0) : -run.pre,
+    s1: r.to ? sWhere(r.to) + (r.toPad || 0) : L + run.post,
+  }));
+  return run;
+}
+function runPoint(run, s) {
+  const p = run.pts, n = p.length - 1;
+  if (s <= 0) return { x: p[0][0] + run.d0.x * s, y: p[0][1] + run.d0.y * s };
+  if (s >= run.L) return { x: p[n][0] + run.d1.x * (s - run.L), y: p[n][1] + run.d1.y * (s - run.L) };
+  const f = s / run.ds, i = Math.min(n - 1, Math.floor(f)), k = f - i;
+  return { x: p[i][0] + (p[i + 1][0] - p[i][0]) * k, y: p[i][1] + (p[i + 1][1] - p[i][1]) * k };
+}
+
+const HALF = Math.PI / 2;
+const runs = [
+  makeRun('Y', [[28.1, -19.1], [82.5, 72]], [{ path: parts.yLeft }], { pre: 0, hold: 0.08, clean: true }),
+  makeRun('Y', rounded([[207.9, -19.1], [118, 133, 45], [118, 203]]), [{ path: glyphs.Y }], { pre: 0, hold: 0.04, clean: true }),
+  makeRun('O', arc(320.5, 119, 87, Math.PI / 3, Math.PI / 3 + 2 * Math.PI), [{ path: glyphs.O }], { pre: 0, post: 4, startDot: true }),
+  makeRun('P', [...rounded([[486, 203], [486, 35, 32], [547, 35]]), ...arc(547, 85.5, 50.5, -HALF, HALF), [505, 136]], [
+    { path: parts.pStem, to: p => p[0] >= 546 },
+    { path: glyphs.P, from: p => p[1] <= 68 },
+  ]),
+  makeRun('L', rounded([[675, 35], [675, 203, 32], [732, 203]]), [{ path: glyphs.L }]),
+  makeRun('A', rounded([[819, 203], [889, -23, 24.4], [959, 203]]), [
+    { path: parts.aLeft, to: p => p[0] >= 889, toPad: 8 },
+    { path: parts.aLegs, from: p => p[0] >= 889, fromPad: -8 },
+  ], { brush: 97 }),
+  makeRun('A', [[866, 170], [912, 170]], [{ path: glyphs.A }]),
+  makeRun('I', [[1043, 35], [1043, 203]], [{ path: glyphs.I }]),
+];
+
+const T = { dot: 0.15, grow: 0.40, eyes: 0.85 };
+T.lookL = T.eyes + 0.22; T.lookR = T.lookL + 0.26; T.lookC = T.lookR + 0.26;
+T.blink = T.lookC - 0.02; T.crouch = T.lookC + 0.12; T.leap = T.crouch + 0.17;
+
+const segs = [];
+const impacts = [];
+function addHop(t0, a, b, h, dur, ra, rb, hit) {
+  const t1 = t0 + dur;
+  segs.push({
+    t0, t1, at: t => {
+      const k = (t - t0) / dur, u = hit.soft ? 1 - Math.pow(1 - k, 2.2) : k;
+      return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u - h * 4 * u * (1 - u), r: ra + (rb - ra) * smooth(k), mode: 'air', to: b, from: a };
+    },
+  });
+  impacts.push({ t: t1, anchor: 0, flat: true, wide: 0.85, dir: hit.anchor === 1 ? { x: 0, y: 1 } : norm(b.x - a.x, b.y - a.y + 4 * h), ...hit });
+  return t1;
+}
+{
+  const startOf = run => ({ x: run.pts[0][0], y: run.pts[0][1] });
+  const endOf = run => ({ x: run.pts[run.pts.length - 1][0], y: run.pts[run.pts.length - 1][1] });
+  const landing = run => (run.clean ? { power: 0.12, anchor: -1, dir: run.d0, flat: false, wide: 0.3 } : { power: 0.2 });
+  let t = addHop(T.leap, CENTER, startOf(runs[0]), 70, 0.44, BIG, R, { soft: true, ...landing(runs[0]) });
+  runs.forEach((run, i) => {
+    run.t0 = t; run.ts = t + run.hold; run.t1 = run.ts + RUN_BASE + run.L / RUN_SPEED;
+    segs.push({ t0: run.t0, t1: run.t1, at: tt => { const s = run.L * easeIO((tt - run.ts) / (run.t1 - run.ts)); return { ...runPoint(run, s), r: R, mode: 'paint', run, s }; } });
+    t = run.t1;
+    const next = runs[i + 1];
+    if (next) {
+      const a = endOf(run), b = startOf(next), d = Math.hypot(b.x - a.x, b.y - a.y);
+      t = addHop(t, a, b, 24 + 0.2 * d, HOP_BASE + d / HOP_SPEED, R, R, landing(next));
+    } else {
+      t = addHop(t, endOf(run), PERIOD, 120, 0.36, R, R, { power: 0.34, anchor: 1 });
+    }
+  });
+  for (const name of Object.keys(glyphs)) {
+    const last = runs.filter(r => r.glyph === name).pop();
+    last.completes = true;
+  }
+  T.land = t; T.wink = t + 0.55; T.winkEnd = T.wink + 0.47;
+  T.eyesOut = T.winkEnd + 0.25; T.end = T.eyesOut + 0.30;
+  impacts.push({ t: T.wink, power: 0.07, dir: { x: 0, y: 1 }, anchor: 1, flat: true, wide: 0.85 });
+}
+
+function agentAt(t) {
+  if (t < T.dot) return { ...CENTER, r: 0, mode: 'intro' };
+  if (t < T.grow) return { ...CENTER, r: DOT * easeOut((t - T.dot) / 0.1), mode: 'intro' };
+  if (t < T.leap) return { ...CENTER, r: DOT + (BIG - DOT) * springStep(t - T.grow, 15, 0.45), mode: 'intro' };
+  for (const s of segs) if (t < s.t1) return s.at(t);
+  return { ...PERIOD, r: R, mode: 'rest' };
+}
+
+function squashAt(t) {
+  const down = { x: 0, y: 1 };
+  if (t < T.crouch) {
+    const tau = t - T.grow;
+    return { q: tau > 0 ? 0.2 * Math.exp(-5 * tau) * Math.sin(12 * tau) : 0, dir: down, anchor: 0, flat: 0, wide: 0.85 };
+  }
+  if (t < T.leap + 0.07) {
+    const q = t < T.leap ? 0.22 * smooth((t - T.crouch) / (T.leap - T.crouch)) : 0.22 * (1 - smooth((t - T.leap) / 0.07));
+    return { q, dir: down, anchor: 1, flat: clamp01(q * 3.4), wide: 0.85 };
+  }
+  let hit = null;
+  for (const e of impacts) if (e.t <= t) hit = e;
+  if (!hit) return { q: 0, dir: down, anchor: 0, flat: 0, wide: 0.85 };
+  const q = hit.power * ring(t - hit.t);
+  return { q, dir: hit.dir, anchor: hit.anchor, flat: hit.flat ? Math.min(0.85, Math.max(0, q * 3.2)) : 0, wide: hit.wide };
+}
+
+const bump = x => (x <= 0 || x >= 1 ? 0 : Math.sin(Math.PI * x));
+function eyesAt(t) {
+  let scale = springStep(t - T.eyes, 24, 0.42);
+  if (t > T.eyesOut) scale *= 1 - easeInBack((t - T.eyesOut) / 0.22);
+  const open = 1 - 0.92 * bump((t - T.blink) / 0.13);
+  let wink = 0;
+  if (t > T.wink && t < T.winkEnd) wink = Math.min(smooth((t - T.wink) / 0.07), 1 - smooth((t - T.winkEnd + 0.10) / 0.10));
+  return { scale: Math.max(0, scale), open, wink };
+}
+
+const sim = {};
+function simReset() { Object.assign(sim, { t: 0, x: CENTER.x, y: CENTER.y, vx: 0, vy: 0, gx: 0, gy: 0, hx: 0, hy: 0, tx: 0, ty: 0, air: 0 }); }
+simReset();
+function gazeTarget(t, a, vx, vy) {
+  if (a.mode === 'intro') {
+    if (t < T.lookL) return [0, 0];
+    if (t < T.lookR) return [-0.85, 0.05];
+    if (t < T.lookC) return [0.85, -0.05];
+    if (t < T.crouch) return [0, 0];
+    const d = norm(runs[0].pts[0][0] - CENTER.x, runs[0].pts[0][1] - CENTER.y);
+    return [d.x * 0.85, d.y * 0.85];
+  }
+  if (a.mode === 'air') { const d = norm(a.to.x - a.from.x, a.to.y - a.from.y); return [d.x * 0.8, d.y * 0.8]; }
+  if (a.mode === 'paint') {
+    if (Math.hypot(vx, vy) < 60) return [sim.tx, sim.ty];
+    const d = norm(vx, vy); return [d.x * 0.8, d.y * 0.8];
+  }
+  return [0, 0];
+}
+function simTo(t) {
+  t = Math.min(t, T.end);
+  if (t < sim.t) simReset();
+  const h = 1 / 480, kv = 1 - Math.exp(-h / 0.03), ka = 1 - Math.exp(-h / 0.035), kg = 1 - Math.exp(-h / 0.028);
+  while (sim.t + h <= t) {
+    sim.t += h;
+    const a = agentAt(sim.t);
+    const rvx = (a.x - sim.x) / h, rvy = (a.y - sim.y) / h;
+    sim.x = a.x; sim.y = a.y;
+    sim.vx += (rvx - sim.vx) * kv; sim.vy += (rvy - sim.vy) * kv;
+    sim.air += ((a.mode === 'air' ? 1 : 0) - sim.air) * ka;
+    [sim.tx, sim.ty] = gazeTarget(sim.t, a, rvx, rvy);
+    sim.hx += (sim.tx - sim.hx) * kg; sim.hy += (sim.ty - sim.hy) * kg;
+    sim.gx += (sim.hx - sim.gx) * kg; sim.gy += (sim.hy - sim.gy) * kg;
+  }
+}
+
+const params = new URLSearchParams(location.search);
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+let vw = 0, vh = 0, dpr = 1, scale = 1;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  vw = window.innerWidth; vh = window.innerHeight;
+  canvas.width = Math.round(vw * dpr); canvas.height = Math.round(vh * dpr);
+  scale = Math.min(vw * 0.73 / 1165, vh * 0.6 / 246);
+}
+
+function strokeRange(run, a, b) {
+  if (b - a < 0.01) return;
+  ctx.beginPath();
+  let p = runPoint(run, a); ctx.moveTo(p.x, p.y);
+  const i0 = Math.max(0, Math.ceil(a / run.ds + 1e-6)), i1 = Math.min(run.pts.length - 1, Math.floor(b / run.ds - 1e-6));
+  for (let i = i0; i <= i1; i++) ctx.lineTo(run.pts[i][0], run.pts[i][1]);
+  p = runPoint(run, b); ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}
+function drawInk(t) {
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  const done = new Set();
+  for (const run of runs) if (run.completes && t >= run.t1 + 0.08) done.add(run.glyph);
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff';
+  for (const g of done) ctx.fill(glyphs[g], 'evenodd');
+  for (const run of runs) {
+    if (t < run.t0 || done.has(run.glyph)) continue;
+    const head = t < run.t1 ? run.L * easeIO((t - run.ts) / (run.t1 - run.ts)) : run.L + run.post * smooth((t - run.t1) / 0.07);
+    const blotting = t < run.t0 + BLOT_TIME;
+    ctx.lineWidth = run.brush;
+    for (const region of run.regions) {
+      const b = Math.min(region.s1, head);
+      if (b <= region.s0 && !run.startDot) continue;
+      ctx.save();
+      ctx.clip(region.path, 'evenodd');
+      if (region.s0 < 0 && blotting) {
+        const u = clamp01((t - run.t0) / BLOT_TIME), radius = R + (BLOT_END - R) * (1 - (1 - u) * (1 - u));
+        ctx.save();
+        ctx.beginPath(); ctx.arc(run.pts[0][0], run.pts[0][1], radius, 0, 2 * Math.PI); ctx.clip();
+        strokeRange(run, region.s0, Math.min(b, 3));
+        ctx.restore();
+        strokeRange(run, 0, b);
+      } else {
+        strokeRange(run, region.s0, b);
+      }
+      if (run.startDot) { ctx.beginPath(); ctx.arc(run.pts[0][0], run.pts[0][1], R + 1, 0, 2 * Math.PI); ctx.fill(); }
+      ctx.restore();
+    }
+  }
+}
+
+function bodyPath(r, flat) {
+  const k = 0.5523 * r, kb = (0.5523 + 0.38 * flat) * r;
+  ctx.beginPath();
+  ctx.moveTo(0, -r);
+  ctx.bezierCurveTo(k, -r, r, -k, r, 0);
+  ctx.bezierCurveTo(r, kb, kb, r, 0, r);
+  ctx.bezierCurveTo(-kb, r, -r, kb, -r, 0);
+  ctx.bezierCurveTo(-r, -k, -k, -r, 0, -r);
+  ctx.closePath();
+}
+function drawAgent(t) {
+  const a = agentAt(t);
+  if (a.r <= 0) return;
+  const r = a.r, sq = squashAt(t);
+  ctx.save();
+  ctx.translate(a.x, a.y);
+
+  ctx.save();
+  const sig = Math.min(0.38, Math.hypot(sim.vx, sim.vy) / r * 0.0055);
+  if (sig > 0.002) {
+    const th = Math.atan2(sim.vy, sim.vx);
+    ctx.rotate(th); ctx.scale(1 + sig * (0.5 + 0.5 * sim.air), 1 / (1 + sig * sim.air)); ctx.rotate(-th);
+  }
+  ctx.rotate(Math.atan2(-sq.dir.x, sq.dir.y));
+  if (sq.anchor) ctx.translate(0, sq.anchor * sq.q * r);
+  ctx.scale(1 + sq.wide * sq.q, 1 - sq.q);
+  bodyPath(r, sq.flat);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.restore();
+
+  const e = eyesAt(t);
+  if (e.scale > 0.01) {
+    const gx = sim.gx, gy = sim.gy;
+    const shift = sq.anchor * sq.q * r * 0.7;
+    const ox = gx * 0.34 * r + sq.dir.x * shift, oy = -0.03 * r + gy * 0.30 * r + sq.dir.y * shift;
+    const ew = 0.184 * r * e.scale * (1 - 0.22 * Math.abs(gx)), eh = 0.316 * r * e.scale;
+    const lw = 0.1 * r * e.scale;
+    ctx.fillStyle = '#000'; ctx.strokeStyle = '#000'; ctx.lineCap = 'round'; ctx.lineWidth = lw;
+    for (const side of [-1, 1]) {
+      const ex = ox + side * 0.29 * r * (1 - 0.15 * Math.abs(gx));
+      const w = side === 1 ? e.wink : 0;
+      if (w > 0.5) {
+        const bend = (w - 0.5) / 0.5 * eh * 0.55;
+        ctx.beginPath(); ctx.moveTo(ex - ew * 1.15, oy + bend * 0.5); ctx.quadraticCurveTo(ex, oy - bend * 1.5, ex + ew * 1.15, oy + bend * 0.5); ctx.stroke();
+      } else {
+        const hh = Math.max(lw / 2, eh * e.open * (1 - w / 0.5));
+        ctx.beginPath(); ctx.ellipse(ex, oy, ew, hh, 0, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+}
+function draw(t) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, vw, vh);
+  ctx.translate(vw / 2, vh / 2); ctx.scale(scale, scale); ctx.translate(-CENTER.x, -CENTER.y);
+  drawInk(t);
+  drawAgent(t);
+}
+
+
+const wait = params.get('mode') === 'wait';
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const freeze = params.has('t') ? Number(params.get('t')) : NaN;
+const frozen = Number.isFinite(freeze);
+const visuals = document.getElementById('visuals');
+const loading = document.getElementById('loading');
+const gaps = [];
+const { promise: ended, resolve: end } = Promise.withResolvers();
+let finishPromise;
+let startAt, last;
+let clock = reducedMotion ? T.end : frozen ? clamp01(freeze / T.end) * T.end : 0;
+
+function drawFrame() {
+  if (wait) return;
+  simTo(clock);
+  draw(clock);
+}
+function complete() {
+  if (!finishPromise) loading.hidden = false;
+  end();
+}
+function frame(now) {
+  startAt ??= now;
+  if (last !== undefined) gaps.push(now - last);
+  last = now;
+  clock = Math.min((now - startAt) / 1000, T.end);
+  drawFrame();
+  if (clock < T.end) requestAnimationFrame(frame);
+  else complete();
+}
+
+window.yoplaiSplash = {
+  finish() {
+    return finishPromise ??= ended.then(async () => {
+      await visuals.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: 'forwards' }).finished;
+    });
+  },
+  stats() {
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const frames = sorted.length;
+    const middle = Math.floor(frames / 2);
+    return {
+      frames,
+      medianMs: frames ? (sorted[Math.floor((frames - 1) / 2)] + sorted[middle]) / 2 : 0,
+      p95Ms: frames ? sorted[Math.ceil(frames * 0.95) - 1] : 0,
+      longFrames: sorted.filter(gap => gap > 12).length,
+    };
+  },
+};
+
+canvas.hidden = wait;
+resize();
+drawFrame();
+window.addEventListener('resize', () => { resize(); drawFrame(); });
+if (wait || reducedMotion || clock === T.end) complete();
+else if (frozen) end();
+else requestAnimationFrame(frame);
+</script>
+</body>
+</html>

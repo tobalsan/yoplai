@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getByRole, queryByRole } from "@testing-library/dom";
+import { fireEvent, getByRole, queryByRole, within } from "@testing-library/dom";
 import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
 import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 // matchMedia must exist before theme.ts module-level code runs
-window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+window.matchMedia = () => ({ matches: false }) as MediaQueryList;
 
 const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
@@ -81,6 +81,8 @@ vi.mock("@solidjs/router", async (importOriginal) => {
 });
 
 const { AgentSidebar, positionSidebarMenu } = await import("./AgentSidebar");
+const { LeftNavShell } = await import("./LeftNavShell");
+const { setSidebarCollapsedPersistent } = await import("../lib/layout");
 const { refreshScheduleAlerts } = await import("../lib/schedule-alerts");
 const { Router, Route } = await import("@solidjs/router");
 const { SessionSearch } = await import("./SessionSearch");
@@ -95,6 +97,58 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
+  it("selects a theme by keyboard and cycles the theme when collapsed", () => {
+    const [collapsed, setCollapsed] = createSignal(false);
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={collapsed} />, container);
+    try {
+      const group = within(getByRole(container, "radiogroup", { name: "Theme" }));
+      group.getByRole("radio", { name: "Light" }).click();
+      const light = group.getByRole("radio", { name: "Light", checked: true });
+      light.focus();
+      fireEvent.keyDown(light, { key: "ArrowRight" });
+      expect(document.activeElement).toBe(group.getByRole("radio", { name: "Dark", checked: true }));
+      expect(localStorage.getItem("yoplai-theme")).toBe("dark");
+      setCollapsed(true);
+      getByRole(container, "button", { name: "Theme: Dark. Switch to System." }).click();
+      expect(getByRole(container, "button", { name: "Theme: System. Switch to Light." })).toBeTruthy();
+      expect(localStorage.getItem("yoplai-theme")).toBe("system");
+    } finally {
+      dispose();
+      container.remove();
+    }
+  });
+
+  it("keeps one toolbar toggle in both sidebar states", () => {
+    setSidebarCollapsedPersistent(false);
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <LeftNavShell><h1>Agents</h1></LeftNavShell>, container);
+    try {
+      const toggle = getByRole(container, "button", { name: "Toggle sidebar", expanded: true });
+      toggle.click();
+      getByRole(container, "button", { name: "Toggle sidebar", expanded: false }).click();
+      expect(getByRole(container, "button", { name: "Toggle sidebar", expanded: true })).toBeTruthy();
+    } finally {
+      dispose();
+      setSidebarCollapsedPersistent(false);
+      container.remove();
+    }
+  });
+
+  it.each([["Chrome/146", true], ["Electron/45", false]])("shows the brand text in %s when expected", (userAgent, visible) => {
+    const agent = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(userAgent);
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
+    try {
+      const home = queryByRole(container, "link", { name: "Yoplai" });
+      expect(home?.getAttribute("href") ?? null).toBe(visible ? "/" : null);
+      expect(getByRole(container, "navigation", { name: "Primary" })).toBeTruthy();
+    } finally {
+      dispose();
+      agent.mockRestore();
+    }
+  });
+
   it("marks Agents while any actionable credential pause remains", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{
       agentId: "scribe", jobId: "digest", jobName: "Digest", mode: "owner",
@@ -103,7 +157,7 @@ describe("AgentSidebar", () => {
     await refreshScheduleAlerts();
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       expect(container.querySelector('a[href="/agents"] [aria-label="Jobs paused for credentials"]')).not.toBeNull();
       fetchMock.mockResolvedValue(new Response("[]"));
@@ -176,7 +230,7 @@ describe("AgentSidebar", () => {
     }));
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />} /></Router>, container);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} />} /></Router>, container);
     await vi.advanceTimersByTimeAsync(1);
     const row = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes(chat.title))!;
     expect(row.textContent?.trim()).toBe(chat.title);
@@ -209,7 +263,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const [collapsed, setCollapsed] = createSignal(false);
-    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />} /></Router>, container);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={collapsed} />} /></Router>, container);
     await vi.advanceTimersByTimeAsync(1);
     const row = container.querySelector<HTMLButtonElement>(".session-row")!;
     const wrap = row.parentElement!;
@@ -268,7 +322,7 @@ describe("AgentSidebar", () => {
     }));
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />} /></Router>, container);
+    const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} />} /></Router>, container);
     await vi.advanceTimersByTimeAsync(1);
     const projects = container.querySelector('section[aria-label="Projects"]')!;
     expect(projects.querySelector('[role="img"][aria-label="Unread messages"]')).not.toBeNull();
@@ -294,7 +348,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(() => <>
-      <AgentSidebar collapsed={() => collapsed} onToggleCollapse={() => {}} />
+      <AgentSidebar collapsed={() => collapsed} />
       <SessionSearch />
     </>, container);
     const search = Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Search");
@@ -322,7 +376,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -347,7 +400,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -364,58 +416,6 @@ describe("AgentSidebar", () => {
       expect(link?.querySelector(`.${iconClass}`)?.getAttribute("aria-hidden")).toBe("true");
     }
     expect(container.querySelector(".nav-short")).toBeNull();
-
-    dispose();
-  });
-
-  it("renders theme toggle button", () => {
-    setCapabilitiesForTests({
-      extensions: { projects: true },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const [collapsed] = createSignal(false);
-
-    const dispose = render(
-      () => (
-        <AgentSidebar
-          collapsed={collapsed}
-          onToggleCollapse={() => {}}
-        />
-      ),
-      container
-    );
-
-    const toggle = container.querySelector(".theme-toggle");
-    expect(toggle).not.toBeNull();
-    expect(toggle!.textContent).toMatch(/Light|Dark/);
-
-    dispose();
-  });
-
-  it("toggles theme on click", () => {
-    setCapabilitiesForTests({
-      extensions: { projects: true },
-    });
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const [collapsed] = createSignal(false);
-
-    const dispose = render(
-      () => (
-        <AgentSidebar
-          collapsed={collapsed}
-          onToggleCollapse={() => {}}
-        />
-      ),
-      container
-    );
-
-    const toggle = container.querySelector(".theme-toggle") as HTMLButtonElement;
-    const initialTheme = document.documentElement.getAttribute("data-theme");
-    toggle.click();
-    const newTheme = document.documentElement.getAttribute("data-theme");
-    expect(newTheme).not.toBe(initialTheme);
 
     dispose();
   });
@@ -438,7 +438,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -479,7 +478,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -505,7 +503,7 @@ describe("AgentSidebar", () => {
     fetchAgentSessionsMock.mockResolvedValue({ items });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    let dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    let dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     expect(Array.from(container.querySelectorAll(".sessions-section")).map((node) => node.getAttribute("aria-label"))).toEqual(["Projects", "Pinned", "Recent"]);
     expect(Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent)).toEqual(["Project pin", "New", "Global pin", "Recent"]);
@@ -518,7 +516,7 @@ describe("AgentSidebar", () => {
     expect(localStorage.getItem("yoplai:collapsed-chat-projects")).toBe('["p1"]');
     expect(container.querySelector('[aria-label="Projects"]')!.textContent).not.toContain("Project pin");
     dispose();
-    dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
     toggle().click();
@@ -543,7 +541,7 @@ describe("AgentSidebar", () => {
     fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(1);
       const row = getByRole(container, "button", { name: "Work" });
@@ -572,7 +570,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const [collapsed, setCollapsed] = createSignal(false);
-    const dispose = render(() => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={collapsed} />, container);
     try {
       await vi.advanceTimersByTimeAsync(1);
       const project = container.querySelector<HTMLElement>('[aria-label="Project menu"]')!;
@@ -604,7 +602,7 @@ describe("AgentSidebar", () => {
     fetchChatProjectsMock.mockResolvedValue({ items: [{ id: "p1", name: "Work", createdAt: 1, updatedAt: 1 }] });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(1);
       const trigger = container.querySelector<HTMLElement>('[aria-label="Project menu"]')!;
@@ -623,7 +621,7 @@ describe("AgentSidebar", () => {
     setVisibility("hidden");
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(fetchAgentSessionsMock).not.toHaveBeenCalled();
@@ -643,7 +641,7 @@ describe("AgentSidebar", () => {
     setVisibility("visible");
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(0);
       const sessions = fetchAgentSessionsMock.mock.calls.length;
@@ -680,7 +678,7 @@ describe("AgentSidebar", () => {
     fetchAgentSessionsMock.mockResolvedValue({ items: [{ agentId: "a", sessionId: "s1", lastActivity: 1, firstUserMessage: "Chat", projectId: null }] });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     const click = (text: string, selector = "button") => {
       const button = Array.from(document.querySelectorAll<HTMLButtonElement>(selector)).find((item) => item.textContent?.trim() === text);
       expect(button).toBeDefined();
@@ -736,7 +734,7 @@ describe("AgentSidebar", () => {
     fetchAgentSessionsMock.mockRejectedValueOnce(new UnauthenticatedError());
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(navigateMock).toHaveBeenCalledWith("/login");
@@ -759,7 +757,7 @@ describe("AgentSidebar", () => {
     setVisibility("visible");
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
       await vi.advanceTimersByTimeAsync(0);
       const sessions = fetchAgentSessionsMock.mock.calls.length;
@@ -782,7 +780,7 @@ describe("AgentSidebar", () => {
     fetchChatProjectsMock.mockImplementationOnce(() => new Promise(() => {}));
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     fetchChatProjectsMock.mockRejectedValueOnce(new Error("offline"));
     await vi.advanceTimersByTimeAsync(3000);
@@ -802,7 +800,7 @@ describe("AgentSidebar", () => {
     fetchAgentSessionsMock.mockResolvedValue({ items });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     const labels = () => Array.from(container.querySelectorAll(".session-title-text")).map((node) => node.textContent);
     expect(labels()).toEqual(["Pinned today", "Pinned old", "Recent chat"]);
@@ -834,7 +832,7 @@ describe("AgentSidebar", () => {
     fetchAgentSessionsMock.mockResolvedValue({ items: [item] });
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     const menu = container.querySelector<HTMLDetailsElement>("details")!;
     await openSidebarMenu(container);
@@ -867,7 +865,7 @@ describe("AgentSidebar", () => {
     pinAgentSessionMock.mockRejectedValueOnce(new Error("Gateway unavailable"));
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     await vi.advanceTimersByTimeAsync(1);
     await openSidebarMenu(container);
     getByRole(document.body, "button", { name: "Pin" }).click();
@@ -899,7 +897,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -926,7 +923,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -951,7 +947,6 @@ describe("AgentSidebar", () => {
       () => (
         <AgentSidebar
           collapsed={collapsed}
-          onToggleCollapse={() => {}}
         />
       ),
       container
@@ -984,7 +979,7 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const [collapsed] = createSignal(false);
     const dispose = render(
-      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={collapsed} />,
       container
     );
     await vi.waitFor(() => expect(container.textContent).toContain("Connect tools"));
@@ -1011,7 +1006,7 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const [collapsed] = createSignal(false);
     const dispose = render(
-      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={collapsed} />,
       container
     );
     await vi.waitFor(() => expect(fetchTopExtensionsMock).toHaveBeenCalled());
@@ -1037,7 +1032,7 @@ describe("AgentSidebar", () => {
     document.body.appendChild(container);
     const [collapsed] = createSignal(false);
     const dispose = render(
-      () => <AgentSidebar collapsed={collapsed} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={collapsed} />,
       container
     );
     expect(container.textContent).toContain("Restart tour");
@@ -1065,7 +1060,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
@@ -1099,7 +1094,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
@@ -1129,7 +1124,7 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
@@ -1142,26 +1137,24 @@ describe("AgentSidebar", () => {
     vi.useFakeTimers();
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     setPathname("/chat/alpha");
-    
     // Single-user mode: Archive link should be present
     setCapabilitiesForTests({ multiUser: false });
     const container1 = document.createElement("div");
     document.body.appendChild(container1);
     const dispose1 = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container1
     );
     await vi.advanceTimersByTimeAsync(1);
     expect(container1.querySelector(".archive-link")).toBeTruthy();
     dispose1();
     container1.remove();
-    
     // Multi-user mode: Archive link should NOT be present
     setCapabilitiesForTests({ multiUser: true });
     const container2 = document.createElement("div");
     document.body.appendChild(container2);
     const dispose2 = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container2
     );
     await vi.advanceTimersByTimeAsync(1);
@@ -1179,7 +1172,7 @@ describe("AgentSidebar", () => {
       setCapabilitiesForTests(capabilities);
       const container = document.createElement("div");
       document.body.appendChild(container);
-      const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+      const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
       await vi.advanceTimersByTimeAsync(5);
       const link = queryByRole(container, "link", { name: /Link gateway/ });
       dispose();
@@ -1200,7 +1193,7 @@ describe("AgentSidebar", () => {
       setCapabilitiesForTests({ multiUser });
       const container = document.createElement("div");
       document.body.appendChild(container);
-      const dispose = render(() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />, container);
+      const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
       await vi.advanceTimersByTimeAsync(5);
       const link = Array.from(container.querySelectorAll("a")).find((item) => item.textContent?.includes("Pairings"));
       dispose();
@@ -1234,23 +1227,19 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    
     const menu = container.querySelector<HTMLDetailsElement>("details.session-actions");
     expect(menu).toBeTruthy();
     expect(menu!.open).toBe(false);
-    
     // Open menu
     await openSidebarMenu(container);
     expect(menu!.open).toBe(true);
-    
     // Click outside (on document.body which doesn't contain the menu)
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     await vi.advanceTimersByTimeAsync(0);
-    
     expect(menu!.open).toBe(false);
     dispose();
   });
@@ -1275,23 +1264,19 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    
     const menu = container.querySelector<HTMLDetailsElement>("details.session-actions");
     expect(menu).toBeTruthy();
-    
     // Open menu
     await openSidebarMenu(container);
     expect(menu!.open).toBe(true);
-    
     // Press Escape
     const escapeEvent = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
     document.dispatchEvent(escapeEvent);
     await vi.advanceTimersByTimeAsync(0);
-    
     expect(menu!.open).toBe(false);
     dispose();
   });
@@ -1316,11 +1301,10 @@ describe("AgentSidebar", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
-      () => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />,
+      () => <AgentSidebar collapsed={() => false} />,
       container
     );
     await vi.advanceTimersByTimeAsync(1);
-    
     await openSidebarMenu(container);
     const archiveButton = Array.from(document.querySelectorAll<HTMLButtonElement>(".session-action")).find(
       (btn) => btn.textContent?.includes("Archive")
@@ -1328,7 +1312,6 @@ describe("AgentSidebar", () => {
     expect(archiveButton).toBeTruthy();
     archiveButton!.click();
     await vi.advanceTimersByTimeAsync(1);
-    
     expect(showToastMock).toHaveBeenCalledWith("Chat archived", "success");
     dispose();
   });

@@ -12,12 +12,16 @@ const preferred: Readonly<Record<string, readonly string[]>> = {
   deepseek: ["deepseek-flash"],
 };
 
+export function freeModel(model: Model<Api>): boolean {
+  return /[:-]free$/i.test(model.id);
+}
+
 export function pickerModel(model: Model<Api>): boolean {
-  return !/(?:^|[-:])free$/i.test(model.id) && Object.values(model.cost).some((cost) => typeof cost === "number" && cost > 0);
+  return freeModel(model) || (model.id.toLowerCase() !== "free" && Object.values(model.cost).some((cost) => typeof cost === "number" && cost > 0));
 }
 
 export function defaultModel(models: readonly Model<Api>[]) {
-  const candidates = models.filter(pickerModel);
+  const candidates = models.filter((model) => !freeModel(model) && pickerModel(model));
   const provider = candidates[0]?.provider;
   const ids = provider && Object.hasOwn(preferred, provider) ? preferred[provider] : [];
   return ids.map((id) => candidates.find((model) => model.id === id)).find(Boolean) ?? candidates[0];

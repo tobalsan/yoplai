@@ -5,6 +5,7 @@ import path from "node:path";
 import { getMimeType } from "hono/utils/mime";
 import { redactedTarget } from "@yoplai/shared/secret-paths";
 import { logWarn } from "../logging.js";
+import { loopbackGatewayHosts } from "./loopback-request.js";
 
 export interface UiListenerOptions {
   /** Directory of the built web UI. */
@@ -188,7 +189,7 @@ function ownsPageFallback(pathname: string): boolean {
  */
 function isLoopbackHost(host: string | undefined, port: number): boolean {
   if (!host) return false;
-  return ["127.0.0.1", "localhost", "[::1]"].some((name) => host.toLowerCase() === `${name}:${port}`);
+  return loopbackGatewayHosts(port).includes(host.toLowerCase());
 }
 
 async function serveStatic(request: IncomingMessage, response: ServerResponse, root: string): Promise<void> {

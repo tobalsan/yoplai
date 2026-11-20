@@ -56,6 +56,7 @@ type LifecycleContext = {
   userId?: string;
   requesterId?: string;
   deviceTurnToken?: string;
+  turnId?: string;
   source?: string;
   slackDelivery?: ContainerDeliveryContext["slack"];
   background?: boolean;
@@ -206,15 +207,16 @@ export class SessionRunLifecycle {
   async handleJoin(policy: QueuePolicy): Promise<QueueDecision> {
     if (!this.isStreaming()) return { handled: false };
 
-    const differentDeviceTurn = getSession(this.context.agentId, this.context.sessionId)?.deviceTurnToken !== this.context.deviceTurnToken;
-    const differentRequester = getSession(this.context.agentId, this.context.sessionId)?.requesterId !== this.context.requesterId;
+    const active = getSession(this.context.agentId, this.context.sessionId);
+    const differentTurn = active?.deviceTurnToken !== this.context.deviceTurnToken || active?.turnId !== this.context.turnId;
+    const differentRequester = active?.requesterId !== this.context.requesterId;
     if (policy.queueMode === "queue" || differentRequester) {
       let deliveredToCurrentRun = false;
       if (
         policy.capabilities.queueWhileStreaming &&
         policy.adapter.queueMessage &&
         !differentRequester &&
-        !differentDeviceTurn
+        !differentTurn
       ) {
         const session = getSession(this.context.agentId, this.context.sessionId);
         const ownerId = session?.storageOwnerId;
@@ -285,6 +287,7 @@ export class SessionRunLifecycle {
     if (session) {
       session.requesterId = this.context.requesterId;
       session.deviceTurnToken = this.context.deviceTurnToken;
+      session.turnId = this.context.turnId;
       session.bufferedTurns = this.completedTurns;
       let resolve!: () => void;
       const settled = new Promise<void>((done) => { resolve = done; });
@@ -309,7 +312,7 @@ export class SessionRunLifecycle {
       );
       for (const pending of buffered) {
         const requesterId = pending.params?.requesterId ?? pending.params?.userId;
-        if (requesterId !== this.context.requesterId || pending.params?.deviceTurnToken !== this.context.deviceTurnToken) {
+        if (requesterId !== this.context.requesterId || pending.params?.deviceTurnToken !== this.context.deviceTurnToken || pending.params?.turnId !== this.context.turnId) {
           bufferPendingMessage(this.context.agentId, this.context.sessionId, pending.message, pending.sender, pending.params);
           continue;
         }
@@ -350,27 +353,25 @@ export class SessionRunLifecycle {
     bufferHistoryEvent(buffer, sanitizedEvent);
   }
 
-  async flushTurns() {
+  async flushTurns(answeredTurnId?: string) {
     await Promise.all(this.eagerUserFlushes);
     this.eagerUserFlushes = [];
 
-    for (const buffer of this.completedTurns) {
+    const buffers = this.currentTurn ? [...this.completedTurns, this.currentTurn] : this.completedTurns;
+    const answered = answeredTurnId ? [...buffers].reverse().find((buffer) => buffer.assistantContent.length
+      ? buffer.assistantContent.some((block) => block.type === "text" && block.text.trim())
+      : buffer.assistantText.trim()) : undefined;
+    for (const buffer of buffers) {
       await flushTurnBuffer(
         this.context.agentId,
         this.context.sessionId,
         buffer,
-        this.context.userId
+        this.context.userId,
+        buffer === answered ? answeredTurnId : undefined
       );
     }
     this.completedTurns.length = 0;
-
     if (this.currentTurn) {
-      await flushTurnBuffer(
-        this.context.agentId,
-        this.context.sessionId,
-        this.currentTurn,
-        this.context.userId
-      );
       this.currentTurn = null;
       this.publishTurn(null);
     }

@@ -16,17 +16,18 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   await fs.rm(root, { recursive: true, force: true });
 });
 
 it("checks a new key alone before replacement", async () => {
   const { createModelAuth } = await import("./model-auth.js");
-  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAccess } = await import("./model-access.js");
   const file = path.join(home, "auth.json");
   await fs.writeFile(file, JSON.stringify({ openai: { type: "api_key", key: "fake-old-key" } }));
   const checkKey = vi.fn(async (_provider: string, key: string) => key === "fake-new-key");
-  const routes = createModelAccessRoutes(home, { createAuth: createModelAuth, checkKey });
+  const { routes } = createModelAccess(home, { createAuth: createModelAuth, checkKey });
   const post = (body: Record<string, unknown>) => routes.request("/api-key", { method: "POST", body: JSON.stringify({ provider: "openai", ...body }) });
   for (const key of ["!cmd", "$VAR", "${VAR}"]) expect((await post({ key })).status).toBe(400);
   expect((await post({ key: "fake-new-key" })).status).toBe(409);
@@ -39,6 +40,22 @@ it("checks a new key alone before replacement", async () => {
   expect(JSON.parse(await fs.readFile(file, "utf8")).openai.key === "fake-new-key").toBe(true);
   expect((await (await routes.request("/")).text()).includes("fake-new-key")).toBe(false);
   expect((await routes.request("/openai", { method: "DELETE" })).status).toBe(204);
+});
+
+it.each(["anthropic", "openai"])("rejects Claude subscription tokens in the public %s API-key form", async (provider) => {
+  const call = vi.fn(async () => new Response(null, { status: 401 }));
+  vi.stubGlobal("fetch", call);
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes } = createModelAccess(home);
+  const credentialFiles = await fs.readdir(home);
+  const response = await routes.request("/api-key", {
+    method: "POST",
+    body: JSON.stringify({ provider, key: "fixture-sk-ant-oat-subscription", replace: true }),
+  });
+  expect(response.status).toBe(422);
+  expect(await response.json()).toMatchObject({ error: "subscription_credential", message: expect.stringContaining("Sign in with Claude") });
+  expect(call).not.toHaveBeenCalled();
+  expect(await fs.readdir(home)).toEqual(credentialFiles);
 });
 
 it("opens an approved browser URL and drops prompts on either abort signal", async () => {
@@ -84,13 +101,13 @@ it("opens an approved browser URL and drops prompts on either abort signal", asy
 
 it("resumes an open attempt and requires the Claude warning for a new attempt", async () => {
   const { createModelAuth } = await import("./model-auth.js");
-  const { createModelAccessRoutes } = await import("./model-access.js");
+  const { createModelAccess } = await import("./model-access.js");
   const auth = await createModelAuth({ home });
   const login = vi.spyOn(auth.runtime, "login").mockImplementation(async (_provider, _type, io) => {
     await io.prompt({ type: "manual_code", message: "test" });
     throw new Error("fake-provider-private-error");
   });
-  const routes = createModelAccessRoutes(home, { createAuth: async () => auth, open: async () => {} });
+  const { routes } = createModelAccess(home, { createAuth: async () => auth, open: async () => {} });
   const start = (provider: string, body = {}) => routes.request(`/oauth/${provider}`, { method: "POST", body: JSON.stringify(body) });
   expect((await start("anthropic")).status).toBe(409);
   expect(login).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { setupRepairHref } from "../desktop-setup/repair";
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { RemoteAgentMark } from "../components/RemoteAgentMark";
 import { A, useNavigate } from "@solidjs/router";
@@ -30,7 +31,7 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
     : UNASSIGNED_MESSAGE;
 }
 
-export function AgentCatalog() {
+export function AgentCatalog(props: { hideHeading?: boolean }) {
   const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
   const [savingMain, setSavingMain] = createSignal<string | null>(null);
   const navigate = useNavigate();
@@ -108,7 +109,7 @@ export function AgentCatalog() {
 
   return (
     <div class="agent-catalog">
-      <h1 class="catalog-heading">Agents</h1>
+      <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}
@@ -126,6 +127,11 @@ export function AgentCatalog() {
 
       <Show when={agents.error}>
         <div class="error">Failed to load agents</div>
+      </Show>
+
+      <Show when={capabilities.desktopSetup && !capabilities.multiUser && agents()?.length === 0}>
+        <h2>Create your first agent</h2>
+        <button type="button" onClick={() => navigate(setupRepairHref("agent", "/agents"))}>Create agent</button>
       </Show>
 
       <Show when={agents()}>

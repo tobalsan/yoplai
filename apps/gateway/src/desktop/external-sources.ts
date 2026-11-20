@@ -52,6 +52,26 @@ const systemKeychain: Keychain = {
 };
 
 type Entry = { provider: string; type: ExternalCredential["type"]; key?: string; expires?: number; supported: boolean; message?: string };
+type Candidate = Pick<Entry, "provider" | "type"> & { available: boolean };
+function available(entry: Entry): boolean {
+  return Boolean(entry.key) && (entry.expires === undefined || entry.expires > Date.now());
+}
+
+/** Same precedence and eligibility for the picker and the live credential reader. */
+export async function selectExternalCredential<T extends Candidate>(
+  provider: string,
+  model: AnyModel | undefined,
+  mode: ExternalCredential["type"] | undefined,
+  lookup: (source: ExternalSource) => T | undefined | Promise<T | undefined>,
+) {
+  const trusted = model && isTrustedExternalOAuthModel(model);
+  for (const source of EXTERNAL_SOURCES) {
+    if (source === "codex" && provider !== "openai-codex" || source === "claude-code" && provider !== "anthropic") continue;
+    const row = await lookup(source);
+    if (row?.available && (!mode || row.type === mode) && (row.type !== "oauth" || trusted)) return { row, source };
+  }
+}
+
 type ConsentState = "enabled" | "warning-accepted" | "denied";
 type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
@@ -59,7 +79,7 @@ const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude C
 const CLAUDE_CODE_SIGNED_OUT = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
 export const CLAUDE_LOGIN_UNAVAILABLE = "This Claude login cannot be used. Sign in with Claude here, or use an API key.";
 
-function isAnthropicOAuthToken(value: unknown): value is string {
+export function isAnthropicOAuthToken(value: unknown): value is string {
   // Pi also treats this marker as OAuth when it occurs inside the token.
   return typeof value === "string" && value.includes("sk-ant-oat");
 }
@@ -193,10 +213,10 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
     const rows = providers.map(({ provider, type, supported, key, expires, message }) => {
-      const available = Boolean(key) && (expires === undefined || expires > Date.now());
+      const usable = available({ provider, type, supported, key, expires });
       return {
-        provider, type, available,
-        ...(source === "claude-code" && !available ? { message: CLAUDE_CODE_SIGNED_OUT }
+        provider, type, available: usable,
+        ...(source === "claude-code" && !usable ? { message: CLAUDE_CODE_SIGNED_OUT }
           : !supported ? { message: message ?? "Not supported yet" } : {}),
       };
     });
@@ -221,26 +241,20 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     },
     async resolve(provider: string, model: AnyModel | undefined, mode?: ExternalCredential["type"]): Promise<ExternalCredential | undefined> {
       const enabled = await consent();
-      let claudeUnavailable = false;
-      for (const source of EXTERNAL_SOURCES) {
-        if (source === "codex" && provider !== "openai-codex" || source === "claude-code" && provider !== "anthropic") continue;
+      let diagnosis: string | undefined;
+      const selected = await selectExternalCredential(provider, model, mode, async (source) => {
         const row = (await read(source, enabled)).find((entry) => entry.provider === provider);
-        if (!row) continue;
-        if (source === "claude-code" && mode !== "api_key" && (!row.key || !model || !isTrustedExternalOAuthModel(model) || !row.expires || row.expires <= Date.now())) {
-          claudeUnavailable = true;
-          continue;
+        if (!row) return undefined;
+        const usable = available(row);
+        if (mode !== "api_key" && row.type === "oauth") {
+          const trusted = model && isTrustedExternalOAuthModel(model);
+          if (source === "claude-code" && (!usable || !trusted)) diagnosis = CLAUDE_LOGIN_UNAVAILABLE;
+          if (provider === "openai-codex" && row.key && !usable && trusted) diagnosis = CODEX_EXPIRED;
         }
-        if (!row.key || (mode && row.type !== mode)) continue;
-        if (row.type === "oauth") {
-          if (!model || !isTrustedExternalOAuthModel(model)) continue;
-          if (row.expires === undefined || row.expires <= Date.now()) {
-            if (provider === "openai-codex") throw new Error(CODEX_EXPIRED);
-            continue;
-          }
-        }
-        return { type: row.type, key: row.key, source };
-      }
-      if (claudeUnavailable) throw new Error(CLAUDE_LOGIN_UNAVAILABLE);
+        return { ...row, available: usable };
+      });
+      if (selected?.row.key) return { type: selected.row.type, key: selected.row.key, source: selected.source };
+      if (diagnosis) throw new Error(diagnosis);
       return undefined;
     },
   };

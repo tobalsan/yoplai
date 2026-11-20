@@ -101,14 +101,16 @@ it("refuses untrusted requests and keeps state when version one lacks fields", a
   expect((await put({ version: 2 })).status).toBe(400);
   expect((await put({ completed: true })).status).toBe(400);
   const response = await put({ completed: true, firstChat: { agentId: "a", sessionId: "s", turnId: "t" } });
-  expect(await response.json()).toMatchObject({ wizardExited: true, completed: true, completedAt: expect.any(String) });
+  expect(response.status).toBe(400);
+  expect(await (await read()).json()).toMatchObject({ wizardExited: true, completed: false, firstChat: null });
 });
 
 it("applies every refusal to every desktop route before it reads state", async () => {
   const { app } = await import("../server/index.js");
   const state = await import("../relay/state.js");
   const paths = [
-    ["GET", "desktop-setup"], ["PUT", "desktop-setup"], ["GET", "model-access"],
+    ["GET", "desktop-setup"], ["PUT", "desktop-setup"],
+    ["GET", "desktop-setup/turns/agent/session/9d250352-07af-4204-a50c-53c4bb3bebef"], ["GET", "model-access"],
     ["POST", "model-access/oauth/anthropic"], ["GET", "model-access/oauth/attempts/test"],
     ["POST", "model-access/oauth/attempts/test/answer"], ["POST", "model-access/oauth/attempts/test/cancel"],
     ["POST", "model-access/api-key"], ["POST", "model-access/external/pi"], ["DELETE", "model-access/openai"],

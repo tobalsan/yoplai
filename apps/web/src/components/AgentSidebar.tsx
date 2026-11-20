@@ -15,7 +15,8 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { theme, toggleTheme } from "../theme";
+import { SidebarTheme } from "./SidebarTheme";
+import { isDesktopWindow } from "../lib/desktop-window";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { openConnectPrompt, restartTour } from "../onboarding/state";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
@@ -45,7 +46,6 @@ import { AgentAvatarFill } from "./AgentAvatarFill";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
-  onToggleCollapse: () => void;
 };
 
 const LazySidebarAccountPanel = lazy(
@@ -99,6 +99,7 @@ function groupLabel(timestamp: number, currentTime: number): string {
 }
 
 export function AgentSidebar(props: AgentSidebarProps) {
+  const desktopWindow = isDesktopWindow();
   const location = useLocation();
   const navigate = useNavigate();
   // "Connect tools" only makes sense once a superadmin starred something;
@@ -445,37 +446,31 @@ export function AgentSidebar(props: AgentSidebarProps) {
         </div>
       )}</Show>
       <div class="agent-sidebar-shell">
+        <Show when={!desktopWindow || capabilities.branding?.logo}>
         <div class="sidebar-header">
-          <A class="sidebar-logo" href="/">
-            <Show
-              when={capabilities.branding?.name || capabilities.branding?.logo}
-              fallback={
-                <>
-                  <span class="logo-full">Yoplai</span>
-                  <span class="logo-short">Yo</span>
-                </>
-              }
-            >
-              <Show when={capabilities.branding?.logo}>
-                <img class="sidebar-brand-logo" src={capabilities.branding!.logo} alt="" />
+          <Show when={!desktopWindow || capabilities.branding?.logo}>
+            <A class="sidebar-logo" href="/" aria-label={desktopWindow ? capabilities.branding?.name ?? "Yoplai" : undefined}>
+              <Show
+                when={capabilities.branding?.name || capabilities.branding?.logo}
+                fallback={
+                  <>
+                    <span class="logo-full">Yoplai</span>
+                    <span class="logo-short">Yo</span>
+                  </>
+                }
+              >
+                <Show when={capabilities.branding?.logo}>
+                  <img class="sidebar-brand-logo" src={capabilities.branding!.logo} alt="" />
+                </Show>
+                <Show when={!desktopWindow && capabilities.branding?.name}>
+                  <span class="logo-full">{capabilities.branding!.name}</span>
+                  <span class="logo-short">{capabilities.branding!.name!.substring(0, 2).toUpperCase()}</span>
+                </Show>
               </Show>
-              <Show when={capabilities.branding?.name}>
-                <span class="logo-full">{capabilities.branding!.name}</span>
-                <span class="logo-short">{capabilities.branding!.name!.substring(0, 2).toUpperCase()}</span>
-              </Show>
-            </Show>
-          </A>
-          <Show when={import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true"}>
-            <span class="dev-badge">DEV</span>
+            </A>
           </Show>
-          <button
-            class="collapse-btn"
-            type="button"
-            onClick={props.onToggleCollapse}
-          >
-            «
-          </button>
         </div>
+        </Show>
         <div class="sidebar-content">
           <nav class="sidebar-nav" aria-label="Primary">
             <button type="button" class="nav-link sidebar-search" aria-label="Search" title="Search (Cmd/Ctrl+K)" onClick={openSessionSearch}>
@@ -889,32 +884,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <span class="archive-label">Archive</span>
             </A>
           </Show>
-          <button
-            class="theme-toggle"
-            type="button"
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme() === "dark" ? "light" : "dark"} mode`}
-          >
-            <Show
-              when={theme() === "dark"}
-              fallback={
-                <svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-                </svg>
-              }
-            >
-              <svg class="theme-icon" viewBox="0 0 20 20" fill="currentColor">
-                <path
-                  fill-rule="evenodd"
-                  d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"
-                  clip-rule="evenodd"
-                />
-              </svg>
-            </Show>
-            <span class="theme-label">
-              {theme() === "dark" ? "Light" : "Dark"}
-            </span>
-          </button>
+          <SidebarTheme collapsed={props.collapsed()} />
           <Show when={capabilities.multiUser && capabilities.user}>
             <div class="tour-links">
               <button
@@ -1062,35 +1032,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: flex;
           align-items: center;
           gap: 8px;
-        }
-
-        .dev-badge {
-          background: #f59e0b;
-          color: #fff;
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 6px;
-          border-radius: 4px;
-          letter-spacing: 0.05em;
-          flex-shrink: 0;
-          transition: opacity 0.2s ease;
-        }
-
-        .collapse-btn {
-          margin-left: auto;
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
-          border: 1px solid var(--border-default);
-          background: var(--bg-surface);
-          color: var(--text-primary);
-          cursor: pointer;
-          flex-shrink: 0;
-        }
-
-        .collapse-btn:focus-visible {
-          outline: 2px solid rgba(59, 130, 246, 0.6);
-          outline-offset: 2px;
         }
 
         .sidebar-content {
@@ -1450,26 +1391,52 @@ export function AgentSidebar(props: AgentSidebarProps) {
           display: none;
         }
 
-        .theme-toggle {
+        .sidebar-theme-segments {
           display: flex;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          padding: 8px 10px;
-          border-radius: 8px;
-          border: none;
+          width: max-content;
+          gap: 2px;
+          padding: 3px;
+          border-radius: 999px;
+          background: var(--bg-raised);
+        }
+
+        .sidebar-theme-segments button,
+        .sidebar-theme-cycle {
+          display: grid;
+          place-items: center;
+          width: 40px;
+          height: 32px;
+          padding: 0;
+          border: 0;
+          border-radius: 999px;
           background: transparent;
           color: var(--text-secondary);
           cursor: pointer;
-          font-size: 14px;
-          line-height: 1.2;
-          transition: background 0.2s ease, color 0.2s ease;
-          white-space: nowrap;
         }
 
-        .theme-toggle:hover {
-          background: var(--bg-raised);
+        .sidebar-theme-cycle {
+          width: 100%;
+          border-radius: 8px;
+        }
+
+        .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-theme-cycle { width: 36px; }
+
+        .sidebar-theme-segments button:hover,
+        .sidebar-theme-cycle:hover {
+          background: var(--bg-inset);
           color: var(--text-primary);
+        }
+
+        .sidebar-theme-segments button[aria-checked="true"] {
+          background: var(--bg-base);
+          color: var(--text-primary);
+          box-shadow: 0 1px 3px var(--shadow-md);
+        }
+
+        .sidebar-theme-segments button:focus-visible,
+        .sidebar-theme-cycle:focus-visible {
+          outline: 2px solid var(--text-secondary);
+          outline-offset: -2px;
         }
 
         .tour-links {
@@ -1493,12 +1460,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
         .tour-restart:hover {
           opacity: 1;
           text-decoration: underline;
-        }
-
-        .theme-icon {
-          width: 16px;
-          height: 16px;
-          flex-shrink: 0;
         }
 
         .sidebar-logo {
@@ -1591,9 +1552,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
         .agent-sidebar.collapsed .logo-full,
         .agent-sidebar.collapsed .nav-full,
-        .agent-sidebar.collapsed .dev-badge,
-        .agent-sidebar.collapsed .collapse-btn,
-        .agent-sidebar.collapsed .theme-label,
         .agent-sidebar.collapsed .sidebar-recent {
           display: none;
         }
@@ -1622,16 +1580,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
           padding: 8px 4px;
         }
 
-        .agent-sidebar.collapsed .theme-toggle {
-          justify-content: center;
-        }
-
         /* Hover to expand: restore full content */
         .agent-sidebar.collapsed:is(:hover, .menu-open) .logo-full,
         .agent-sidebar.collapsed:is(:hover, .menu-open) .nav-full,
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .dev-badge,
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .collapse-btn,
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .theme-label,
         .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-recent {
           display: revert;
         }
@@ -1657,42 +1608,22 @@ export function AgentSidebar(props: AgentSidebarProps) {
           padding: 8px 10px;
         }
 
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .theme-toggle {
-          justify-content: unset;
-        }
-
         @media (max-width: 768px) {
           .agent-sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
+            position: absolute;
+            inset: 0 auto 0 0;
             width: 280px;
             min-width: 280px;
             height: 100%;
-            height: 100dvh;
-            z-index: 850;
-            transform: translateX(0);
-            transition: transform 0.2s ease;
           }
 
           .agent-sidebar-shell {
-            width: 100%;
             box-shadow: 12px 0 24px var(--shadow-md);
           }
+        }
 
-          .agent-sidebar.collapsed {
-            width: 280px;
-            min-width: 280px;
-            transform: translateX(-100%);
-          }
-
-          .agent-sidebar.collapsed .agent-sidebar-shell,
-          .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
-            position: relative;
-            inset: auto;
-            width: 100%;
-            box-shadow: none;
-          }
+        @media (prefers-reduced-motion: reduce) {
+          .agent-sidebar-shell { transition: none; }
         }
       `}</style>
     </aside>

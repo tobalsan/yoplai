@@ -129,6 +129,17 @@ describe("loopback address checks", () => {
 });
 
 describe("route policy", () => {
+  it.each([
+    ["forwarded", 'for="[::1]:443", proto=http'],
+    ["forwarded", "for=127.0.0.1;by=192.0.2.1"],
+    ["forwarded", "for=127.0.0.1;broken"],
+    ["x-forwarded-for", "[::1]junk"],
+    ["x-real-ip", "127.0.0.1:65536"],
+  ])("rejects malformed or nonlocal forwarding: %s: %s", async (name, value) => {
+    const response = await call("/api/relay/link/callback", { headers: { [name]: value } });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "untrusted_peer" });
+  });
   it("answers 403 while the relay is off", async () => {
     enabled = false;
     expect((await call("/api/relay/link/metadata", { origin: UI_ORIGIN, body: {} })).status).toBe(403);
