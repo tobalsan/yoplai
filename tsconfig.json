@@ -33,6 +33,7 @@
     { "path": "packages/extensions/orchestrator" },
     { "path": "apps/gateway" },
     { "path": "apps/web" },
+    { "path": "apps/desktop" },
     { "path": "container/agent-runner" }
   ]
 }

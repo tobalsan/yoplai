@@ -376,7 +376,7 @@ export function startServer(
     resolvedHost,
     runtime.isEnabled("multiUser"),
     config.ui?.tailscale?.mode === "serve",
-    resolveBindHost(config.ui?.bind)
+    readEnv("UI_HOST") ?? resolveBindHost(config.ui?.bind)
   );
   const nodeBin = path.dirname(process.execPath);
   if (nodeBin && !process.env.PATH?.split(path.delimiter).includes(nodeBin)) {
