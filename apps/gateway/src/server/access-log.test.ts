@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as secretPaths from "@yoplai/shared/secret-paths";
 import { accessLogger, stripAnsi } from "./access-log.js";
 
 const quietPaths = [
@@ -53,17 +52,13 @@ describe("accessLogger", () => {
     const app = new Hono();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(Date, "now").mockReturnValue(0);
-    const path = "/d-assets/synthetic-private-target";
-    const redact = vi.spyOn(secretPaths, "redactedTarget").mockImplementation((target) =>
-      target === path ? "/api/model-access/[redacted]" : undefined
-    );
+    const path = "/d-assets/..%2Fapi/model-access/oauth/synthetic-attempt";
     app.use("*", accessLogger());
 
     const response = await app.request(`${path}?x=synthetic-query`);
 
     expect(response.status).toBe(404);
     expect(log.mock.calls).toEqual([["--> GET /api/model-access/[redacted] 404 0ms"]]);
-    expect(redact).toHaveBeenCalledWith(path);
   });
 
   it.each(quietPaths)(
