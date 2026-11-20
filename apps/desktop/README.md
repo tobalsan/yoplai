@@ -28,7 +28,9 @@ pnpm --filter @yoplai/desktop dist:release
 ```
 
 Find `Yoplai.app` and the disk image (DMG) in `apps/desktop/release/signed`.
-The release command signs the app and DMG, submits them to Apple, and staples their tickets.
+The release command signs the app and DMG, submits them to Apple, and staples their tickets. It also runs `scripts/packaged-check.mjs` on the signed app: SQLite, offline OCR, text extraction, canvas assets and catalog install through the UI port.
+
+To run the check by hand, use `node apps/desktop/scripts/packaged-check.mjs <app> [reference-app]`. Add a reference app only to compare startup timings.
 
 ## Run the desktop app from source
 
