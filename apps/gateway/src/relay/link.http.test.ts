@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { disconnectRemoteGateway, linkWithBrowser } from "../cli/connect.js";
+import { fixtureRelease } from "../extensions/release-bundle.fixture.js";
 import { createFileRemoteGatewayStore } from "./store.js";
 
 /**
@@ -18,6 +19,8 @@ import { createFileRemoteGatewayStore } from "./store.js";
 
 const fixture = fileURLToPath(new URL("./link-gateway.fixture.ts", import.meta.url));
 const gatewayDir = fileURLToPath(new URL("../..", import.meta.url));
+const catalogPath = "/api/admin/extension-catalog";
+const fixtureVersion = "1.0.0";
 const PASSWORD = "synthetic-password-for-isolated-test";
 
 type Running = { child: ChildProcess; port: number; home: string; output: () => string };
@@ -30,6 +33,7 @@ let cookie: string;
 let remoteBase: string;
 /** The address that the local gateway links to. It forwards to the remote. */
 let linkedRemote: string;
+let catalog: Awaited<ReturnType<typeof startCatalog>>;
 let forwarder: Awaited<ReturnType<typeof startForwarder>>;
 let localBase: string;
 let localStorePath: string;
@@ -51,11 +55,13 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
   const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", fixture], {
     cwd: gatewayDir,
     detached: true,
-    env: { ...process.env, FIXTURE_HOME: home, FIXTURE_PORT: String(port), FIXTURE_MODE: mode, YOPLAI_HOME: "", NODE_ENV: "test" },
+    env: { ...process.env, FIXTURE_HOME: home, FIXTURE_PORT: String(port), FIXTURE_MODE: mode, FIXTURE_CATALOG_URL: mode === "remote" ? `${catalog.base}/catalog.json` : "", YOPLAI_HOME: "", NODE_ENV: "test" },
   });
   let output = "";
   child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
   child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  const running = { child, port, home, output: () => output };
+  started.push(running);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${name} gateway did not start in time`)), 80_000);
     child.stdout?.on("data", () => {
@@ -69,8 +75,6 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
       reject(new Error(`${name} gateway exited with ${code}`));
     });
   });
-  const running = { child, port, home, output: () => output };
-  started.push(running);
   // READY can arrive before the HTTP listener accepts connections.
   await until(async () => {
     try {
@@ -122,20 +126,20 @@ const attemptStatus = async (attempt: Attempt) =>
   json<{ status: string }>(await fetch(`${localBase}/api/relay/link/status/${attempt.attemptId}`, { headers: { "x-link-control": attempt.controlToken } }));
 
 /** What the browser does after the user clicks Approve or Refuse on the consent page of the remote. */
-async function browser(consentUrl: string, action: "approve" | "deny"): Promise<{ status: number; body: Record<string, unknown> }> {
+async function browser(consentUrl: string, action: "approve" | "deny", sessionCookie = cookie): Promise<{ status: number; body: Record<string, unknown> }> {
   const requestId = new URL(consentUrl).searchParams.get("request")!;
   // The consent page is on the origin that the local gateway linked to. The browser reaches the same remote.
   expect(new URL(consentUrl).origin).toBe(linkedRemote);
-  return finishInBrowser(requestId, action);
+  return finishInBrowser(requestId, action, sessionCookie);
 }
 
-async function finishInBrowser(requestId: string, action: "approve" | "deny"): Promise<{ status: number; body: Record<string, unknown> }> {
-  const view = await fetch(`${remoteBase}/api/auth/gateway-link/requests/${requestId}`, { headers: { Cookie: cookie } });
+async function finishInBrowser(requestId: string, action: "approve" | "deny", sessionCookie = cookie): Promise<{ status: number; body: Record<string, unknown> }> {
+  const view = await fetch(`${remoteBase}/api/auth/gateway-link/requests/${requestId}`, { headers: { Cookie: sessionCookie } });
   expect(view.status).toBe(200);
   const { nonce } = await json<{ nonce: string }>(view);
   const answered = await fetch(`${remoteBase}/api/auth/gateway-link/${action}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: remoteBase },
+    headers: { "Content-Type": "application/json", Cookie: sessionCookie, Origin: remoteBase },
     body: JSON.stringify({ requestId, nonce }),
   });
   expect(answered.status).toBe(200);
@@ -167,6 +171,7 @@ const deviceStates = async () => json<Array<{ name: string; connected: boolean; 
 
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-link-http-"));
+  catalog = await startCatalog();
   [remote, local] = await Promise.all([startGateway("remote", "remote"), startGateway("local", "local")]);
   remoteBase = `http://127.0.0.1:${remote.port}`;
   localBase = `http://127.0.0.1:${local.port}`;
@@ -178,10 +183,30 @@ beforeAll(async () => {
 
 afterAll(async () => {
   forwarder?.close();
+  catalog?.close();
   for (const running of started) if (running.child.pid) process.kill(-running.child.pid, "SIGTERM");
   await sleep(300);
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
+
+async function startCatalog() {
+  const state = { requests: 0 };
+  const server = http.createServer((request, response) => {
+    state.requests += 1;
+    if (request.url === "/catalog.json") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(release.catalog));
+    } else if (request.url === "/sample.tgz") {
+      response.end(release.bundle);
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+  const release = fixtureRelease(base, fixtureVersion);
+  return { base, release, state, close: () => { server.closeAllConnections(); server.close(); } };
+}
 
 /**
  * A forwarder between the local gateway and the remote. The local gateway links to this address, so every request and
@@ -190,9 +215,10 @@ afterAll(async () => {
  * a token request to the remote and then drop the answer, which is how a lost first exchange looks.
  */
 async function startForwarder() {
-  const state = { dropTokenAnswer: false, dropped: 0 };
+  const state = { dropTokenAnswer: false, dropped: 0, catalogRequests: 0 };
   let counter = 0;
   const server = http.createServer((request, response) => {
+    if (request.url === catalogPath || request.url?.startsWith(`${catalogPath}/`)) state.catalogRequests += 1;
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -436,4 +462,72 @@ describe("browser link between two real gateways", () => {
     expect(response.status).toBe(400);
     expect(await json(response)).toMatchObject({ error: "invalid_remote" });
   });
+
+  it("uses the destination role for catalog requests and rejects a wrong origin before forwarding", async () => {
+    const memberCookie = await signUp("member@example.test");
+    for (const [name, sessionCookie] of [["catalog-admin", cookie], ["catalog-member", memberCookie]]) {
+      const response = await startLink(name);
+      expect(response.status).toBe(201);
+      const attempt = await json<Attempt>(response);
+      expect(await browser(attempt.consentUrl, "approve", sessionCookie)).toEqual({ status: 200, body: { status: "linked" } });
+      expect(await attemptStatus(attempt)).toMatchObject({ status: "linked" });
+    }
+
+    const request = (name: string, method: string, suffix = "", origin?: string) =>
+      fetch(`${localBase}/api/relay/gateways/${name}${catalogPath}${suffix}`, {
+        method, headers: origin ? { Origin: origin } : undefined,
+      });
+    const admin = (method: string, suffix?: string, origin?: string) => request("catalog-admin", method, suffix, origin);
+    const installed = path.join(remote.home, ".yoplai", "extensions", "sample");
+    const readRecord = () => fs.readFile(path.join(installed, ".install.json"), "utf8");
+    const liveRoute = () => fetch(`${remoteBase}/api/sample`, { headers: { Cookie: cookie } });
+
+    const list = await admin("GET");
+    expect(list.status).toBe(200);
+    const available = { id: "sample", state: "available" };
+    expect(await json(list)).toMatchObject({ entries: [available] });
+    const refresh = await admin("POST", "/refresh");
+    expect(refresh.status, await refresh.clone().text()).toBe(200);
+    expect(await json(refresh)).toMatchObject({ entries: [available] });
+
+    const beforeOrigin = forwarder.state.catalogRequests;
+    const refusedOrigin = await admin("POST", "/sample/install", `http://127.0.0.1:${local.port + 2}`);
+    expect(refusedOrigin.status).toBe(403);
+    expect(forwarder.state.catalogRequests).toBe(beforeOrigin);
+    await expect(fs.stat(installed)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await liveRoute()).status).toBe(404);
+
+    const install = await admin("POST", "/sample/install", `http://127.0.0.1:${local.port + 1}`);
+    expect(install.status, await install.clone().text()).toBe(200);
+    expect(await json(install)).toMatchObject({ id: "sample", state: "installed" });
+    const record = await readRecord();
+    expect(JSON.parse(record)).toMatchObject({ id: "sample", version: fixtureVersion, sha256: catalog.release.entry.sha256 });
+    const files = (await fs.readdir(installed)).sort();
+    const bundle = await fs.readFile(path.join(installed, "index.js"), "utf8");
+    const live = await liveRoute();
+    expect(live.status).toBe(200);
+    expect(await live.text()).toBe(fixtureVersion);
+
+    const beforeMember = catalog.state.requests;
+    const beforeMemberForwards = forwarder.state.catalogRequests;
+    for (const [method, suffix] of [["GET", ""], ["POST", "/refresh"], ["POST", "/sample/install"], ["DELETE", "/sample"]]) {
+      const refused = await request("catalog-member", method, suffix);
+      expect(refused.status).toBe(403);
+      expect(await json(refused)).toEqual({ error: "Only a superadmin can use the catalog." });
+    }
+    expect(catalog.state.requests).toBe(beforeMember);
+    expect(forwarder.state.catalogRequests).toBe(beforeMemberForwards + 4);
+    expect((await fs.readdir(installed)).sort()).toEqual(files);
+    expect(await fs.readFile(path.join(installed, "index.js"), "utf8")).toBe(bundle);
+    expect(await readRecord()).toBe(record);
+    const unchanged = await liveRoute();
+    expect(unchanged.status).toBe(200);
+    expect(await unchanged.text()).toBe(fixtureVersion);
+
+    const remove = await admin("DELETE", "/sample");
+    expect(remove.status).toBe(200);
+    expect(await json(remove)).toEqual({ ok: true });
+    await expect(fs.stat(installed)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await liveRoute()).status).toBe(404);
+  }, 30_000);
 });

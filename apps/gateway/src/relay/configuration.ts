@@ -129,6 +129,25 @@ function browserStartError(request: Request): Response | undefined {
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("json_required", 415);
 }
 
+async function hasBodyBytes(request: Request): Promise<boolean> {
+  const reader = request.body?.getReader();
+  if (!reader) return false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return false;
+      if (value.byteLength > 0) {
+        void reader.cancel().catch(() => {});
+        return true;
+      }
+    }
+  } catch {
+    return true;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function jsonBody(request: Pick<Request, "body" | "signal">): Promise<Record<string, unknown> | Response> {
   const reader = request.body?.getReader();
   const chunks: Uint8Array[] = [];
@@ -410,7 +429,14 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (isResponse(upload)) return upload;
     request = upload;
   }
-  if (rule?.bodyless && ((ownsExtensionCatalogPath(path) && request.body !== null) || request.headers.has("transfer-encoding") || (request.headers.get("content-length") ?? "0") !== "0")) return fail("body_not_allowed");
+  if (rule?.bodyless) {
+    if (request.headers.has("transfer-encoding") || (request.headers.get("content-length") ?? "0") !== "0") return fail("body_not_allowed");
+    if (ownsExtensionCatalogPath(path) && request.body) {
+      // The Node adapter supplies a stream even for a write with no body.
+      if (await hasBodyBytes(request)) return fail("body_not_allowed");
+      request = new Request(request.url, { method: request.method, headers: request.headers, signal: request.signal });
+    }
+  }
   const mcpAdd = request.method === "POST" && path === "/api/mcp/servers";
   if (mcpAdd) {
     const denied = browserStartError(request);

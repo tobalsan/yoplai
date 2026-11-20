@@ -90,6 +90,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.
+
 - The catalog uses theme colors for update badges and errors. It shows the gateway error on the extension row.
 - `pnpm dev` keeps the gateway online when the catalog changes bundles in a custom or symlinked extension folder.
 
