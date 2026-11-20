@@ -286,6 +286,44 @@ describe("RemoteGateways", () => {
     expect(screen.getByText(/Removed work from this computer/)).toBeTruthy();
   });
 
+  it("reads again after a second disconnect completes during the first refresh", async () => {
+    let completeManual = () => {};
+    let releaseSnapshot = () => {};
+    let reads = 0;
+    rows = [browserRow(), manualRow];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/relay/link/disconnect") {
+        const { name } = JSON.parse(String(init?.body)) as { name: string };
+        if (name === "manual") await new Promise<void>((resolve) => { completeManual = resolve; });
+        rows = rows.filter((row) => row.name !== name);
+        return json(200, { name, revoked: "skipped" });
+      }
+      if (String(input) === "/api/relay/link/metadata") {
+        const snapshot = json(200, { gateways: rows });
+        if (++reads === 2) await new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+        return snapshot;
+      }
+      return fetchMock(input, init);
+    }));
+
+    const screen = mount();
+    await vi.advanceTimersByTimeAsync(1);
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect manual" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect work" }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toBe(2);
+    completeManual();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.getByText("Disconnected manual.")).toBeTruthy();
+    expect(reads).toBe(2);
+    releaseSnapshot();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(screen.queryByRole("button", { name: "Disconnect manual" })).toBeNull();
+    expect(screen.getByText("No gateway is linked.")).toBeTruthy();
+    expect(reads).toBe(3);
+  });
+
   it("reads the saved links again after a reload, with no attempt in memory", async () => {
     rows = [browserRow()];
     const screen = mount();

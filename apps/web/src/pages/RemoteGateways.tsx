@@ -303,7 +303,9 @@ export function GatewayLinkPanel(props: {
       await disconnectLink(row.name, localOnly);
       setFailedDisconnect(undefined);
       setNotice(localOnly ? `Removed ${row.name} from this computer. The remote key stays valid until it is revoked or it expires.` : `Disconnected ${row.name}.`);
-      await refetch();
+      // A pending snapshot can predate this disconnect, even if it arrives later.
+      if (metadataRead) await metadataRead.catch(() => undefined);
+      if (!unmounted) await refetch();
     } catch (cause) {
       setError(errorText(cause));
       if (row.kind === "browser" && !localOnly) setFailedDisconnect(row.name);
