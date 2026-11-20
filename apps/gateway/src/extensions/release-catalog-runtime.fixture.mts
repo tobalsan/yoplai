@@ -9,16 +9,30 @@ import { listSettingsChanges } from "../audit/store.js";
 import { app } from "../server/index.js";
 import { buildInnerApi } from "../server/api.core.js";
 import { getCurrentInnerApi, getExtensionRuntime, loadExtensions, setExtensionActivator, stopCurrentExtensions } from "./registry.js";
+import { createExtensionContext } from "./context.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { fixtureRelease, packFixture } from "./release-bundle.fixture.js";
 
 const base = "http://127.0.0.1:19143";
 const root = path.join(CONFIG_DIR, "extensions");
 const mode = process.argv[2];
-const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(mode === "selection" ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
-  extensions: { sample: { enabled: true } }, extensionCatalog: { url: `${base}/catalog.json` } });
+const multiUser = mode === "fork-race" ? {
+  enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "fixture-session-secret-at-least-32-characters",
+} : undefined;
+const agentYaml = path.join(CONFIG_DIR, "agent.yaml");
+const fixtureYaml = "id: fixture\nname: Fixture\nmodel:\n  provider: openai\n  model: fixture\n";
+const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(["selection", "double-rename"].includes(mode) ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
+  extensions: { sample: { enabled: true }, multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
+if (multiUser) {
+  const poolDir = path.join(CONFIG_DIR, "pool", "scribe");
+  await fs.mkdir(poolDir, { recursive: true });
+  await fs.writeFile(path.join(poolDir, "agent.yaml"), fixtureYaml.replace("fixture\nname: Fixture", "scribe\nname: Scribe"));
+  config.pool = [{ ...config.agents[0], id: "scribe", workspace: poolDir }];
+}
 setLoadedConfig(config);
 const initial = await loadExtensions(config);
+const ctx = createExtensionContext(config);
+if (multiUser) await initial.find((extension) => extension.id === "multiUser")!.start(ctx);
 const hooks: string[] = [];
 const oauthAtStart: (string | undefined)[] = [];
 const configAtStart: (boolean | undefined)[] = [];
@@ -33,7 +47,7 @@ setExtensionActivator(async (extension) => {
     configAtStart.push(loadConfig().extensionCatalog?.enabled);
   }
   if (["sample", "mcp", "retained", "inactive", "dependent", "mail", "drive"].includes(extension.id)) {
-    await extension.start({} as Parameters<typeof extension.start>[0]);
+    await extension.start(ctx);
   }
 }, buildInnerApi, buildInnerApi(initial));
 
@@ -54,9 +68,21 @@ globalThis.fetch = async (input) => {
   await pauseBundle;
   return new Response(new Uint8Array(fixture.bundle));
 };
+let cookie: string | undefined;
+if (multiUser) {
+  const response = await app.request("/api/auth/sign-up/email", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Fixture", email: "fixture@example.test", password: "fixture-password-123" }),
+  });
+  assert.equal(response.status, 200, await response.text());
+  cookie = response.headers.getSetCookie().map((value) => value.split(";", 1)[0]).join("; ");
+  assert.ok(cookie);
+}
 const collection = "/api/admin/extension-catalog";
 const call = async (method: string, url: string, status: number, headers?: HeadersInit) => {
-  const response = await app.request(url, { method, headers });
+  const requestHeaders = new Headers(headers);
+  if (cookie) requestHeaders.set("cookie", cookie);
+  const response = await app.request(url, { method, headers: requestHeaders });
   const text = await response.text();
   assert.equal(response.status, status, text);
   return text;
@@ -173,9 +199,22 @@ switch (mode) {
     assert.deepEqual(await snapshot(path.join(root, ".trash", backups[0])), firstFiles);
     break;
   }
+  case "nested-write": {
+    await fs.writeFile(agentYaml, fixtureYaml);
+    fixture = fixtureRelease(base, "2.0.0", { writeOnStart: true });
+    await refresh();
+    await install();
+    assert.equal(await fs.readFile(agentYaml, "utf8"), fixtureYaml);
+    assert.equal(await answer(), "2.0.0");
+    await remove();
+    await answer(404);
+    break;
+  }
+  case "fork-race":
   case "write-race":
   case "watch-race": {
-    const disk = { version: 3, agents: [], extensionsPath: root, extensions: config.extensions, extensionCatalog: config.extensionCatalog };
+    const disk = { version: 3, agents: multiUser ? "agents/*" : [], ...(multiUser ? { pool: "pool/*" } : {}),
+      extensionsPath: root, extensions: config.extensions, extensionCatalog: config.extensionCatalog };
     await fs.writeFile(getConfigPath(), JSON.stringify(disk));
     const watched = gate();
     const timer = mode === "watch-race" ? startGatewayHotReload(config, { intervalMs: 5, onReload: watched.resolve }) : undefined;
@@ -191,7 +230,20 @@ switch (mode) {
       await fs.writeFile(getConfigPath(), JSON.stringify({ ...disk, extensionCatalog: { ...disk.extensionCatalog, enabled: true } }));
       const changeTime = new Date(Date.now() + 2000);
       await fs.utimes(getConfigPath(), changeTime, changeTime);
-      const reload = timer ? watched.promise : reloadAfterExtensionWrite();
+      const reload = multiUser ? Promise.resolve(app.request("/api/admin/forks/scribe/teams", {
+        method: "PUT", headers: { cookie: cookie!, "content-type": "application/json" },
+        body: JSON.stringify({ mode: "list", teamIds: [] }),
+      })).then(async (response) => assert.equal(response.status, 200, await response.text()))
+        : timer ? watched.promise : reloadAfterExtensionWrite();
+      if (multiUser) {
+        const forkFile = path.join(CONFIG_DIR, "agents", "scribe", "agent.yaml");
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (await fs.stat(forkFile).then(() => true, () => false)) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.ok((await fs.stat(forkFile)).isFile());
+        assert.ok(!loadConfig().agents.some((agent) => agent.id === "scribe"));
+      }
       await new Promise((resolve) => setTimeout(resolve, 40));
       assert.equal(loadConfig().extensionCatalog?.enabled, config.extensionCatalog?.enabled);
       release.resolve();
@@ -200,6 +252,10 @@ switch (mode) {
       assert.equal(await answer(), "2.0.0");
       assert.deepEqual(configAtStart, [config.extensionCatalog?.enabled, config.extensionCatalog?.enabled]);
       assert.equal(loadConfig().extensionCatalog?.enabled, true);
+      if (multiUser) {
+        assert.ok(loadConfig().agents.some((agent) => agent.id === "scribe"));
+        await stopCurrentExtensions();
+      }
     } finally {
       clearInterval(timer);
     }
@@ -235,16 +291,37 @@ switch (mode) {
     assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0"]);
     break;
   }
+  case "double-rename":
   case "rename": {
+    if (mode === "double-rename") {
+      fixture = fixtureRelease(base, "1.0.0", { id: "dependent", dependencies: ["sample"] });
+      await refresh();
+      await install(200, "dependent");
+      await call("GET", "/api/dependent", 200);
+    }
     fixture = fixtureRelease(base, "2.0.0");
     await refresh();
     const rename = fs.rename;
     fs.rename = async (from, to) => {
       if (String(from).startsWith(path.join(root, ".staging") + path.sep) && to === target) throw new Error("Staging rename failed.");
+      if (mode === "double-rename" && String(from).startsWith(path.join(root, ".trash") + path.sep) && to === target) {
+        throw new Error("Backup rename failed.");
+      }
       return rename(from, to);
     };
-    try { assert.match(await install(409), /Staging rename failed/); }
+    try { assert.equal(JSON.parse(await install(409)).error, "Staging rename failed."); }
     finally { fs.rename = rename; }
+    if (mode === "double-rename") {
+      const backups = await fs.readdir(path.join(root, ".trash"));
+      assert.equal(backups.length, 1);
+      assert.deepEqual(await snapshot(path.join(root, ".trash", backups[0])), firstFiles);
+      await answer(404);
+      await call("GET", "/api/dependent", 404);
+      assert.ok(!await getExtensionRuntime().getTool(config.agents[0], "sample_version", config));
+      assert.equal(getOAuthProvider("sampleProvider"), undefined);
+      assert.deepEqual(hooks.slice(-2), ["dependent stop 1.0.0", "sample stop 1.0.0"]);
+      break;
+    }
     assert.deepEqual(await snapshot(target), firstFiles);
     assert.equal(await answer(), "1.0.0");
     assert.deepEqual(hooks, ["sample start 1.0.0 1.0.0"]);

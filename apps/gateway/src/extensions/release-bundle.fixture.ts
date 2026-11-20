@@ -21,13 +21,14 @@ export function packFixture(files: Record<string, string>, types: Record<string,
   return gzipSync(Buffer.concat([...chunks, Buffer.alloc(1024)]));
 }
 
-export function fixtureRelease(base: string, version: string, options: { id?: string; dependencies?: string[]; failStart?: boolean; failConfig?: boolean; failStop?: boolean; failReload?: boolean; oauthTokenUrl?: string; providerId?: string } = {}) {
+export function fixtureRelease(base: string, version: string, options: { id?: string; dependencies?: string[]; failStart?: boolean; failConfig?: boolean; failStop?: boolean; failReload?: boolean; writeOnStart?: boolean; oauthTokenUrl?: string; providerId?: string } = {}) {
   const id = options.id ?? "sample";
   const metadata = { id, name: "Sample Extension", description: "A local fixture.", tagline: "Read a sample", category: "developer", version, minYoplai: "0.11.0" };
   const bundle = packFixture({
     "manifest.json": JSON.stringify({ ...metadata, entry: "index.js", icon: null }),
     "LICENSE": version,
     "index.js": `
+      import assert from "node:assert/strict";
       import { readFileSync } from "node:fs";
       export default {
         id: ${JSON.stringify(id)}, displayName: "Sample Extension", description: "A local fixture.", dependencies: ${JSON.stringify(options.dependencies ?? [])},
@@ -45,9 +46,10 @@ export function fixtureRelease(base: string, version: string, options: { id?: st
         ${options.oauthTokenUrl ? `oauthProviders: [{ id: ${JSON.stringify(options.providerId ?? "sampleProvider")}, displayName: "Sample", authorizeUrl: "https://example.test/authorize", tokenUrl: ${JSON.stringify(options.oauthTokenUrl)}, defaultScopes: [] }],` : ""}
         ${options.failReload ? 'onConfigReload: async () => { throw new Error("Reload rejected."); },' : ""}
         capabilities: () => [],
-        start: async () => {
+        start: async (ctx) => {
           const sibling = readFileSync(new URL("LICENSE", import.meta.url), "utf8");
           console.log(${JSON.stringify(id + " start")}, ${JSON.stringify(version)}, sibling);
+          ${options.writeOnStart ? 'await assert.rejects(ctx.updateAgentExtensionConfig("fixture", "sample", { enabled: false }), /Cannot change config during an extension operation/);' : ""}
           ${options.failStart ? 'throw new Error("Start rejected.");' : ""}
         },
         stop: async () => {
