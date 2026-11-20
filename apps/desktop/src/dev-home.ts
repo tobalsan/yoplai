@@ -1,9 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseEnv } from "node:util";
-import { CONFIG_NAMES, expandHomePath, SEED_CONFIG, seedHome } from "./packaged-env.js";
+import { CONFIG_NAMES, expandHomePath, SEED_CONFIG, seedHome, seedOAuthKeyFile } from "./packaged-env.js";
 
 export interface DevHome {
   mode: "fresh" | "persistent";
@@ -25,15 +24,6 @@ export function createDevHome(env: NodeJS.ProcessEnv, args: string[], appData: s
   return { mode: "persistent", home, userHome, userData: path.join(appData, "Yoplai Dev", key) };
 }
 
-function readEnvFile(file: string): Buffer | undefined {
-  try {
-    return fs.readFileSync(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return undefined;
-  }
-}
-
 export function seedDevHome({ home, mode }: DevHome, env: NodeJS.ProcessEnv, warn = console.warn): string | undefined {
   if (mode === "fresh") {
     seedHome(home);
@@ -48,15 +38,7 @@ export function seedDevHome({ home, mode }: DevHome, env: NodeJS.ProcessEnv, war
     throw error;
   }
 
-  const envPath = path.join(home, ".env");
-  const original = readEnvFile(envPath);
-  const values = original ? parseEnv(original.toString("utf8")) : {};
-  if (env.OAUTH_ENCRYPTION_KEY === undefined && !Object.hasOwn(values, "OAUTH_ENCRYPTION_KEY")) {
-    const key = randomBytes(32).toString("base64url");
-    const separator = original?.length && original.at(-1) !== 10 ? "\n" : "";
-    fs.appendFileSync(envPath, `${separator}OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });
-    values.OAUTH_ENCRYPTION_KEY = key;
-  }
+  const values = seedOAuthKeyFile(home, env.OAUTH_ENCRYPTION_KEY);
 
   if (!configPath) {
     fs.writeFileSync(path.join(home, CONFIG_NAMES[0]), `${JSON.stringify(SEED_CONFIG, null, 2)}\n`, { flag: "wx" });
