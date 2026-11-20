@@ -24,11 +24,18 @@ function farthestEyePoint(): { reach: number; radius: number } {
   const [, x, y] = /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(svg.querySelector("g")!.getAttribute("transform")!)!.map(Number);
   let reach = 0;
   for (const eye of svg.querySelectorAll("ellipse")) {
-    const [cx, rx, ry] = ["cx", "rx", "ry"].map((name) => Number(eye.getAttribute(name)));
-    for (let point = 0; point < Math.PI * 2; point += .05) reach = Math.max(reach, Math.hypot(x + cx + rx * Math.cos(point), y + ry * Math.sin(point)));
+    const [cx, cy, rx, ry] = ["cx", "cy", "rx", "ry"].map((name) => Number(eye.getAttribute(name)));
+    for (let point = 0; point < Math.PI * 2; point += .05) reach = Math.max(reach, Math.hypot(x + cx + rx * Math.cos(point), y + cy + ry * Math.sin(point)));
   }
   return { reach, radius };
 }
+
+it("detects a rendered eye shifted outside the circle vertically", () => {
+  dispose = render(() => <AgentMark />, root);
+  root.querySelector("ellipse")!.setAttribute("cy", "100");
+  const { reach, radius } = farthestEyePoint();
+  expect(reach).toBeGreaterThan(radius);
+});
 
 it("keeps both rendered eyes inside the circle for near and far pointer positions", () => {
   dispose = render(() => <AgentMark />, root);
