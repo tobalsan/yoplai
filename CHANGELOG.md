@@ -93,6 +93,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Gateway startup and shutdown now remove only the agent containers launched from their own home (labelled `yoplai.agent.home`), so a second gateway on the same Docker daemon keeps its containers. Containers left by older gateways are no longer reaped.
+- Switching a running gateway to multi-user mode disables gateway linking and access to desktop CLI credentials without requiring a restart.
 - The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
 
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.

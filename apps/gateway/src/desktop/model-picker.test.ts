@@ -12,6 +12,8 @@ beforeEach(async () => {
   home = path.join(root, "yoplai");
   await fs.mkdir(home);
   stubDesktopTestEnv(root, home);
+  const { configureRelay } = await import("../relay/state.js");
+  configureRelay("127.0.0.1", false);
 });
 afterEach(async () => {
   vi.unstubAllGlobals();
