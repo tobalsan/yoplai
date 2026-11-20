@@ -161,10 +161,28 @@ it("applies every refusal to every desktop route before it reads state", async (
       headers: { host: "127.0.0.1:4000", "x-forwarded-for": "127.0.0.1, ::ffff:127.0.0.1", forwarded: 'for="[::ffff:127.0.0.1]:4000", for="[::1]:4000"' },
     }, { incoming: { socket: { remoteAddress: "::ffff:127.0.0.1" } } });
     expect(allowed.status).toBe(200);
-    expect(logged.mock.calls.filter(([line]) => String(line).includes("/api/model-access")).every(([line]) => !String(line).includes("fake-secret-for-log-test"))).toBe(true);
+    const modelLogs = logged.mock.calls.map(([line]) => String(line)).filter((line) => line.includes("/api/model-access"));
+    expect(modelLogs).toEqual(expect.arrayContaining([expect.stringContaining("/api/model-access/[redacted]")]));
+    expect(modelLogs.join("\n")).not.toContain("fake-secret-for-log-test");
     await expect(fs.access(path.join(configHome, "auth.json"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     logged.mockRestore();
+  }
+});
+
+it("redacts an encoded model-access target from the emitted access log", async () => {
+  const { Hono } = await import("hono");
+  const { accessLogger } = await import("../server/access-log.js");
+  const app = new Hono();
+  app.use(accessLogger());
+  const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  try {
+    const response = await app.request("/api/%6dodel-access/oauth/attempts/fixture-handle?other=fixture-query");
+    expect(response.status).toBe(404);
+    expect(log.mock.calls).toEqual([[expect.stringMatching(/^--> GET \/api\/model-access\/\[redacted\] 404 /)]]);
+    expect(JSON.stringify(log.mock.calls)).not.toMatch(/fixture-handle|fixture-query/);
+  } finally {
+    log.mockRestore();
   }
 });
 

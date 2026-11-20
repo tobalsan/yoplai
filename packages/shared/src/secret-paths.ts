@@ -65,6 +65,17 @@ export function ownsRedactedPath(pathname: string, namespace: string): boolean {
   return false;
 }
 
+/** Replaces the whole secret-bearing request target, including its query. */
+export function redactedTarget(target: string | undefined): string | undefined {
+  const pathname = target?.split(/[?#]/, 1)[0] ?? "/";
+  for (const namespace of ["/api/model-access", DASHBOARD_VIEW_NAMESPACE, LINK_NAMESPACE, REMOTE_LINK_NAMESPACE]) {
+    if (ownsRedactedPath(pathname, namespace) || (namespace === DASHBOARD_VIEW_NAMESPACE && ownsDashboardViewPath(pathname))) {
+      return `${namespace}/[redacted]`;
+    }
+  }
+  return undefined;
+}
+
 /** Broad redaction test of the remote link namespace. */
 export function ownsRemoteLinkPath(pathname: string): boolean {
   return ownsRedactedPath(pathname, REMOTE_LINK_NAMESPACE);
