@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Hono } from "hono";
 import path from "node:path";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
@@ -447,7 +448,8 @@ type ExtensionActivator = (extension: Extension) => Promise<void>;
 let activateExtension: ExtensionActivator | undefined;
 let buildApi: ((extensions: Extension[]) => Hono) | undefined;
 let innerApi: Hono | undefined;
-let mutation: Promise<unknown> | undefined;
+let mutation: { done: Promise<unknown> } | undefined;
+const mutationOwner = new AsyncLocalStorage<typeof mutation>();
 
 export function setExtensionActivator(
   activator: ExtensionActivator,
@@ -469,15 +471,22 @@ export class ExtensionOperationBusyError extends Error {
   }
 }
 
+export function assertOutsideExtensionMutation(): void {
+  if (mutation && mutationOwner.getStore() === mutation) {
+    throw new Error("Cannot change config during an extension operation from the same call.");
+  }
+}
+
 export async function withExtensionMutation<T>(run: () => Promise<T>, wait = false): Promise<T> {
   while (mutation) {
     if (!wait) throw new ExtensionOperationBusyError();
-    await mutation.catch(() => undefined);
+    assertOutsideExtensionMutation();
+    await mutation.done.catch(() => undefined);
   }
-  const next = Promise.resolve().then(run);
+  const next: { done: Promise<T> } = { done: Promise.resolve().then(() => mutationOwner.run(next, run)) };
   mutation = next;
   try {
-    return await next;
+    return await next.done;
   } finally {
     if (mutation === next) mutation = undefined;
   }

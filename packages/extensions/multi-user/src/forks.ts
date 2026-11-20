@@ -53,8 +53,6 @@ export type ForkStoreDeps = {
   getPoolAgent(poolId: string): PoolAgentRef | null;
   /** Absolute directory the fork folders live in (covered by the agents glob). */
   getForksDir(): string;
-  /** Re-run agent discovery so a freshly copied fork becomes runnable. */
-  reloadConfig?(): void;
 };
 
 /** Thrown when assigning a pool id that does not resolve to a pool agent. */
@@ -142,7 +140,7 @@ function rewriteAgentYamlId(agentYamlPath: string, forkId: string): void {
 }
 
 export function createForkStore(deps: ForkStoreDeps): ForkStore {
-  const { db, getPoolAgent, getForksDir, reloadConfig } = deps;
+  const { db, getPoolAgent, getForksDir } = deps;
 
   const getByPoolStatement = db.prepare(
     "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt, public FROM agent_forks WHERE sourcePoolId = ?"
@@ -215,11 +213,6 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
       fs.rmSync(destDir, { recursive: true, force: true });
       throw error;
     }
-
-    // Make the new fork discoverable through the agents glob immediately.
-    // Keep this outside rollback: once the row and complete folder exist the
-    // fork is durable, even if config reload itself reports another problem.
-    reloadConfig?.();
   }
 
   return {

@@ -685,9 +685,12 @@ The gateway caches the last catalog with its ETag. The catalog uses HTTPS, with 
 The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
 The install record at `<extensionsPath>/<id>/.install.json` marks a catalog install. The catalog does not replace or remove manual extensions.
 One lock protects catalog changes, file-based config reloads, and config reconciliation.
+New agent forks use the same lock to reload config. Independent reload requests wait for the lock.
+The gateway refuses a config write from its own extension hook before it changes the file.
 The gateway publishes new routes and OAuth providers without a restart.
 If reconciliation or a reload hook fails, the gateway restores the files before it restarts the old objects.
-If file recovery fails, the gateway keeps the backup and excludes the affected extension from the runtime.
+If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.
+The catalog reports the first error if the move of the new bundle and the backup restore both fail.
 An active run can still hold an old tool.
 The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
 Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.

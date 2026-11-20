@@ -185,7 +185,6 @@ export const multiUserExtension: Extension = {
           workspaceDir: match.workspaceDir ?? match.workspace ?? "",
         };
       },
-      reloadConfig: () => ctx.reloadConfig(),
     });
     // teams needs a fork lookup so deleteTeam can name soon-to-be-teamless
     // forks; forks has no dependency on teams, so construct it first.
@@ -222,6 +221,7 @@ export const multiUserExtension: Extension = {
       getPoolAgentIds: () =>
         (ctx.getConfig().pool ?? []).map((agent) => agent.id),
       getAgent: ctx.getAgent,
+      reloadConfig: () => ctx.reloadConfig(),
       notifyAgentListChanged: ctx.notifyAgentListChanged,
       audit: ctx.audit,
       logger: ctx.logger,

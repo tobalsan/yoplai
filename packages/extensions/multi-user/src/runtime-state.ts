@@ -27,6 +27,7 @@ export type MultiUserRuntime = {
   /** Set after crash recovery ran. Absent in a runtime that never started the link service. */
   gatewayLinks?: GatewayLinkService;
   getAgent: ExtensionContext["getAgent"];
+  reloadConfig?: ExtensionContext["reloadConfig"];
   notifyAgentListChanged: ExtensionContext["notifyAgentListChanged"];
   logger: ExtensionLogger;
   audit?: ExtensionContext["audit"];

@@ -1637,7 +1637,7 @@ export interface ExtensionContext {
   // Config
   getConfig(): GatewayConfig;
   getDataDir(): string;
-  reloadConfig(): void;
+  reloadConfig(): void | Promise<void>;
   notifyAgentListChanged?(): void;
 
   // Agent access
