@@ -71,7 +71,7 @@ export function createFirstChat(input: {
   const retry = async () => {
     const first = pending();
     if (!first || !setup || !failure()) return;
-    await setup.refresh();
+    if (!await setup.refresh()) return;
     const latest = setup.state()?.firstChat;
     if (setup.state()?.completed || latest?.agentId !== first.agentId || latest.sessionId !== first.sessionId || latest.turnId !== first.turnId) return;
     if (failure() === "none") {

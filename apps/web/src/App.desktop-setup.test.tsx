@@ -806,6 +806,24 @@ it("resends an unclaimed greeting with its original ID after a connection error"
   expect(setupWrites).toHaveLength(0);
 });
 
+it("does not resend a superseded greeting when the setup refresh fails", async () => {
+  enableGreetingSocket();
+  GreetingSocket.failConnect = true;
+  wizardExited = true; firstChat = oldChat;
+  overrides = (path, method) => {
+    if (path.includes("desktop-setup/turns/")) return response({ state: "none" });
+    if (path === "/api/desktop-setup" && method === "GET" && setupReads > 0) return response({ error: "boom" }, 500);
+  };
+  boot("/chat/alpha?session=old-session");
+  await findByRole(root, "button", { name: "Try again" }, { timeout: 3000 });
+  GreetingSocket.failConnect = false;
+  firstChat = { ...oldChat, turnId: "other-turn" };
+  await click("Try again");
+  await findByRole(root, "button", { name: "Retry setup refresh" });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(GreetingSocket.wires).toHaveLength(0);
+});
+
 it("does not retry when the failed first chat is no longer current", async () => {
   enableGreetingSocket();
   wizardExited = true; firstChat = oldChat;
