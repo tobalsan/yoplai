@@ -677,6 +677,9 @@ See [orchestrator README](../packages/extensions/orchestrator/README.md) for `WO
 
 Routes are composed from core plus enabled extensions. Exact route definitions and shared schemas are source of truth.
 
+External extension discovery skips dot folders. It uses the install digest for catalog bundles and the file time and size for manual extensions.
+Manual extensions with multiple files still need a restart after a rebuild.
+
 Access logs emit one completion line. Fast successful GETs for health, session polling/history, chat-project lists/details, skill lists/details (except import-token and recipients), and static assets are quiet; status >= 300 or elapsed > 500 ms still logs. Nested metadata routes and session search remain logged.
 
 - **Core agents:** `/api/agents`, status, messages, history, sessions, extension catalog/config. `GET /api/agents/sessions/search?q=words` shares the sidebar's filename-based enumeration and reads each candidate once for its summary and match. It returns `{ items }` (summaries with avatar plus `match: "title" | "content"`, optional snippet), excludes archived chats, and searches the caller's visible-agent interactive sessions including chat Projects. Case-insensitive substring words must all occur across the shown label (`title || firstUserMessage || sessionId`) and user/assistant text; tool/thinking/system content is excluded. Title matches precede content matches, newest first within each group, capped at 50; blank input returns no items. No index/cache; search remains access-logged.

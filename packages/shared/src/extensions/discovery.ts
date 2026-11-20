@@ -1,6 +1,7 @@
-import { access, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { readInstallRecord, type InstallRecord } from "./install-record.js";
 import type { Extension } from "../types.js";
 import { ExtensionDefinitionSchema } from "../types.js";
 
@@ -8,6 +9,9 @@ export type DiscoveredExtension = {
   id: string;
   extension: Extension;
   path: string;
+  key: string;
+  managed: "catalog" | "manual";
+  install?: InstallRecord;
 };
 
 export async function discoverExternalExtensions(
@@ -24,6 +28,7 @@ export async function discoverExternalExtensions(
   }
 
   for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
     const entryPath = path.join(directoryPath, entry.name);
     const isDirectory =
       entry.isDirectory() ||
@@ -36,8 +41,9 @@ export async function discoverExternalExtensions(
     if (!isDirectory) continue;
 
     const indexPath = path.join(entryPath, "index.js");
+    let indexStat;
     try {
-      await access(indexPath);
+      indexStat = await stat(indexPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       console.warn(
@@ -49,21 +55,10 @@ export async function discoverExternalExtensions(
     }
 
     try {
-      const module = await import(pathToFileURL(indexPath).href);
-      const raw = module.default ?? module;
-      const result = ExtensionDefinitionSchema.safeParse(raw);
-
-      if (!result.success) {
-        console.warn(
-          `Invalid extension at ${entryPath}: ${result.error.issues
-            .map((i) => i.message)
-            .join(", ")}`
-        );
-        continue;
-      }
-
-      const extension = raw as Extension;
-      discovered.push({ id: extension.id, extension, path: entryPath });
+      const install = entry.isDirectory() ? await readInstallRecord(entryPath) : undefined;
+      const key = install?.sha256 ?? `${indexStat.mtimeMs}-${indexStat.size}`;
+      const extension = await importExternalExtension(indexPath, key);
+      discovered.push({ id: extension.id, extension, path: entryPath, key, managed: install ? "catalog" : "manual", ...(install && { install }) });
     } catch (error) {
       console.warn(
         `Failed to load extension at ${entryPath}: ${
@@ -74,4 +69,16 @@ export async function discoverExternalExtensions(
   }
 
   return discovered;
+}
+
+export async function importExternalExtension(indexPath: string, key: string): Promise<Extension> {
+  const url = pathToFileURL(indexPath);
+  url.searchParams.set("v", key);
+  const module = await import(url.href);
+  const raw = module.default ?? module;
+  const result = ExtensionDefinitionSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(`Invalid extension: ${result.error.issues.map((issue) => issue.message).join(", ")}`);
+  }
+  return raw as Extension;
 }

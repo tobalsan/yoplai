@@ -15,6 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- External extension discovery ignores work folders and uses versioned imports.
+
 - The macOS release has a Developer ID signature and an Apple notarization ticket.
 - The desktop app shows a splash while the gateway starts. Use the app menu to turn the splash off.
 - Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload. A different first chat clears completion. A stale tab refreshes setup without checking its old turn again.

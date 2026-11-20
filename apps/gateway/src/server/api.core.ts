@@ -1733,7 +1733,14 @@ api.get("/media/allowed-types", (c) => {
   return c.json({ types: getAllowedMimeTypes() });
 });
 
-export { api };
+export { api, api as coreApi };
+
+export function buildInnerApi(extensions: { registerRoutes: (app: Hono) => void }[]): Hono {
+  const app = new Hono();
+  app.route("/", api);
+  for (const extension of extensions) extension.registerRoutes(app);
+  return app;
+}
 
 api.route("/dashboards", createDashboardResourceRoutes({
   getConfig: loadConfig, getAgent,
