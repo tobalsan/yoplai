@@ -172,8 +172,8 @@ export default function AdminMcpServersPage() {
     >
       <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
       <Show when={missing()}>{(selection) => <p class="mcps-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
-      <Show when={gateway() !== undefined && requester().ready && requester().unknown}>
-        <RequesterFailure requester={requester} class="mcps-error">Could not read your permissions on {gateway()}. The controls stay off.</RequesterFailure>
+      <Show when={requester().ready && requester().unknown}>
+        <RequesterFailure requester={requester} class="mcps-error">Could not read your permissions on {gateway() ?? "this gateway"}. The controls stay off.</RequesterFailure>
       </Show>
       <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
         <p class="mcps-empty" role="status">Only the superadmin of {gateway()} can change this catalog.</p>

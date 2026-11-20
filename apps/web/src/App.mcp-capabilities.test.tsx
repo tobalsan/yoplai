@@ -8,19 +8,21 @@ import { resetCapabilitiesForTests } from "./lib/capabilities";
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let installed: boolean;
+let capabilitiesFail: boolean;
 const response = (body: unknown, status = 200) => Response.json(body, { status });
 const row = () => ({ id: "mcp", name: "MCP", category: "tools", usedByAgents: 0, state: installed ? "installed" : "available", version: "1.0.0", installedVersion: installed ? "1.0.0" : undefined });
 
 beforeEach(() => {
   localStorage.clear(); sessionStorage.clear();
   installed = false;
+  capabilitiesFail = false;
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.origin).pathname;
     const method = init?.method ?? "GET";
-    if (path === "/api/capabilities") return response({ version: 2, multiUser: false, extensions: { mcp: installed }, agents: [] });
+    if (path === "/api/capabilities") return capabilitiesFail ? response({}, 500) :  response({ version: 2, multiUser: false, extensions: { mcp: installed }, agents: [] });
     if (path === "/api/admin/extension-catalog") return response({ source: "fixture", fetchedAt: null, stale: false, entries: [row()] });
     if (path === "/api/admin/extension-catalog/mcp/install" && method === "POST") { installed = true; return response(row()); }
     if (path === "/api/admin/extension-catalog/mcp" && method === "DELETE") { installed = false; return new Response(null, { status: 204 }); }
@@ -52,4 +54,18 @@ it("shows the MCP controls after an install and hides them after a removal, in o
   go("/admin/mcp-servers");
   await vi.waitFor(() => expect(queryByRole(root, "status")?.textContent).toContain("not installed"));
   expect(root.querySelector('[aria-label="Server URL"]')).toBeNull();
+});
+
+it("keeps a failed local capability read a failure with Retry, not 'not installed'", async () => {
+  installed = true;
+  capabilitiesFail = true;
+  history.replaceState({}, "", "/admin/mcp-servers");
+  dispose = render(() => <App />, root);
+  await findByRole(root, "button", { name: "Retry" });
+  expect(queryByRole(root, "status")?.textContent ?? "").not.toContain("not installed");
+  expect(root.querySelector('[aria-label="Server URL"]')).toBeNull();
+  capabilitiesFail = false;
+  fireEvent.click(getByRole(root, "button", { name: "Retry" }));
+  await vi.waitFor(() => expect(root.querySelector('[aria-label="Server URL"]')).not.toBeNull());
+  expect(queryByRole(root, "button", { name: "Retry" })).toBeNull();
 });
