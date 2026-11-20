@@ -36,7 +36,39 @@ export function materializeOAuthProvider(
   };
 }
 
-const PROVIDER_REGISTRY = new Map<string, OAuthProviderDescriptor>();
+const explicitProviders = new Map<string, OAuthProviderDescriptor>();
+type OAuthProviderState = {
+  descriptors: Map<string, OAuthProviderDescriptor>;
+  owners: Map<string, Set<string>>;
+};
+let providerState: OAuthProviderState = { descriptors: new Map(), owners: new Map() };
+
+export function buildOAuthProviderState(extensions: { id: string; oauthProviders?: OAuthProviderDescriptor[] }[]): OAuthProviderState {
+  const descriptors = new Map(explicitProviders);
+  const owners = new Map<string, Set<string>>();
+  for (const extension of extensions) {
+    for (const provider of extension.oauthProviders ?? []) {
+      const existing = descriptors.get(provider.id);
+      if (existing && describeProviderIdentity(existing) !== describeProviderIdentity(provider)) {
+        const owner = owners.get(provider.id)?.values().next().value;
+        throw new Error(owner
+          ? `OAuth provider ${provider.id} conflicts between ${owner} and ${extension.id}`
+          : `OAuth provider ${provider.id} has a conflicting descriptor`);
+      }
+      if (!existing) descriptors.set(provider.id, provider);
+      const set = owners.get(provider.id) ?? new Set<string>();
+      set.add(extension.id);
+      owners.set(provider.id, set);
+    }
+  }
+  return { descriptors, owners };
+}
+
+export function replaceOAuthProviderState(next: OAuthProviderState): OAuthProviderState {
+  const previous = providerState;
+  providerState = next;
+  return previous;
+}
 
 function describeProviderIdentity(provider: OAuthProviderDescriptor): string {
   return JSON.stringify([
@@ -59,9 +91,10 @@ function describeProviderIdentity(provider: OAuthProviderDescriptor): string {
  * descriptor under an already-registered id throws.
  */
 export function registerOAuthProvider(provider: OAuthProviderDescriptor): void {
-  const existing = PROVIDER_REGISTRY.get(provider.id);
+  const existing = providerState.descriptors.get(provider.id);
   if (!existing) {
-    PROVIDER_REGISTRY.set(provider.id, provider);
+    explicitProviders.set(provider.id, provider);
+    providerState.descriptors.set(provider.id, provider);
     return;
   }
   if (
@@ -81,7 +114,7 @@ export function registerOAuthProvider(provider: OAuthProviderDescriptor): void {
 export function registerOAuthProviders(providers: OAuthProviderDescriptor[]): void {
   const pending = new Map<string, OAuthProviderDescriptor>();
   for (const provider of providers) {
-    const existing = PROVIDER_REGISTRY.get(provider.id) ?? pending.get(provider.id);
+    const existing = providerState.descriptors.get(provider.id) ?? pending.get(provider.id);
     if (
       existing &&
       existing !== provider &&
@@ -98,15 +131,16 @@ export function registerOAuthProviders(providers: OAuthProviderDescriptor[]): vo
 
 /** Clear all registered descriptors (tests only). */
 export function resetOAuthProviders(): void {
-  PROVIDER_REGISTRY.clear();
+  explicitProviders.clear();
+  replaceOAuthProviderState({ descriptors: new Map(), owners: new Map() });
 }
 
 export function getOAuthProvider(
   id: string
 ): OAuthProviderDescriptor | undefined {
-  return PROVIDER_REGISTRY.get(id);
+  return providerState.descriptors.get(id);
 }
 
 export function listOAuthProviders(): OAuthProviderDescriptor[] {
-  return [...PROVIDER_REGISTRY.values()];
+  return [...providerState.descriptors.values()];
 }

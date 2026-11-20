@@ -33,7 +33,11 @@ vi.mock("../server/index.js", () => ({
 }));
 
 vi.mock("../server/api.core.js", () => ({
-  api: {},
+  buildInnerApi: (extensions: { registerRoutes: (app: object) => void }[]) => {
+    const app = {};
+    for (const extension of extensions) extension.registerRoutes(app);
+    return app;
+  },
 }));
 
 vi.mock("../extensions/registry.js", () => ({

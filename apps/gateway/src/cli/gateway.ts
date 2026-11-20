@@ -8,7 +8,7 @@ import {
 import { startServer } from "../server/index.js";
 import { initializeDashboardRegistry } from "../canvas/migration.js";
 import { CONFIG_DIR } from "../config/index.js";
-import { api } from "../server/api.core.js";
+import { buildInnerApi } from "../server/api.core.js";
 import {
   getExtensionRuntime,
   loadExtensions,
@@ -70,9 +70,7 @@ export async function startGatewayCommand(
     process.env.YOPLAI_DEV = "1";
   }
 
-  for (const extension of extensions) {
-    extension.registerRoutes(api);
-  }
+  const innerApi = buildInnerApi(extensions);
 
   const port = opts.port ? parseInt(opts.port, 10) : undefined;
   const actualPort = port ?? config.gateway?.port ?? 4000;
@@ -105,9 +103,8 @@ export async function startGatewayCommand(
   // Allow extensions enabled at runtime (via the per-agent PATCH endpoint or a
   // config-file edit) to be brought online without a restart.
   setExtensionActivator(async (extension) => {
-    extension.registerRoutes(api);
     await extension.start(bindExtensionContext(extensionContext, extension.id));
-  });
+  }, buildInnerApi, innerApi);
 
   startServer(port, opts.host, extensionRuntime);
   startGatewayHotReload(runtimeConfig, {

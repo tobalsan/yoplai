@@ -8,8 +8,7 @@ import { reloadExtensions } from "./registry.js";
  *
  * This clears the config cache, so the next run and the next catalog read see
  * the change. It also brings a newly enabled extension online without a
- * gateway restart (ALG-349). It only adds extensions that are not loaded. It
- * never restarts running ones.
+ * gateway restart (ALG-349). It reconciles the extension set under the same lock as catalog changes.
  */
 export async function reloadAfterExtensionWrite(): Promise<GatewayConfig> {
   const rawReloaded = reloadConfig();

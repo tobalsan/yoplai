@@ -1,9 +1,10 @@
+import type { Hono } from "hono";
 import path from "node:path";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
-import { discoverExternalExtensions, readEnv } from "@yoplai/shared";
+import { buildOAuthProviderState, discoverExternalExtensions, readEnv, replaceOAuthProviderState } from "@yoplai/shared";
 import { CONFIG_DIR } from "../config/index.js";
 import { logError, logWarn } from "../logging.js";
-import { ExtensionRuntime, registerExtensionOAuthProviders } from "./runtime.js";
+import { ExtensionRuntime } from "./runtime.js";
 import { taskLifecycleExtension } from "../tasks/extension.js";
 import { capabilityDiscoveryExtension } from "../capabilities/extension.js";
 import { canvasExtension } from "../canvas/index.js";
@@ -442,17 +443,56 @@ export function topoSort(extensions: Extension[]): Extension[] {
   return ordered;
 }
 
-/**
- * Activates a not-yet-loaded extension into the running gateway: registers its
- * routes and starts it. Wired once at startup (see cli/gateway.ts) so the
- * registry can bring extensions online without importing the server/context
- * modules (which would be a circular import). Undefined until wired.
- */
 type ExtensionActivator = (extension: Extension) => Promise<void>;
 let activateExtension: ExtensionActivator | undefined;
+let buildApi: ((extensions: Extension[]) => Hono) | undefined;
+let innerApi: Hono | undefined;
+let mutation: Promise<unknown> | undefined;
 
-export function setExtensionActivator(activator: ExtensionActivator): void {
+export function setExtensionActivator(
+  activator: ExtensionActivator,
+  builder?: (extensions: Extension[]) => Hono,
+  initialApp?: Hono
+): void {
   activateExtension = activator;
+  buildApi = builder;
+  innerApi = initialApp;
+}
+
+export function getCurrentInnerApi(): Hono | undefined {
+  return innerApi;
+}
+
+export class ExtensionOperationBusyError extends Error {
+  constructor() {
+    super("Another extension operation is running.");
+  }
+}
+
+export async function withExtensionMutation<T>(run: () => Promise<T>, wait = false): Promise<T> {
+  while (mutation) {
+    if (!wait) throw new ExtensionOperationBusyError();
+    await mutation.catch(() => undefined);
+  }
+  const next = Promise.resolve().then(run);
+  mutation = next;
+  try {
+    return await next;
+  } finally {
+    if (mutation === next) mutation = undefined;
+  }
+}
+
+const coreExtensions: Extension[] = [
+  taskLifecycleExtension,
+  capabilityDiscoveryExtension,
+  canvasExtension,
+  sessionHistoryExtension,
+  deviceToolsExtension,
+];
+
+export function reservedExtensionIds(): string[] {
+  return [...Object.keys(EXTENSION_REGISTRY), ...coreExtensions.map((extension) => extension.id)];
 }
 
 /**
@@ -462,13 +502,7 @@ export function setExtensionActivator(activator: ExtensionActivator): void {
 async function deriveExtensionsToLoad(
   config: GatewayConfig
 ): Promise<{ extensions: Extension[]; homeExtensionId: string | undefined }> {
-  const extensions: Extension[] = [
-    taskLifecycleExtension,
-    capabilityDiscoveryExtension,
-    canvasExtension,
-    sessionHistoryExtension,
-    deviceToolsExtension,
-  ];
+  const extensions = [...coreExtensions];
   const rawConfigs = new Map<string, Record<string, unknown>>();
   const unavailableOptionalExtensions = new Set<string>();
 
@@ -608,63 +642,81 @@ export async function loadExtensions(
   config: GatewayConfig
 ): Promise<Extension[]> {
   const { extensions, homeExtensionId } = await deriveExtensionsToLoad(config);
-  extensionRuntime.load(extensions, homeExtensionId);
+  replaceOAuthProviderState(buildOAuthProviderState(extensions));
+  extensionRuntime.publish(extensions, homeExtensionId);
   return extensionRuntime.getLoadedExtensions();
 }
 
-/**
- * Reconcile the running extension set against the current config WITHOUT a
- * restart. Only ever ADDS: extensions that the config now wants but that were
- * not loaded at startup are activated (routes registered + started) and folded
- * into the runtime set. Already-loaded extensions are never re-started or
- * dropped, so this is safe to call on every per-agent enable / config change.
- * A no-op (aside from the derivation) when nothing new is needed.
- */
-export async function reloadExtensions(
-  config: GatewayConfig
+export function reloadExtensions(config: GatewayConfig): Promise<Extension[]> {
+  return withExtensionMutation(() => reconcileExternal(config), true);
+}
+
+export async function reconcileExternal(
+  config: GatewayConfig,
+  { restoreFiles }: { restoreFiles?: () => Promise<void> } = {}
 ): Promise<Extension[]> {
-  const { extensions: desired, homeExtensionId } =
-    await deriveExtensionsToLoad(config);
-
   const current = extensionRuntime.getLoadedExtensions();
-  const currentIds = new Set(current.map((extension) => extension.id));
-  const newlyNeeded = desired.filter(
-    (extension) => !currentIds.has(extension.id)
-  );
-  if (newlyNeeded.length === 0) {
-    await notifyConfigReload(current);
-    return current;
+  const previousHome = extensionRuntime.getHomeExtension();
+  const previousApi = innerApi;
+  let previousOAuth: ReturnType<typeof replaceOAuthProviderState> | undefined;
+  const stopping: Extension[] = [];
+  const starting: Extension[] = [];
+  const start = activateExtension;
+  try {
+    const { extensions, homeExtensionId } = await deriveExtensionsToLoad(config);
+    const wanted = new Set(extensions);
+    const running = new Set(current);
+    const added = extensions.filter((extension) => !running.has(extension));
+    const removed = current.filter((extension) => !wanted.has(extension));
+    const providers = buildOAuthProviderState(extensions);
+    if (!start && (added.length || removed.length)) {
+      if (restoreFiles) throw new Error("The gateway cannot load extensions at runtime.");
+      await notifyConfigReload(current);
+      return current;
+    }
+    const candidateApi = added.length || removed.length ? buildApi?.(extensions) : previousApi;
+    for (const extension of removed.reverse()) {
+      stopping.push(extension);
+      await extension.stop();
+    }
+    previousOAuth = replaceOAuthProviderState(providers);
+    if (start) {
+      for (const extension of added) {
+        starting.push(extension);
+        await start(extension);
+      }
+    }
+    extensionRuntime.publish(extensions, homeExtensionId);
+    innerApi = candidateApi;
+    await notifyConfigReload(extensions);
+    return extensionRuntime.getLoadedExtensions();
+  } catch (error) {
+    for (const extension of starting.reverse()) {
+      try { await extension.stop(); }
+      catch (failure) { logError(`Could not stop extension ${extension.id} during recovery`, failure); }
+    }
+    try { await restoreFiles?.(); }
+    catch (failure) { logError("Could not restore extension files", failure); }
+    if (previousOAuth) replaceOAuthProviderState(previousOAuth);
+    extensionRuntime.publish(current, previousHome);
+    innerApi = previousApi;
+    if (start) {
+      for (const extension of stopping.reverse()) {
+        try { await start(extension); }
+        catch (failure) { logError(`Could not start extension ${extension.id} during recovery`, failure); }
+      }
+    }
+    throw error;
   }
-  if (!activateExtension) {
-    console.warn(
-      `[extensions] cannot activate ${newlyNeeded
-        .map((extension) => `"${extension.id}"`)
-        .join(", ")} at runtime: no activator wired; restart required`
-    );
-    return current;
-  }
+}
 
-  // Preserve everything already running; append the new ones. Re-topo the
-  // union so newly added dependencies are ordered ahead of their dependents.
-  const merged = topoSort([...current, ...newlyNeeded]);
-  const newlyNeededIds = new Set(newlyNeeded.map((extension) => extension.id));
-
-  // Register OAuth descriptors first so a conflict aborts before any
-  // activation side effect and new providers are usable during start().
-  registerExtensionOAuthProviders(newlyNeeded);
-
-  // Activate (register routes + start) only the new extensions, in topo order.
-  for (const extension of merged) {
-    if (!newlyNeededIds.has(extension.id)) continue;
-    await activateExtension(extension);
-  }
-
-  extensionRuntime.load(
-    merged,
-    homeExtensionId ?? extensionRuntime.getHomeExtension()
-  );
-  await notifyConfigReload(merged);
-  return extensionRuntime.getLoadedExtensions();
+export function stopCurrentExtensions(): Promise<void> {
+  return withExtensionMutation(async () => {
+    for (const extension of extensionRuntime.getLoadedExtensions().reverse()) {
+      try { await extension.stop(); }
+      catch (error) { logError(`Could not stop extension ${extension.id}`, error); }
+    }
+  }, true);
 }
 
 export async function notifyConfigReload(extensions: Extension[]): Promise<void> {

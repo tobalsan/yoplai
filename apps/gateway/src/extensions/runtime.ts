@@ -199,13 +199,20 @@ export class ExtensionRuntime {
   #extensionIds = new Set<string>();
   #homeExtensionId: string | undefined;
   #routeMatchers: ExtensionRouteMatcher[];
+  #staticRouteMatchers: ExtensionRouteMatcher[];
 
   constructor(routeMetadata: ExtensionRouteMetadata[] = []) {
-    this.#routeMatchers = this.#buildRouteMatchers(routeMetadata);
+    this.#staticRouteMatchers = this.#buildRouteMatchers(routeMetadata);
+    this.#routeMatchers = [...this.#staticRouteMatchers];
   }
 
   load(extensions: Extension[], homeExtensionId?: string): Extension[] {
     registerExtensionOAuthProviders(extensions);
+    return this.publish(extensions, homeExtensionId);
+  }
+
+  publish(extensions: Extension[], homeExtensionId?: string): Extension[] {
+    this.#routeMatchers = [...this.#staticRouteMatchers];
     this.#mergeRouteMetadata(
       extensions.map((extension) => ({
         id: extension.id,

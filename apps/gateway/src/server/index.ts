@@ -22,7 +22,7 @@ import {
 } from "../agents/container.js";
 import { loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
-import { getExtensionRuntime } from "../extensions/registry.js";
+import { getCurrentInnerApi, getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
@@ -298,14 +298,14 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
 });
 
 app.all("/hooks/*", async (c) => {
   if (!currentExtensionRuntime().isEnabled("webhooks")) {
     return c.json({ error: "extension_disabled", extension: "webhooks" }, 404);
   }
-  return api.fetch(c.req.raw);
+  return (getCurrentInnerApi() ?? api).fetch(c.req.raw);
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
