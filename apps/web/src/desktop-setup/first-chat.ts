@@ -19,11 +19,13 @@ export function createFirstChat(input: {
     return !state?.completed && first && first.agentId === input.agentId() && first.sessionId === input.sessionId()
       ? first : undefined;
   }, undefined, { equals: (a, b) => a?.agentId === b?.agentId && a?.sessionId === b?.sessionId && a?.turnId === b?.turnId });
-  const [failed, setFailed] = createSignal(false);
+  const [failure, setFailure] = createSignal<"none" | "failed">();
+  const [attempt, setAttempt] = createSignal(0);
   const [readError, setReadError] = createSignal(false);
   createEffect(() => {
     const first = pending();
-    setFailed(false);
+    attempt();
+    setFailure(undefined);
     setReadError(false);
     if (!first || !setup) return;
     const address = [first.agentId, first.sessionId, first.turnId].map(encodeURIComponent).join("/");
@@ -49,7 +51,7 @@ export function createFirstChat(input: {
           return;
         }
         if (state === "failed" || (state === "none" && sendFailed)) {
-          setFailed(true);
+          setFailure(state);
           return;
         }
         if (state === "none" && !sent && input.ready()) {
@@ -68,10 +70,15 @@ export function createFirstChat(input: {
   });
   const retry = async () => {
     const first = pending();
-    if (!first || !setup || !failed()) return;
+    if (!first || !setup || !failure()) return;
     await setup.refresh();
     const latest = setup.state()?.firstChat;
     if (setup.state()?.completed || latest?.agentId !== first.agentId || latest.sessionId !== first.sessionId || latest.turnId !== first.turnId) return;
+    if (failure() === "none") {
+      setAttempt((n) => n + 1);
+      return;
+    }
+    if (failure() !== "failed") return;
     try {
       await setup.save({ firstChat: { ...first, turnId: crypto.randomUUID() }, retryOf: first.turnId }, () => pending()?.turnId === first.turnId);
     } catch (error) {
@@ -79,5 +86,5 @@ export function createFirstChat(input: {
       else setReadError(true);
     }
   };
-  return { retry, failed: () => !!pending() && failed(), readError: () => !!pending() && readError() };
+  return { retry, failed: () => !!pending() && !!failure(), readError: () => !!pending() && readError() };
 }

@@ -42,6 +42,7 @@ beforeEach(() => {
   vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("open", vi.fn());
   GreetingSocket.openSends = false;
+  GreetingSocket.failConnect = false;
   vi.stubGlobal("WebSocket", GreetingSocket);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.origin).pathname;
@@ -564,10 +565,15 @@ class GreetingSocket {
   static CONNECTING = 0;
   static wires: { socket: GreetingSocket; payload: Record<string, unknown> }[] = [];
   static openSends = true;
+  static failConnect = false;
   readyState = 0;
   onopen?: () => void;
+  onerror?: () => void;
   onmessage?: (event: { data: string }) => void;
-  constructor() { queueMicrotask(() => { if (GreetingSocket.openSends) this.open(); }); }
+  constructor() { queueMicrotask(() => {
+    if (GreetingSocket.failConnect) this.onerror?.();
+    else if (GreetingSocket.openSends) this.open();
+  }); }
   open() { if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); } }
   send(data: string) {
     const payload = JSON.parse(data);
@@ -727,10 +733,21 @@ it("does not show a raw error from the tagged socket", async () => {
 it("retries a failed first greeting with a fresh turn in the same session, and a reload never resends", async () => {
   enableGreetingSocket();
   wizardExited = true; firstChat = oldChat;
-  const failedTurns = new Set(["old-turn"]);
-  overrides = (path) => {
+  let answeredTurn: unknown = null;
+  let repaired = false;
+  overrides = (path, method, body) => {
     const turn = path.match(/desktop-setup\/turns\/alpha\/old-session\/(.+)$/)?.[1];
-    if (turn) return response({ state: failedTurns.has(turn) ? "failed" : "none" });
+    if (turn) return response({ state: turn === oldChat.turnId ? "failed" : turn === answeredTurn ? "answered" : "none" });
+    if (path === "/api/desktop-setup" && method === "PUT" && body.firstChat) {
+      const next = body.firstChat as typeof firstChat;
+      if (body.completed ? next?.turnId !== answeredTurn : body.retryOf !== oldChat.turnId || !repaired) {
+        return response({ error: body.completed ? "turn_conflict" : "retry_conflict" }, 409);
+      }
+    }
+    if (path.endsWith("/api-key") && method === "POST") {
+      repaired = body.key === "fake-replacement-key";
+      return response({ saved: true });
+    }
     if (path.endsWith("/history")) return response({ messages: [message("user", FIRST_GREETING, 1)] });
   };
   const path = "/chat/alpha?session=old-session";
@@ -741,12 +758,52 @@ it("retries a failed first greeting with a fresh turn in the same session, and a
   boot(path);
   await button("Try again");
   expect(GreetingSocket.wires).toHaveLength(0);
+  await click("Fix model access");
+  await heading("Choose a model provider");
+  await click("Add a key");
+  const form = await findByRole(root, "form", { name: "Add an API key" });
+  await click("Provider: Select a provider", form);
+  fireEvent.click(within(form).getByRole("option", { name: "OpenAI" }));
+  fireEvent.input(within(form).getByLabelText("API key"), { target: { value: "fake-replacement-key" } });
+  await click("Save key", form);
+  await waitFor(() => expect(repaired).toBe(true));
+  await click("Continue");
+  await waitFor(() => expect(location.pathname + location.search).toBe(path));
+  expect(GreetingSocket.wires).toHaveLength(0);
   await click("Try again");
   await waitFor(() => expect(GreetingSocket.wires).toHaveLength(1), { timeout: 2000 });
   expect(firstChat).toMatchObject({ agentId: "alpha", sessionId: "old-session" });
   expect(firstChat?.turnId).not.toBe("old-turn");
-  expect(GreetingSocket.wires[0].payload).toMatchObject({ ...firstChat, message: FIRST_GREETING });
+  const { payload, socket } = GreetingSocket.wires[0];
+  expect(payload).toMatchObject({ ...firstChat, message: FIRST_GREETING });
+  expect(setupWrites).toContainEqual({ firstChat, retryOf: oldChat.turnId });
   expect(completed).toBe(false);
+  answeredTurn = payload.turnId;
+  socket.receive({ type: "done", response: answer });
+  await waitFor(() => expect(completed).toBe(true), { timeout: 2000 });
+  expect(setupWrites.at(-1)).toEqual({ completed: true, firstChat: { ...oldChat, turnId: answeredTurn } });
+  expect(GreetingSocket.wires).toHaveLength(1);
+});
+
+it("resends an unclaimed greeting with its original ID after a connection error", async () => {
+  enableGreetingSocket();
+  GreetingSocket.failConnect = true;
+  wizardExited = true; firstChat = oldChat;
+  overrides = (path, method, body) => {
+    if (path.includes("desktop-setup/turns/")) return response({ state: "none" });
+    if (path === "/api/desktop-setup" && method === "PUT" && body.retryOf) {
+      return response({ error: "retry_conflict" }, 409);
+    }
+  };
+  boot("/chat/alpha?session=old-session");
+  await findByRole(root, "button", { name: "Try again" }, { timeout: 3000 });
+  expect(GreetingSocket.wires).toHaveLength(0);
+  GreetingSocket.failConnect = false;
+  await click("Try again");
+  await waitFor(() => expect(GreetingSocket.wires).toHaveLength(1), { timeout: 2000 });
+  expect(GreetingSocket.wires[0].payload).toMatchObject({ ...oldChat, message: FIRST_GREETING });
+  expect(firstChat).toEqual(oldChat);
+  expect(setupWrites).toHaveLength(0);
 });
 
 it("does not retry when the failed first chat is no longer current", async () => {
