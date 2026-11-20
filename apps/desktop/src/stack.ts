@@ -1,6 +1,6 @@
-import { BASE_GATEWAY_PORT, BASE_UI_PORT, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
+import type { LaunchPlan, LaunchPorts } from "./launch-plan.js";
 import { LogBuffer } from "./log-buffer.js";
-import { findFreePort } from "./ports.js";
+import { pickPorts } from "./ports.js";
 import { startGroup, stopGroup, type GroupChild } from "./process-group.js";
 import { waitForReady } from "./ready.js";
 
@@ -42,10 +42,7 @@ export function startStack(hooks: StackHooks): StackStart {
   };
 
   const run = async (): Promise<Stack> => {
-    const plan = hooks.createPlan({
-      gatewayPort: await findFreePort(BASE_GATEWAY_PORT),
-      uiPort: await findFreePort(BASE_UI_PORT),
-    });
+    const plan = hooks.createPlan(await pickPorts());
     if (cancelled) throw new Error("Start cancelled");
     for (const launch of plan.children) {
       children.push(

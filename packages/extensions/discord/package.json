@@ -17,7 +17,7 @@
   "dependencies": {
     "@yoplai/shared": "workspace:*",
     "@buape/carbon": "^0.16.0",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.2.0",
     "discord-api-types": "^0.37.120",
     "zod": "^3.23.8"
   },

@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@yoplai/shared": "workspace:*",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.2.0",
     "ws": "^8.19.0",
     "zod": "^3.23.8"
   },

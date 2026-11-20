@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import path from "node:path";
 import { Hono } from "hono";
 import { startAppsListener } from "../mcp-apps/views.js";
+import { startUiListener } from "./ui-listener.js";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
@@ -384,7 +385,8 @@ export function startServer(
   }
 
   console.log(`Starting gateway server on ${resolvedHost}:${resolvedPort}`);
-  process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
+  // Port 0 (tests) means "any free port". It is not a valid env port, and loadConfig refuses it.
+  if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
   const server = serve({
     fetch: app.fetch,
@@ -400,8 +402,40 @@ export function startServer(
   else server.once("listening", recordListener);
   server.once("close", () => setGatewayListener(undefined));
 
-  const stopApps = startAppsListener(config, resolvedHost);
+  // The packaged app has no Vite. With a built UI directory, a second loopback listener serves it on the UI port.
+  const webDist = readEnv("WEB_DIST");
+  // Dev keeps running without Apps views. The packaged app exits, so the desktop shows its error page with Restart.
+  const stopApps = startAppsListener(
+    config,
+    resolvedHost,
+    webDist
+      ? (error) => {
+          logError(`MCP Apps listener failed on port ${config.apps?.port ?? 4001}`, error);
+          process.exit(1);
+        }
+      : undefined
+  );
   server.once("close", stopApps);
+
+  if (webDist) {
+    const uiPort = config.ui?.port ?? 3000;
+    const uiServer = startUiListener({
+      webDist,
+      host: "127.0.0.1",
+      port: uiPort,
+      gatewayHost: ["0.0.0.0", "::"].includes(resolvedHost) ? "127.0.0.1" : resolvedHost,
+      gatewayPort: resolvedPort,
+      onError: (error) => {
+        logError(`UI listener failed on 127.0.0.1:${uiPort}`, error);
+        process.exit(1);
+      },
+    });
+    console.log(`Serving web UI from ${webDist} on 127.0.0.1:${uiPort}`);
+    server.once("close", () => {
+      uiServer.close();
+      uiServer.closeAllConnections();
+    });
+  }
 
   // Loaded by the first upgrade of a multi-user socket, so the sync check below finds it for every socket with a context.
   let loadedMultiUserModule: MultiUserMiddlewareModule | undefined;

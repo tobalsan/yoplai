@@ -37,7 +37,8 @@ export function revokeMcpAppSession(scope: SessionScope): void {
   }
 }
 
-export function startAppsListener(config: GatewayConfig, host: string): () => void {
+/** `onBindError` runs when the listener fails. The packaged app uses it to stop, because Apps views need the port. */
+export function startAppsListener(config: GatewayConfig, host: string, onBindError?: (error: Error) => void): () => void {
   listening = false;
   const app = new Hono();
   app.use("*", accessLogger());
@@ -86,9 +87,10 @@ export function startAppsListener(config: GatewayConfig, host: string): () => vo
   });
   listener = server;
   server.once("listening", () => { if (listener === server) listening = true; });
-  server.on("error", () => {
+  server.on("error", (error) => {
     if (listener === server) listening = false;
     logWarn("MCP Apps listener unavailable", { outcome: "unavailable" });
+    onBindError?.(error);
   });
   return () => {
     if (listener === server) { listening = false; listener = undefined; }

@@ -2,16 +2,40 @@ import { app, BrowserWindow, session, shell } from "electron";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
 import { LogBuffer } from "./log-buffer.js";
-import { createDevLaunchPlan } from "./launch-plan.js";
+import { createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
+import { resolveHome, seedHome } from "./packaged-env.js";
+import { fallbackPath, probeShellPath } from "./shell-path.js";
 import { startStack } from "./stack.js";
 import { createStackController } from "./stack-controller.js";
 
 const log = new LogBuffer(50);
+let createPlan: (ports: LaunchPorts) => LaunchPlan = createDevLaunchPlan;
 const stackController = createStackController(() =>
-  startStack({ log, createPlan: createDevLaunchPlan, onCrash: (reason) => !quitting && showError(reason) })
+  startStack({ log, createPlan: (ports) => createPlan(ports), onCrash: (reason) => !quitting && showError(reason) })
 );
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
+/** A packaged app runs one instance. The dev app keeps its own rules, so two worktrees can run side by side. */
+const hasInstanceLock = !app.isPackaged || app.requestSingleInstanceLock();
+
+/** Packaged only: seed the home and read the login shell PATH once. Later restarts reuse the plan. */
+let packagedReady: Promise<void> | null = null;
+function preparePackagedPlan(): Promise<void> {
+  packagedReady ??= (async () => {
+    const home = resolveHome(process.env, app.getPath("appData"));
+    seedHome(home);
+    const shellPath = await probeShellPath({ parentEnv: process.env }).catch(() => fallbackPath(process.env.PATH));
+    createPlan = (ports) =>
+      createPackagedLaunchPlan(ports, {
+        execPath: process.execPath,
+        resourcesPath: process.resourcesPath,
+        home,
+        shellPath,
+        parentEnv: process.env,
+      });
+  })();
+  return packagedReady;
+}
 
 function openExternal(url: string): void {
   void shell.openExternal(url);
@@ -68,6 +92,7 @@ function installPermissionHandlers(): void {
 
 async function startAndLoad(): Promise<void> {
   try {
+    if (app.isPackaged) await preparePackagedPlan();
     const stack = await stackController.restart();
     if (!quitting) await mainWindow?.loadURL(stack.uiUrl);
   } catch (err) {
@@ -91,7 +116,17 @@ app.on("before-quit", (event) => {
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
+app.on("second-instance", () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
+if (!hasInstanceLock) app.quit();
+
 void app.whenReady().then(async () => {
+  if (!hasInstanceLock) return;
   console.log("[desktop] ready");
   installPermissionHandlers();
   mainWindow = createWindow();

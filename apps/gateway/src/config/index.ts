@@ -221,6 +221,7 @@ function portFromEnv(name: string): number | undefined {
 /**
  * The launcher sets the ports it chose in the environment. They win over the file,
  * so the listeners, the MCP Apps ticket URLs, and the origin checks read the same ports.
+ * Port 0 is refused: the proxy target, the origins, and the tickets would name port 0, not the bound port.
  */
 function applyEnvPorts(config: GatewayConfig): void {
   const gatewayPort = portFromEnv("GATEWAY_PORT");
