@@ -14,7 +14,6 @@ export async function reloadAfterExtensionWrite(verify?: () => Promise<void>): P
       try {
         await reconcileExternal(reloaded);
       } catch (error) {
-        if (verify) throw error;
         console.warn(
           `[extensions] runtime reconcile after enable failed: ${error instanceof Error ? error.message : String(error)}`
         );

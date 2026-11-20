@@ -16,6 +16,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
+- Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
 
 ### Added
 
