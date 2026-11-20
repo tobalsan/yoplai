@@ -32,6 +32,7 @@ export function fixtureRelease(base: string, version: string, options: { id?: st
       import { existsSync, readFileSync } from "node:fs";
       let starts = 0;
       let pagePrefix;
+      let runningVersion;
       export default {
         id: ${JSON.stringify(id)}, displayName: "Sample Extension", description: "A local fixture.", dependencies: ${JSON.stringify(options.dependencies ?? [])},
         routePrefixes: ["/api/sample"],
@@ -44,7 +45,7 @@ export function fixtureRelease(base: string, version: string, options: { id?: st
             api.get("/mcp/servers", (c) => c.json({ version: ${JSON.stringify(version)}, requester: c.env.multiUserAuthContext?.user.id }));
           }
         },
-        registerPageRoutes: (api) => api.get("/info", (c) => c.text(${options.reportPagePrefix ? 'pagePrefix ?? "missing prefix"' : JSON.stringify(version)})),
+        registerPageRoutes: (api) => api.get("/info", (c) => c.text(${options.reportPagePrefix ? 'pagePrefix ?? "missing prefix"' : options.failSecondStart ? 'runningVersion ?? "not started"' : JSON.stringify(version)})),
         getAgentTools: () => [{ name: ${JSON.stringify(id + "_version")}, description: "Get the fixture version.", parameters: {}, execute: () => ${JSON.stringify(version)} }],
         ${options.oauthTokenUrl ? `oauthProviders: [{ id: ${JSON.stringify(options.providerId ?? "sampleProvider")}, displayName: "Sample", authorizeUrl: "https://example.test/authorize", tokenUrl: ${JSON.stringify(options.oauthTokenUrl)}, defaultScopes: [] }],` : ""}
         ${options.failReload ? 'onConfigReload: async () => { throw new Error("Reload rejected."); },' : ""}
@@ -56,8 +57,10 @@ export function fixtureRelease(base: string, version: string, options: { id?: st
           ${options.writeOnStart ? 'await assert.rejects(ctx.updateAgentExtensionConfig("fixture", "sample", { enabled: false }), /Cannot change config during an extension operation/);' : ""}
           ${options.failSecondStart ? 'if (++starts === 2) throw new Error("Restart rejected.");' : ""}
           ${options.failStart ? 'throw new Error("Start rejected.");' : ""}
+          runningVersion = ${JSON.stringify(version)};
         },
         stop: async () => {
+          runningVersion = undefined;
           ${options.readOnStop ? `assert.equal(readFileSync(new URL("LICENSE", import.meta.url), "utf8"), ${JSON.stringify(version)});` : ""}
           console.log(${JSON.stringify(id + " stop")}, ${JSON.stringify(version)});
           ${options.failStop ? 'throw new Error("Stop rejected.");' : ""}
