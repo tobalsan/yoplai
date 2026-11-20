@@ -1,5 +1,6 @@
 appId: ai.yoplai.desktop
 productName: Yoplai
+electronLanguages: [en, fr]
 directories:
   output: release
 # Only the compiled shell goes in the asar. The gateway, the web UI, and the templates sit outside it.
@@ -22,8 +23,8 @@ extraResources:
 mac:
   icon: resources/icon.icns
   category: public.app-category.productivity
-  # Keep the ad-hoc signature until slice 5b adds Developer ID signing.
   identity: "-"
+  notarize: false
   hardenedRuntime: true
   entitlements: entitlements/mac.plist
   entitlementsInherit: entitlements/mac.plist
@@ -32,3 +33,6 @@ mac:
       arch: arm64
     - target: dmg
       arch: arm64
+dmg:
+  format: ULFO
+  sign: false

@@ -9,42 +9,69 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
-## v0.29.1 — Image generation and resumable compaction
-
-_Released 2026-11-21._
-
-Agents can generate images, and compaction summaries follow a fixed template for resuming the conversation.
-
 ### Added
 
-- Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
+- Admins can install, update, and remove extensions from the catalog without a gateway restart.
+- External extension discovery ignores work folders and uses versioned imports.
+- The macOS release has a Developer ID signature and an Apple notarization ticket.
 - The desktop app shows a splash while the gateway starts. Use the app menu to turn the splash off.
-- Desktop setup opens the first chat and sends one greeting. The saved turn prevents a second greeting after a reload. A different first chat clears completion. A stale tab refreshes setup without checking its old turn again.
+- Desktop setup guides you through model access or a server link. It can create the first local agent with your chosen avatar and model. If the model cannot write the agent's instructions, setup uses a template. Repeating a successful create with the same request ID returns the same agent.
+- Desktop setup opens the first chat and sends a greeting. The gateway accepts each turn ID once per agent and chat and reports its state after a restart, so reloading does not resend a claimed greeting. Changing the saved first chat clears completion; a stale tab refreshes setup instead of checking its old turn again. After repairing model access, **Try again** retries a failed greeting in the same chat with a fresh turn ID. If the first send never claimed the turn, **Try again** keeps its ID. If setup status cannot be refreshed, it sends nothing.
 - Desktop setup shows missing items and links to model access. The app menu can start setup again.
 - The desktop window uses a hidden title bar with a strip for window movement.
-- Desktop setup guides the user through model access or a server link. It can create the first local agent.
-- The desktop gateway accepts the first chat turn once and reports its state after a restart.
-- The desktop gateway asks the selected model to write agent instructions. If the call fails, the gateway uses a template.
-- The desktop gateway creates agents with a selected avatar and model. A retry with the same request ID returns the same agent.
 - The desktop gateway lists available models and marks a model Ready after a successful call.
 - The desktop gateway can use local CLI credentials with consent. It does not save or refresh them.
 - The desktop gateway checks API keys and opens the system browser for model sign-in.
 - The browser shows a Yoplai page after a model sign-in.
 - The local desktop gateway reports setup access and saves setup state.
-- `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
-- Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an unsigned `Yoplai.app` and a `.dmg` in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
+- Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an ad-hoc-signed `Yoplai.app` and a `.dmg` without notarization in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
 - `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. That port answers only a loopback Host name of the port, as Vite does. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files. The port variables take 1 to 65535. With `YOPLAI_WEB_DIST` set, the gateway exits when the MCP Apps port cannot bind, and the app shows its error page with Restart. `YOPLAI_HOME=~/x` expands `~` in the app. A new app home also gets a random `OAUTH_ENCRYPTION_KEY` in its `.env` (mode 0600), so Connect works for local agents.
 - An agent with no avatar now shows one of ten default images on the Agents page, the sidebar, the chat header, and the other agent lists. The same agent always gets the same image.
 
-### Changed
-
-- Manual `/compact` and web auto-compaction request a fixed eight-section summary for resuming the conversation.
-
 ### Fixed
 
-- Account connections only shows the Threadit and Mattermost section when a local account link exists.
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
 - Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
+- Desktop setup checks and uses the current model endpoint, sends Claude subscription users to sign-in, and can use a valid Pi login when the Codex CLI login expired.
+- Desktop model calls preserve retryable errors without exposing provider diagnostics, and setup request logs hide OAuth attempt handles and queries.
+- Clean sandbox runner image builds now include the workspace patches before installing dependencies.
+- Extension pages and form submissions work through the packaged desktop UI.
+- Desktop development passes the selected port to the MCP Apps listener.
+- First-run desktop setup preserves existing OAuth encryption keys and adds any new key on its own line.
+- Gateway startup and shutdown now remove only the agent containers launched from their own home (labelled `yoplai.agent.home`), so a second gateway on the same Docker daemon keeps its containers. Containers left by older gateways are no longer reaped.
+- Switching a running gateway to multi-user mode disables gateway linking and access to desktop CLI credentials without requiring a restart.
+- Open relay connections stop carrying chat traffic and dispatching device calls when multi-user mode turns on.
+- Gateway linking rejects malformed forwarding headers and non-loopback proxy hops, matching desktop setup.
+- Installing or removing the MCP extension updates the MCP pages without a reload, even when another refresh is still pending. Cached server controls disappear if MCP is removed or permissions cannot be checked.
+- A linked-gateway list read that does not answer within 10 seconds ends, so the link form is no longer stuck busy. Overlapping disconnects refresh the list after the last disconnect completes.
+- Pairing controls stay locked while an unlink is pending for the same account. If the account changes, the new owner's controls do not wait for the old request.
+- A failed read of the local capabilities (for example HTTP 500) now shows a permission error with Retry on the local MCP servers page, not "The MCP extension is not installed". Selecting a missing linked gateway does not offer a local Retry.
+- Only the Yoplai desktop window gets the first-screen fade, window-button inset and hidden sidebar branding. Another Electron host that shows the UI keeps browser chrome.
+- The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
+- Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.
+- The catalog uses theme colors for update badges and errors. It shows the gateway error on the extension row.
+- `pnpm dev` keeps the gateway online when the catalog changes bundles in a custom or symlinked extension folder.
+- The extension catalog records the actor and bundle digests for installs, updates, and removals.
+- Catalog updates and removals stop extensions while their files are still in place. Recovery reports both failures and withdraws extensions that cannot restart and their dependents.
+- Hot-installed extensions get their own page route prefix at startup.
+- A linked install that loses its response shows an unknown outcome and asks the user to check current status before retrying.
+- A failed desktop agent create keeps the latest published configuration and can be retried with the same request ID.
+- If the gateway cannot rebuild the extension routes during recovery, it stops the unavailable extensions and serves only core API routes.
+- New agent forks wait for catalog changes before they reload the gateway config.
+- The gateway refuses a config write from its own extension hook before it changes the file.
+- The catalog refuses removal when a manual folder uses the same extension ID.
+- Extension and MCP settings use team credentials in single-user mode.
+- The full-screen chat panel keeps its tabs and close buttons clear of the toolbar. Narrow chat toolbars group secondary controls under More chat controls. The Agents heading sits in the toolbar.
+- The desktop dev home does not generate an OAuth key if the shell supplies one.
+- The macOS release command rejects `apps/desktop/electron-builder.env` so electron-builder uses the keychain profile for notarization.
+- The desktop chat repair button shows its label on one line. Dialogs stop header dragging. Full-height pages fit below the drag inset.
+- The desktop UI stays black until the first screen appears. A reload does not repeat the fade.
+- Desktop setup keeps agent creation and server consent available after a reload. Back and Skip cancel pending server links. After a timeout, retry sends a new cancellation request. If cancellation fails, the wizard shows the consent link when it has the address. A temporary status error lets the user resume or cancel the link. The wizard discards old key confirmations and offers Retry if setup cannot load.
+- The desktop dev proxy forwards tagged chat turns. The gateway reports duplicate IDs as `turn_exists` and rejects known slash commands on tagged turns without rejecting file paths.
+- The desktop gateway lists open sign-ins and returns the same attempt on retry.
+- The desktop proxy accepts model access cancellation and deletion without a body.
+- The desktop gateway tells the user when Claude Code needs a new sign-in.
+- Desktop chat accepts an enabled Codex CLI login without an owned credential.
 - Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
 - Desktop setup keeps config links during migration. Restart works after you correct a config error.
 - Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
@@ -58,8 +85,9 @@ Agents can generate images, and compaction summaries follow a fixed template for
 
 ### Changed
 
+- Reduce the macOS app and disk image sizes.
 - The desktop splash and setup use the macOS appearance by default. If you select Light or Dark, they use that choice on the next start. The desktop keeps the purpose chips scrollable without a scroll bar.
-- `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home.
+- `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home; set `YOPLAI_DESKTOP_DEV_PARENT` to choose its parent folder.
 - The desktop app uses the new Yoplai icon in the Dock.
 - The desktop sidebar header omits the brand text. The browser sidebar keeps it.
 - The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.
@@ -75,6 +103,24 @@ Agents can generate images, and compaction summaries follow a fixed template for
 - `better-sqlite3` is now version 13, because Electron 45 needs it.
 - `YOPLAI_UI_HOST` sets the bind host of the web UI. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. `pnpm desktop` sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`.
 - Run `pnpm desktop` to open Yoplai in a desktop window (Electron). It starts a local gateway and the web UI from repo source on free ports, and stops both when you close the window. OAuth popups open in-app. Other links open in your system browser. If start fails, the window shows the last 50 log lines and a Restart link.
+
+## v0.29.1 — Image generation and resumable compaction
+
+_Released 2026-11-21._
+
+Agents can generate images, and compaction summaries follow a fixed template for resuming the conversation.
+
+### Added
+
+- Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
+
+### Changed
+
+- Manual `/compact` and web auto-compaction request a fixed eight-section summary for resuming the conversation.
+
+### Fixed
+
+- Account connections only shows the Threadit and Mattermost section when a local account link exists.
 
 ## v0.29.0 — Linked gateways and device tools
 
