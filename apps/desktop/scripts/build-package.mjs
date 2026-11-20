@@ -9,7 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { checkBuilderEnv, releaseOptions, stapleRelease } from "./mac-release.mjs";
-import { checkGateway, pruneGateway, reportGatewaySize } from "./prune-gateway.mjs";
+import { checkGateway, checkGatewayStoreLayout, pruneGateway, reportGatewaySize } from "./prune-gateway.mjs";
 
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopDir, "../..");
@@ -86,6 +86,7 @@ try {
   if (workspaceState) fs.writeFileSync(workspaceStateFile, workspaceState);
 }
 
+checkGatewayStoreLayout(stageDir);
 pruneStage(stageDir);
 pruneGateway(stageDir, "before-rebuild");
 

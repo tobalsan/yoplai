@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkGateway, pruneGateway } from "./prune-gateway.mjs";
+import { checkGateway, checkGatewayStoreLayout, pruneGateway } from "./prune-gateway.mjs";
 
 let stage: string;
 let modules: string;
@@ -54,12 +54,39 @@ it("keeps scoped hoists, sibling peers, ancestor dependencies, shims, and metada
   link(".pnpm/consumer@1.0.0/node_modules/peer", `../../peer@1.0.0/node_modules/peer`);
   link(".pnpm/node_modules/@scope/helper", "../../@scope+helper@1.0.0/node_modules/@scope/helper");
 
+  checkGatewayStoreLayout(stage);
   prune();
   expect(createRequire(path.join(stage, "package.json"))("consumer")).toBe(42);
   expect(exists(`${helper}/index.js.map`)).toBe(false);
   expect(exists(".bin/consumer")).toBe(true);
   expect(exists(".pnpm/lock.yaml")).toBe(true);
 });
+
+it("rejects a hashed slot beside an unknown slot before any file removal", () => {
+  const hashed = ".pnpm/@/sample/1.0.0/hash/node_modules/sample";
+  const unknown = ".pnpm/unknown-slot/node_modules/sample";
+  const flat = ".pnpm/sample@1.0.0/node_modules/sample";
+  const dirs = [hashed, unknown, flat];
+  for (const dir of dirs) {
+    pkg(dir, "sample");
+    write(`${dir}/index.js.map`);
+  }
+
+  expect(() => checkGatewayStoreLayout(stage)).toThrow(`Unknown pnpm store entry: ${path.join(modules, ".pnpm", "@")}`);
+  for (const dir of dirs) {
+    expect(exists(`${dir}/package.json`)).toBe(true);
+    expect(fs.readFileSync(path.join(modules, dir, "index.js.map"), "utf8")).toBe("fixture");
+  }
+});
+
+it.each(["unknown-slot/node_modules/file", "sample@1.0.0/unexpected/file", "unknown.yaml"])(
+  "rejects the unknown store entry %s",
+  (file) => {
+    write(`.pnpm/${file}`);
+    expect(() => checkGatewayStoreLayout(stage)).toThrow("Unknown pnpm store entry:");
+    expect(exists(`.pnpm/${file}`)).toBe(true);
+  },
+);
 
 it("removes other-platform native files before the rebuild and keeps arm64 files", () => {
   pkg("better-sqlite3", "better-sqlite3", "13.2.0");

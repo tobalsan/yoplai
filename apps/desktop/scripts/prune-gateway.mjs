@@ -12,6 +12,28 @@ const sqliteBuildDirs = ["deps", "src", "build/Release/obj.target", "build/Relea
 const otherPlatform = /^(?:(?:linux|linuxmusl|win32)(?:-(?:arm64|x64))?|darwin-x64)(?:\.node)?$/;
 const typeScript = /\.(?:ts|mts|cts)$/;
 const declaration = /\.d\.(?:ts|mts|cts)$/;
+const flatSlot = /^(?:@[a-z0-9._-]+\+)?[a-z0-9._-]+@(?:\d+\.\d+\.\d+(?:[-+][a-z0-9.+-]+)?|file\+[a-z0-9.+-]+|https\+\+\+[a-z0-9.+-]+)(?:_patch_hash=[a-f0-9]+)?(?:_[a-z0-9@._+-]+)?$/i;
+
+export function checkGatewayStoreLayout(stage) {
+  const modules = path.join(stage, "node_modules");
+  const store = path.join(modules, ".pnpm");
+  for (const dir of [modules, store]) {
+    if (!fs.lstatSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`Expected a directory at ${dir}.`);
+    }
+  }
+  for (const entry of fs.readdirSync(store, { withFileTypes: true })) {
+    if (entry.name === "lock.yaml" && entry.isFile()) continue;
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
+      if (flatSlot.test(entry.name)) {
+        const children = fs.readdirSync(path.join(store, entry.name), { withFileTypes: true });
+        if (children.length === 1 && children[0].name === "node_modules" && children[0].isDirectory()) continue;
+      }
+    }
+    throw new Error(`Unknown pnpm store entry: ${path.join(store, entry.name)}`);
+  }
+}
 
 function inside(root, file) {
   const relative = path.relative(root, file);
