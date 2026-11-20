@@ -72,7 +72,10 @@ export function GatewayLinkPanel(props: {
   onLinked?: () => Promise<void>;
   registerLeave?: (leave: () => Promise<boolean>) => void;
 }) {
-  const [rows, { refetch }] = createResource(() => !props.onLinked, fetchLinkRows);
+  // One metadata read at a time: the first page read and a later refetch share the read that is pending.
+  let metadataRead: Promise<LinkRow[]> | undefined;
+  const readMetadata = () => (metadataRead ??= fetchLinkRows().finally(() => { metadataRead = undefined; }));
+  const [rows, { refetch }] = createResource(() => !props.onLinked, readMetadata);
   const [remote, setRemote] = createSignal("");
   const [name, setName] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -300,7 +303,9 @@ export function GatewayLinkPanel(props: {
       await disconnectLink(row.name, localOnly);
       setFailedDisconnect(undefined);
       setNotice(localOnly ? `Removed ${row.name} from this computer. The remote key stays valid until it is revoked or it expires.` : `Disconnected ${row.name}.`);
-      await refetch();
+      // A pending snapshot can predate this disconnect, even if it arrives later.
+      if (metadataRead) await metadataRead.catch(() => undefined);
+      if (!unmounted) await refetch();
     } catch (cause) {
       setError(errorText(cause));
       if (row.kind === "browser" && !localOnly) setFailedDisconnect(row.name);

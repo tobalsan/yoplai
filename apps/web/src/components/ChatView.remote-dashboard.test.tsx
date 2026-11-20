@@ -4,6 +4,7 @@ import { fireEvent, getByRole, getByTitle, queryByRole, queryByTitle, waitFor } 
 import { Route, Router } from "@solidjs/router";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView } from "./ChatView";
+import { LeftNavShell } from "./LeftNavShell";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 
 const api = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ let mcpAppPaths: string[];
 let capturedExtra: Record<string, unknown>;
 
 function mountChat() {
-  dispose = render(() => <Router><Route path="/chat/:agentId/:view?" component={ChatView} /></Router>, root);
+  dispose = render(() => <Router><Route path="/chat/:agentId/:view?" component={() => <ChatView shell={LeftNavShell} />} /></Router>, root);
 }
 const shell = () => getByTitle(root, "Dashboard dashboard") as HTMLIFrameElement;
 const fromShell = (event: string, extra: Record<string, unknown> = {}) =>
@@ -52,6 +53,7 @@ beforeEach(() => {
   delegateEvents(["click", "input", "keydown"]);
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   setCapabilitiesForTests({ multiUser: false });
   api.fetchAgent.mockImplementation(async (id: string) => ({
@@ -138,15 +140,20 @@ describe("remote dashboard in a chat", () => {
     history.replaceState({}, "", "/chat/pom%40ams");
     setCapabilitiesForTests({ multiUser: false, extensions: { projects: true } });
     api.fetchAgent.mockResolvedValue({ id: "pom@ams", name: "Pom", gateway: "ams", authMode: "oauth" });
-    let resize!: ResizeObserverCallback;
+    // Other components observe elements too. Only the observer of the toolbar in the shell gets the width.
+    const observed: Array<{ target: Element; callback: ResizeObserverCallback }> = [];
     vi.stubGlobal("ResizeObserver", class {
-      constructor(callback: ResizeObserverCallback) { resize = callback; }
-      observe() {}
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { observed.push({ target, callback: this.callback }); }
       disconnect() {}
     });
     mountChat();
     await waitFor(() => expect(getByRole(root, "combobox", { name: "Thinking level" })).toBeTruthy());
-    const setWidth = (width: number) => resize([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+    const setWidth = (width: number) => {
+      const toolbar = observed.find(({ target }) => target.matches(".shell-toolbar .chat-toolbar"));
+      expect(toolbar).toBeTruthy();
+      toolbar!.callback([{ target: toolbar!.target, contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+    };
     setWidth(330);
     const more = getByRole(root, "button", { name: "More chat controls", expanded: false });
     expect(queryByRole(root, "combobox", { name: "Thinking level" })).toBeNull();

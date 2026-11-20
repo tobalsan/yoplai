@@ -40,6 +40,21 @@ describe("relay link client", () => {
     expect(new Headers(lastCall().init.headers).get("x-link-control")).toBe("control-secret");
   });
 
+  it("fails a metadata read whose body stays pending past the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(async (_input, init) => {
+        const body = new ReadableStream({ start(controller) { init?.signal?.addEventListener("abort", () => controller.error(init.signal!.reason)); } });
+        return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+      });
+      const read = fetchLinkRows().then(() => "answered", () => "failed");
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(await read).toBe("failed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reads saved links with POST, and disconnects by name", async () => {
     fetchMock.mockResolvedValue(json(200, { gateways: [{ name: "work" }] }));
     expect(await fetchLinkRows()).toEqual([{ name: "work" }]);

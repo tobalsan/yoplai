@@ -339,7 +339,7 @@ export function EditAgent() {
     (key) => fetchAgentExtensions(key.id, key.gateway)
   );
   const refreshInstalled = (event: Event) => {
-    if (event instanceof CustomEvent && event.detail === gateway()) void refetchExtensions();
+    if (event instanceof CustomEvent && (event.detail ?? undefined) === gateway()) void refetchExtensions();
   };
   window.addEventListener(releaseCatalogChanged, refreshInstalled);
   onCleanup(() => window.removeEventListener(releaseCatalogChanged, refreshInstalled));

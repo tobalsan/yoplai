@@ -101,6 +101,17 @@ Breaking changes are marked **⚠ BREAKING**.
 - Switching a running gateway to multi-user mode disables gateway linking and access to desktop CLI credentials without requiring a restart.
 - Open relay connections stop carrying chat traffic and dispatching device calls when multi-user mode turns on.
 - Gateway linking rejects malformed forwarding headers and non-loopback proxy hops, matching desktop setup.
+
+- Installing or removing the MCP extension updates the MCP pages without a reload, even when another refresh is still pending. Cached server controls disappear if MCP is removed or permissions cannot be checked.
+
+- A linked-gateway list read that does not answer within 10 seconds ends, so the link form is no longer stuck busy. Overlapping disconnects refresh the list after the last disconnect completes.
+
+- Pairing controls stay locked while an unlink is pending for the same account. If the account changes, the new owner's controls do not wait for the old request.
+
+- A failed read of the local capabilities (for example HTTP 500) now shows a permission error with Retry on the local MCP servers page, not "The MCP extension is not installed". Selecting a missing linked gateway does not offer a local Retry.
+
+- Only the Yoplai desktop window gets the first-screen fade, window-button inset and hidden sidebar branding. Another Electron host that shows the UI keeps browser chrome.
+
 - The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
 
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.

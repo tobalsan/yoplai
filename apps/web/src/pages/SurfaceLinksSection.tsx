@@ -1,6 +1,7 @@
-import { createEffect, createSignal, For, onCleanup, Show, type Accessor } from "solid-js";
+import { For, Show, type Accessor } from "solid-js";
 import { fetchSurfaceLinks, isSurfaceLinkUnavailable, unlinkSurfaceAccount, type SurfaceLink } from "../api/connections";
 import type { GatewayName } from "../api/gateway";
+import { createOwnerRows } from "./owner-rows";
 
 /**
  * The Threadit and Mattermost section of the Pairings page. It lists the accounts that the owner linked with `!pair`.
@@ -13,97 +14,17 @@ export function SurfaceLinksSection(props: {
   onAvailable: (available: boolean) => void;
 }) {
   const gateway = props.gateway;
-  const [links, setLinks] = createSignal<SurfaceLink[]>([]);
-  const [loading, setLoading] = createSignal(false);
-  const [error, setError] = createSignal<string>();
-  const [pending, setPending] = createSignal<string>();
-  const [unavailable, setUnavailable] = createSignal(false);
-  const [unknown, setUnknown] = createSignal(false);
-  let requestId = 0;
-  let activeUserId: string | undefined;
-  let disposed = false;
-  onCleanup(() => { disposed = true; requestId++; });
-
-  const refresh = async (userId: string): Promise<boolean> => {
-    const currentRequest = ++requestId;
-    setLoading(true);
-    setError(undefined);
-    try {
-      const next = await fetchSurfaceLinks(gateway);
-      if (disposed || currentRequest !== requestId || activeUserId !== userId) return false;
-      setLinks(next);
-      setUnavailable(false);
-      props.onAvailable(true);
-      return true;
-    } catch (cause) {
-      if (!disposed && currentRequest === requestId && activeUserId === userId) {
-        setLinks([]);
-        // After a failed remote unlink, an "unavailable" answer must not hide the error and Retry.
-        if (gateway !== undefined && isSurfaceLinkUnavailable(cause) && !unknown()) {
-          setUnavailable(true);
-          props.onAvailable(false);
-        } else {
-          setUnavailable(false);
-          props.onAvailable(true);
-          setError(cause instanceof Error ? cause.message : "Failed to load linked accounts");
-        }
-      }
-      return false;
-    } finally {
-      if (!disposed && currentRequest === requestId && activeUserId === userId) setLoading(false);
-    }
-  };
-
-  createEffect(() => {
-    const userId = props.ownerId();
-    activeUserId = userId;
-    setLinks([]);
-    setError(undefined);
-    setPending(undefined);
-    setUnknown(false);
-    setUnavailable(false);
-    if (userId) void refresh(userId);
-    else {
-      requestId++;
-      setLoading(false);
-    }
+  const { rows: links, loading, error, pending, unavailable, unknown, retry, remove } = createOwnerRows<SurfaceLink>({
+    ownerId: props.ownerId,
+    uncertainRemove: gateway !== undefined,
+    list: () => fetchSurfaceLinks(gateway),
+    remove: (link) => unlinkSurfaceAccount(link.id, gateway),
+    // A local gateway always holds these links, so only a remote one can be unavailable.
+    isUnavailable: (cause) => gateway !== undefined && isSurfaceLinkUnavailable(cause),
+    onAvailable: props.onAvailable,
+    loadFailure: "Failed to load linked accounts",
+    removeFailure: "Failed to unlink account",
   });
-
-  const retry = async () => {
-    const userId = activeUserId;
-    if (!userId) return;
-    const ok = await refresh(userId);
-    if (!disposed && activeUserId === userId && ok) setUnknown(false);
-  };
-
-  const unlink = async (link: SurfaceLink) => {
-    const userId = activeUserId;
-    if (!userId || unknown()) return;
-    setPending(link.id);
-    setError(undefined);
-    let failed = false;
-    try {
-      await unlinkSurfaceAccount(link.id, gateway);
-      if (!disposed && activeUserId === userId) await refresh(userId);
-    } catch (cause) {
-      failed = true;
-      if (!disposed && activeUserId === userId) {
-        setError(cause instanceof Error ? cause.message : "Failed to unlink account");
-        // The remote can commit an unlink before its answer fails. Lock the controls before `pending` clears.
-        if (gateway !== undefined) setUnknown(true);
-      }
-    } finally {
-      if (!disposed && activeUserId === userId) setPending(undefined);
-    }
-    if (failed && gateway !== undefined && !disposed && activeUserId === userId) {
-      const message = error();
-      const ok = await refresh(userId);
-      if (!disposed && activeUserId === userId) {
-        if (ok) setUnknown(false);
-        if (message) setError(message);
-      }
-    }
-  };
 
   return (
     <Show when={!unavailable()}>
@@ -122,7 +43,7 @@ export function SurfaceLinksSection(props: {
               <strong>{link.surface === "threadit" ? "Threadit" : "Mattermost"} @{link.username}</strong>
               <span>{link.scope} · Linked {new Date(link.linkedAt).toLocaleDateString()}</span>
             </div>
-            <button type="button" disabled={pending() !== undefined || unknown()} onClick={() => void unlink(link)}>
+            <button type="button" disabled={pending() !== undefined || unknown()} onClick={() => void remove(link, link.id)}>
               {pending() === link.id ? "Removing…" : "Unlink"}
             </button>
           </li>}</For>
