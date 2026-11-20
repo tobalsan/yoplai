@@ -92,6 +92,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Clean sandbox runner image builds now include the workspace patches before installing dependencies.
+- Extension pages and form submissions work through the packaged desktop UI.
+- Desktop development passes the selected port to the MCP Apps listener.
+- First-run desktop setup preserves existing OAuth encryption keys and adds any new key on its own line.
 - Gateway startup and shutdown now remove only the agent containers launched from their own home (labelled `yoplai.agent.home`), so a second gateway on the same Docker daemon keeps its containers. Containers left by older gateways are no longer reaped.
 - Switching a running gateway to multi-user mode disables gateway linking and access to desktop CLI credentials without requiring a restart.
 - Gateway linking rejects malformed forwarding headers and non-loopback proxy hops, matching desktop setup.
