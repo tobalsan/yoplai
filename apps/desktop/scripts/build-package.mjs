@@ -104,8 +104,10 @@ if (release) checkBuilderEnv(desktopDir);
 run("pnpm", [...builderArgs, ...(release?.args ?? [])], { cwd: desktopDir });
 
 const releaseDir = path.join(desktopDir, release ? "release/signed" : "release");
-checkGateway(path.join(releaseDir, "mac-arm64", "Yoplai.app", "Contents", "Resources", "gateway"));
+const appPath = path.join(releaseDir, "mac-arm64", "Yoplai.app");
+checkGateway(path.join(appPath, "Contents", "Resources", "gateway"));
 if (release) {
+  run("node", [path.join(desktopDir, "scripts/packaged-check.mjs"), appPath], { cwd: desktopDir });
   const { version } = JSON.parse(fs.readFileSync(path.join(desktopDir, "package.json"), "utf8"));
   stapleRelease(releaseDir, version, release.env);
 }

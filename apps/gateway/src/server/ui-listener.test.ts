@@ -67,6 +67,11 @@ describe("UI listener", () => {
     gatewayPort = await freePort();
     gateway = http.createServer((request, response) => {
       seen = { method: request.method, url: request.url, headers: request.headers };
+      if (request.url === "/x/fixture/form" && request.method === "GET") {
+        response.writeHead(200, { "Content-Type": "text/html" });
+        response.end("<html>extension form</html>");
+        return;
+      }
       if (request.url?.startsWith("/api/missing")) {
         response.writeHead(404, { "Content-Type": "application/json" });
         response.end('{"error":"not found"}');
@@ -281,6 +286,24 @@ describe("UI listener", () => {
       expect(response.status).toBe(200);
       expect(lastSeen()?.url).toBe(target);
     }
+  });
+
+  it("serves the extension page, not the SPA, on the UI port", async () => {
+    const response = await get("/x/fixture/form");
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("<html>extension form</html>");
+  });
+
+  it("forwards an extension POST and its body on the UI port", async () => {
+    const response = await fetch(`http://127.0.0.1:${uiPort}/x/fixture/form`, {
+      method: "POST",
+      body: "answer=42",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, body: "answer=42" });
+    expect(lastSeen()?.url).toBe("/x/fixture/form");
   });
 
   it("forwards a WebSocket upgrade and passes messages both ways", async () => {

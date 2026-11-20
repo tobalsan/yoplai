@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout } from "node:timers/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL, URLSearchParams } from "node:url";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -53,8 +53,8 @@ async function checkRuntime(mode, resources) {
   }
 }
 
-async function request(base, route, expected, method = "GET") {
-  const response = await globalThis.fetch(`${base}${route}`, { method, signal: globalThis.AbortSignal.timeout(20_000) });
+async function request(base, route, expected, method = "GET", body) {
+  const response = await globalThis.fetch(`${base}${route}`, { method, body, signal: globalThis.AbortSignal.timeout(20_000) });
   const bytes = Buffer.from(await response.arrayBuffer());
   assert.equal(response.status, expected, `${method} ${route}: ${bytes.toString()}`);
   return bytes;
@@ -86,7 +86,7 @@ async function checkPackages(app, reference) {
   const home = path.join(root, "home");
   const userHome = path.join(root, "user");
   const tmp = path.join(root, "tmp");
-  // Both packaged gateways reach Docker through PATH; a stub keeps them off the real daemon.
+  // Each packaged gateway reaches Docker through PATH; a stub keeps them off the real daemon.
   const stubBin = path.join(root, "bin");
   try {
     await fs.mkdir(stubBin);
@@ -106,6 +106,8 @@ async function checkPackages(app, reference) {
 
     const ports = await pickPorts();
     const base = `http://127.0.0.1:${ports.gatewayPort}`;
+    // Browser requests go through the UI port, as the packaged window does.
+    const uiBase = `http://127.0.0.1:${ports.uiPort}`;
     async function plan(appPath, resetHome) {
       if (resetHome) {
         await fs.rm(home, { recursive: true, force: true });
@@ -140,12 +142,20 @@ async function checkPackages(app, reference) {
           if (ready?.ok) {
             const elapsed = performance.now() - start;
             await ready.arrayBuffer();
-            await check?.(base);
+            if (check) {
+              const ui = await globalThis.fetch(uiBase, { signal: globalThis.AbortSignal.timeout(500) }).catch(() => null);
+              await ui?.arrayBuffer();
+              if (!ui?.ok) {
+                await setTimeout(20);
+                continue;
+              }
+              await check(uiBase);
+            }
             return elapsed;
           }
           await setTimeout(20);
         }
-        throw new Error("The gateway did not answer the health request.");
+        throw new Error(check ? "The gateway and UI did not become ready." : "The gateway did not answer the health request.");
       } catch (error) {
         console.error(output);
         throw error;
@@ -179,7 +189,13 @@ async function checkPackages(app, reference) {
 
     const collection = "/api/admin/extension-catalog";
     const route = `/api/${id}`;
-    const answer = async (base) => assert.equal((await request(base, route, 200)).toString(), "DESKTOP FIXTURE");
+    const page = `/x/${id}/form`;
+    const answer = async (base) => {
+      assert.equal((await request(base, route, 200)).toString(), "DESKTOP FIXTURE");
+      assert.equal((await request(base, page, 200)).toString(), "<html>DESKTOP FIXTURE FORM</html>");
+      const body = new URLSearchParams({ answer: "42" });
+      assert.equal((await request(base, page, 200, "POST", body)).toString(), "answer=42");
+    };
     await withGateway(app, true, async (base) => {
       for (const [name, file] of [["echarts", "echarts/dist/echarts.min.js"], ["marked", "marked/lib/marked.umd.js"], ["purify", "dompurify/dist/purify.min.js"]]) {
         const expected = await fs.readFile(path.join(resourcesPath, "gateway", "node_modules", file));
@@ -197,17 +213,20 @@ async function checkPackages(app, reference) {
       console.log("PASS catalog restart");
       await request(base, `${collection}/${id}`, 200, "DELETE");
       await request(base, route, 404);
+      await request(base, page, 404);
       console.log("PASS catalog removal");
     });
 
-    const samples = { new: [], reference: [] };
-    for (let i = 0; i < 3; i++) {
-      samples.new.push(await withGateway(app, true));
-      samples.reference.push(await withGateway(reference, true));
-    }
-    for (const [name, times] of Object.entries(samples)) {
-      const sorted = times.toSorted((a, b) => a - b);
-      console.log(`${name} ms: ${times.map((time) => time.toFixed(1)).join(", ")}. Median ${sorted[1].toFixed(1)}. Spread ${(sorted[2] - sorted[0]).toFixed(1)}.`);
+    if (reference) {
+      const samples = { new: [], reference: [] };
+      for (let i = 0; i < 3; i++) {
+        samples.new.push(await withGateway(app, true));
+        samples.reference.push(await withGateway(reference, true));
+      }
+      for (const [name, times] of Object.entries(samples)) {
+        const sorted = times.toSorted((a, b) => a - b);
+        console.log(`${name} ms: ${times.map((time) => time.toFixed(1)).join(", ")}. Median ${sorted[1].toFixed(1)}. Spread ${(sorted[2] - sorted[0]).toFixed(1)}.`);
+      }
     }
   } finally {
     server.close();
@@ -218,6 +237,6 @@ async function checkPackages(app, reference) {
 const [first, second] = process.argv.slice(2);
 if (first === "runtime" || first === "ocr") await checkRuntime(first, second);
 else {
-  assert.ok(first && second, "Specify the new app and the reference app.");
+  assert.ok(first, "Specify the app to check. A reference app for startup timings is optional.");
   await checkPackages(first, second);
 }

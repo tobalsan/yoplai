@@ -25,7 +25,7 @@ export interface UiListenerOptions {
 }
 
 /** The same service paths as the `proxy` block of `apps/web/vite.config.ts`. */
-const FORWARDED_PREFIXES = ["/api", "/ws", "/hooks"];
+const FORWARDED_PREFIXES = ["/api", "/ws", "/hooks", "/x"];
 const FORWARDED_DIRECTORIES = ["/d/", "/d-assets/"];
 /** The standard hop-by-hop headers (RFC 9110 section 7.6.1, plus the old proxy-connection). A proxy must not forward them. */
 const HOP_BY_HOP_HEADERS = [
