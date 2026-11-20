@@ -1,3 +1,6 @@
+import { createModelAccessRoutes } from "../desktop/model-access.js";
+import { desktopSetupGuard } from "../desktop/guard.js";
+import { createDesktopSetupRoutes } from "../desktop/setup.js";
 import { serve } from "@hono/node-server";
 import path from "node:path";
 import { Hono } from "hono";
@@ -85,7 +88,7 @@ const globalCors = cors({
 // The dashboard viewer and the browser link routes answer CORS themselves: a narrower grant than the global list.
 app.use("*", (c, next) => {
   const pathname = new URL(c.req.url).pathname;
-  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) ? next() : globalCors(c, next);
+  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) || pathname === "/api/desktop-setup" || pathname === "/api/model-access" || pathname.startsWith("/api/model-access/") ? next() : globalCors(c, next);
 });
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
@@ -126,6 +129,14 @@ app.route(
 app.use("*", dashboardViewHttp());
 // The link namespace answers before the extension gate. It owns every spelling of its path and refuses what no route owns.
 app.use("*", relayLinkApi());
+const setupGuard = desktopSetupGuard(
+  () => currentExtensionRuntime().isEnabled("multiUser"),
+  () => loadConfig().ui?.port ?? 3000
+);
+app.use("/api/desktop-setup", setupGuard);
+app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
+app.use("/api/model-access/*", setupGuard);
+app.route("/api/model-access", createModelAccessRoutes(CONFIG_DIR));
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
@@ -375,7 +386,7 @@ export function startServer(
     resolveGatewayBindHost(config.gateway?.bind);
   configureRelay(
     resolvedHost,
-    runtime.isEnabled("multiUser"),
+    () => runtime.isEnabled("multiUser"),
     config.ui?.tailscale?.mode === "serve",
     readEnv("UI_HOST") ?? resolveBindHost(config.ui?.bind)
   );

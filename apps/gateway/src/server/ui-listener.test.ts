@@ -8,7 +8,8 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { relayLinkApi } from "../relay/link-routes.js";
-import { isForwardedPath, redactedTarget, startUiListener } from "./ui-listener.js";
+import { redactedTarget } from "@yoplai/shared/secret-paths";
+import { isForwardedPath, startUiListener } from "./ui-listener.js";
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -319,7 +320,7 @@ describe("UI listener", () => {
     expect(redactedTarget("/api/relay/dashboard-views/handle")).toBe("/api/relay/dashboard-views/[redacted]");
     expect(redactedTarget("/api/auth/gateway-link/req-1")).toBe("/api/auth/gateway-link/[redacted]");
     expect(redactedTarget("/api/%52elay/link/status/SECRET")).toBe("/api/relay/link/[redacted]");
-    expect(redactedTarget("/api/agents?token=abc")).toBe("/api/agents");
+    expect(redactedTarget("/api/agents?token=abc")).toBeUndefined();
   });
 });
 

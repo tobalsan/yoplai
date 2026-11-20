@@ -54,6 +54,13 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 
 ### Added
 
+- The desktop gateway lists available models and marks a model Ready after a successful call.
+- The desktop gateway can use local CLI credentials with consent. It does not save or refresh them.
+- The desktop gateway checks API keys and opens the system browser for model sign-in.
+- The browser shows a Yoplai page after a model sign-in.
+- The local desktop gateway reports setup access and saves setup state.
+- `pnpm desktop` uses a new test home. Set `YOPLAI_DESKTOP_DEV_PARENT` to select its parent folder.
+
 - Extension tools receive trusted messaging reply origins on Pi and container runs; Slack delivery supports thread destinations, and Threadit adds a reply delivery sink.
 - External extensions can serve authenticated browser pages and cookie-free token POSTs, re-check viewer access, and open their own pages as reusable sandboxed chat-panel frames.
 - Threadit and Mattermost `!pair` links connect human accounts to signed-in Yoplai users through ten-minute, single-use, email-matched links; Account connections lists and unlinks them.
@@ -89,6 +96,11 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 
 - Multi-user gateways return 404 for Better Auth's admin endpoints. Yoplai admins retain access to the built-in user and team administration screens.
 - Owned live chats on shared agents limit session details and controls to the chat owner while keeping agent-wide activity visible.
+- Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
+- Desktop setup lists only providers that need no input other than the API key.
+- A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
+- The desktop guard rejects IPv4 forwarding addresses in brackets.
+- The desktop model picker respects the model list for the signed-in account.
 - Threadit isolates agent sessions by top-level message so a failed turn cannot carry its saved history into other branches of the thread.
 - Gateway `send_file` finishes when a file in `/workspace/data` shrinks during delivery and cleans up incomplete copies on cancellation.
 - Extension catalogs mask channel credentials and display non-secret environment references by name. Agent extension blocks can use names from their workspace `.env` or `extensionEnvAllowlist` in `yoplai.json`.

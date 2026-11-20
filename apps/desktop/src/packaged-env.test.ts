@@ -51,6 +51,7 @@ describe("packaged env", () => {
 
     expect(env).toMatchObject({
       YOPLAI_HOME: "/home/yoplai",
+      YOPLAI_DESKTOP: "1",
       YOPLAI_GATEWAY_PORT: "4002",
       YOPLAI_UI_PORT: "3001",
       YOPLAI_APPS_PORT: "4003",

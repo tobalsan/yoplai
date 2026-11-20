@@ -29,6 +29,7 @@ export function buildPackagedEnv(input: PackagedEnvInput): NodeJS.ProcessEnv {
   return {
     ...env,
     YOPLAI_HOME: input.home,
+    YOPLAI_DESKTOP: "1",
     YOPLAI_GATEWAY_PORT: String(input.ports.gatewayPort),
     YOPLAI_UI_PORT: String(input.ports.uiPort),
     YOPLAI_APPS_PORT: String(input.ports.appsPort),
