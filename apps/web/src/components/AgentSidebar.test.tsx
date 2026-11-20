@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getByRole, queryByRole } from "@testing-library/dom";
 import { createSignal, splitProps } from "solid-js";
 import { render } from "solid-js/web";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 // matchMedia must exist before theme.ts module-level code runs
 window.matchMedia = vi.fn().mockReturnValue({ matches: false });
@@ -178,7 +179,8 @@ describe("AgentSidebar", () => {
     const dispose = render(() => <Router><Route path="*" component={() => <AgentSidebar collapsed={() => false} onToggleCollapse={() => {}} />} /></Router>, container);
     await vi.advanceTimersByTimeAsync(1);
     const row = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes(chat.title))!;
-    expect(row.textContent?.trim()).toBe("A" + chat.title);
+    expect(row.textContent?.trim()).toBe(chat.title);
+    expect(defaultAvatarSources(row)).toHaveLength(1);
     const description = document.getElementById(row.getAttribute("aria-describedby")!);
     expect(description?.textContent).toContain("2m · alpha");
     expect(description?.textContent).toContain("MAIN");

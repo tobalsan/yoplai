@@ -20,6 +20,7 @@ Agents can generate images, and compaction summaries follow a fixed template for
 - Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
 - Run `pnpm --filter @yoplai/desktop dist` on an Apple Silicon Mac to build an unsigned `Yoplai.app` and a `.dmg` in `apps/desktop/release`. The app needs no repo, no pnpm, and no Node. It runs a bundled gateway and serves the web UI itself. Data lives in `~/Library/Application Support/Yoplai/home` (`YOPLAI_HOME` overrides it). A second launch shows the first window. The app picks three free ports.
 - `YOPLAI_GATEWAY_PORT`, `YOPLAI_UI_PORT`, and the new `YOPLAI_APPS_PORT` now set the ports of the gateway, the UI, and the MCP Apps listener, in the config too. `YOPLAI_WEB_DIST` makes the gateway serve a built web UI on the UI port. That port answers only a loopback Host name of the port, as Vite does. `YOPLAI_TEMPLATES_DIR` sets the folder of the agent template files. The port variables take 1 to 65535. With `YOPLAI_WEB_DIST` set, the gateway exits when the MCP Apps port cannot bind, and the app shows its error page with Restart. `YOPLAI_HOME=~/x` expands `~` in the app. A new app home also gets a random `OAUTH_ENCRYPTION_KEY` in its `.env` (mode 0600), so Connect works for local agents.
+- An agent with no avatar now shows one of ten default images on the Agents page, the sidebar, the chat header, and the other agent lists. The same agent always gets the same image.
 
 ### Changed
 
@@ -28,6 +29,8 @@ Agents can generate images, and compaction summaries follow a fixed template for
 ### Fixed
 
 - Account connections only shows the Threadit and Mattermost section when a local account link exists.
+- In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
+- The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.
 
 ### Changed
 
@@ -88,8 +91,6 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 - The relay requires valid loopback IP addresses in forwarding headers and for the socket peer.
 - Opening chat settings no longer flashes the page while sharing or default-agent preferences load. The menu matches sidebar context menus in both themes, with icons and Agent settings first, Set as default agent hidden for the current default, then Share link.
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
-- In single-user mode, the agent connections list works with no sign-in and shows team connections only. Personal connection writes answer 400 `personal_scope_unavailable`.
-- The agent Extensions tab, My connections tab, and admin MCP servers page show no red error when the gateway has no MCP extension. The single-user gateway shows no "Just me" choice.
 - In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
 - When the AI provider's safety filter refuses a message, the chat no longer gets stuck. The refused turn is dropped from the saved session, so the next message works, and the user sees "The AI provider's safety filter blocked this message, so it was not kept. You can rephrase or carry on." (French too) instead of "Something went wrong". The gateway logs it at warn, not error.

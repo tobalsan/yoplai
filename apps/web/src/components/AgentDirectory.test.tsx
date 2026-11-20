@@ -8,6 +8,8 @@ import type {
   SubagentGlobalListItem,
 } from "../api/types";
 import { AgentDirectory } from "./AgentDirectory";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 const {
   fetchAgentsMock,
@@ -96,6 +98,21 @@ describe("AgentDirectory", () => {
     expect(container.textContent).toContain("Lead One");
     expect(container.textContent).toContain("WORKING");
 
+    dispose();
+  });
+
+  it("shows the default avatar of an agent that has none", async () => {
+    fetchAgentsMock.mockResolvedValue([{ id: "lead-1", name: "Lead One" }] as Agent[]);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const [selected] = createSignal<string | null>(null);
+    const dispose = render(
+      () => <AgentDirectory selectedAgent={selected} onSelectAgent={() => {}} onOpenProject={() => {}} />,
+      container
+    );
+    await tick();
+    await tick();
+    expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("lead-1"));
     dispose();
   });
 

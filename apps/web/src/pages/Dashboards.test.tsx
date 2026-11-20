@@ -4,6 +4,8 @@ import { render } from "solid-js/web";
 import { Route, Router } from "@solidjs/router";
 import { Dashboards } from "./Dashboards";
 import type { DashboardRow } from "../api/dashboards";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 let root: HTMLDivElement;
 let dispose: () => void;
@@ -106,4 +108,14 @@ it("keeps a successful pin when an overlapping delete refresh returns an older s
   await vi.waitFor(() => expect(root.querySelectorAll(".dashboard-list-row")).toHaveLength(1));
   expect(section("Pinned")?.textContent).toContain("Own");
   expect(toggle("Own").getAttribute("aria-pressed")).toBe("true");
+});
+
+it("shows the default avatar in the group of an agent that has no avatar", async () => {
+  vi.stubGlobal("fetch", vi.fn((input: string) => {
+    if (input === "/api/agents") return Promise.resolve(Response.json([{ id: "agent", name: "Agent" }]));
+    if (input === "/api/dashboards") return Promise.resolve(Response.json({ owned: [row("Own", true)], shared: [] }));
+    throw new Error(`Unexpected request: ${input}`);
+  }));
+  dispose = render(() => <Router><Route path="*" component={Dashboards} /></Router>, root);
+  await vi.waitFor(() => expect(defaultAvatarSources(root)).toContain(defaultAvatarUrl("agent")));
 });

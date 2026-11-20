@@ -12,6 +12,8 @@ import type { FullHistoryMessage } from "../api/types";
 import type { McpAppFile } from "@yoplai/shared/types";
 import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -1853,6 +1855,15 @@ describe("ChatView abort handling", () => {
       container.querySelector(".hero-no-suggestions")?.textContent
     ).toContain("No prompt suggestions");
     expect(container.querySelector(".suggestion-card")).toBeNull();
+    dispose();
+  });
+
+  it("shows the default avatar of an agent with no avatar in both the header and the hero", async () => {
+    fetchAgentSuggestionsMock.mockResolvedValue([]);
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    // The header and the hero each show one image of the same agent.
+    await waitFor(() => expect(defaultAvatarSources(container)).toEqual([defaultAvatarUrl("agent-1"), defaultAvatarUrl("agent-1")]));
     dispose();
   });
 

@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary } from "solid-js";
 import { render } from "solid-js/web";
 import type { Team } from "../api/teams";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 const mocks = vi.hoisted(() => ({
   fetchTeams: vi.fn(),
@@ -153,6 +155,15 @@ describe("team organization", () => {
     const rows = [...container.querySelectorAll("li")];
     expect(rows.find((row) => row.textContent?.includes("Casey"))?.textContent).toContain("Public");
     expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
+  });
+
+  it("shows the default avatar for a team agent with no avatar", async () => {
+    mocks.fetchTeamAgents.mockResolvedValue([
+      { sourcePoolId: "henry", forkAgentId: "Henry", public: false, assignment: { mode: "list", teamIds: [team.id] } },
+    ]);
+    mocks.fetchPool.mockResolvedValue([{ id: "henry", name: "Henry" }]);
+    await click("Members");
+    await vi.waitFor(() => expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("henry")));
   });
 
   it("shows member photos with initials for absent or failed photos", async () => {

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { within } from "@testing-library/dom";
 
-const { navigate, fetchProject, saveInstructions, startNewChat, fetchFiles, uploadFile, deleteFile, fetchReferences, deleteReference, fetchNotes, saveNotes, renameProject } = vi.hoisted(() => ({
-  navigate: vi.fn(), fetchProject: vi.fn(), saveInstructions: vi.fn(), startNewChat: vi.fn(), fetchFiles: vi.fn(), uploadFile: vi.fn(), deleteFile: vi.fn(),
+const { navigate, fetchSessions, fetchProject, saveInstructions, startNewChat, fetchFiles, uploadFile, deleteFile, fetchReferences, deleteReference, fetchNotes, saveNotes, renameProject } = vi.hoisted(() => ({
+  navigate: vi.fn(), fetchSessions: vi.fn(), fetchProject: vi.fn(), saveInstructions: vi.fn(), startNewChat: vi.fn(), fetchFiles: vi.fn(), uploadFile: vi.fn(), deleteFile: vi.fn(),
   fetchReferences: vi.fn(), deleteReference: vi.fn(), fetchNotes: vi.fn(), saveNotes: vi.fn(), renameProject: vi.fn(),
 }));
 vi.mock("@solidjs/router", () => ({
@@ -12,7 +13,7 @@ vi.mock("@solidjs/router", () => ({
   useNavigate: () => navigate,
 }));
 vi.mock("../api", () => ({
-  fetchAgentSessions: vi.fn(async () => ({ items: [] })),
+  fetchAgentSessions: fetchSessions,
   fetchAgents: vi.fn(async () => [{ id: "agent-1", name: "Writer" }, { id: "agent-2", name: "Researcher" }]),
   startNewChat,
 }));
@@ -26,12 +27,15 @@ vi.mock("../api/chat-projects", () => ({
   renameChatProject: renameProject, deleteChatProject: vi.fn(),
 }));
 import { ChatProject } from "./ChatProject";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 let dispose: (() => void) | undefined;
 let container: HTMLDivElement;
 beforeEach(() => {
   vi.clearAllMocks();
+  fetchSessions.mockResolvedValue({ items: [] });
   fetchReferences.mockResolvedValue({ items: [] }); deleteReference.mockResolvedValue({});
   fetchNotes.mockResolvedValue({ text: "- Shared project learning" }); saveNotes.mockResolvedValue({ text: "" });
   fetchFiles.mockResolvedValue({ items: [] });
@@ -45,6 +49,19 @@ beforeEach(() => {
 afterEach(() => { dispose?.(); container.remove(); });
 
 describe("ChatProject", () => {
+  it("shows the default avatar for a project chat whose agent has no avatar", async () => {
+    dispose?.();
+    fetchSessions.mockResolvedValue({ items: [{ agentId: "agent-1", sessionId: "s1", projectId: "project-1", title: "Draft", firstUserMessage: "", lastActivity: 1, pinned: null }] });
+    dispose = render(() => <ChatProject />, container);
+    await vi.waitFor(() => expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("agent-1")));
+  });
+
+  it("shows the default avatar for an agent with no avatar in the agent picker", async () => {
+    await tick();
+    within(container).getAllByRole("button", { name: "New chat" })[0].click();
+    await vi.waitFor(() => expect(defaultAvatarSources(document.body)).toContain(defaultAvatarUrl("agent-2")));
+  });
+
   it("swaps title to input on click and saves on Enter", async () => {
     await tick();
     renameProject.mockResolvedValue({});

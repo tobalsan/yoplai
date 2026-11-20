@@ -61,6 +61,7 @@ import {
   notificationSoundEnabled,
   toggleNotificationSound,
 } from "../lib/chat-notifications";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -796,17 +797,18 @@ export function ChatView() {
           </svg>
         </A>
         <div class="agent-info">
-          <Show when={agent()?.avatar}>
-            {(avatar) => (
-              <div class="agent-avatar">
-                {isEmoji(avatar()) ? (
-                  <span class="avatar-emoji">{avatar()}</span>
-                ) : (
-                  <img src={avatar()} alt={agent()?.name} class="avatar-img" />
-                )}
-              </div>
-            )}
-          </Show>
+          <div class="agent-avatar">
+            <Show
+              when={agent()?.avatar}
+              fallback={<img src={defaultAvatarUrl(params.agentId)} alt="" class="avatar-img" />}
+            >
+              {(avatar) => isEmoji(avatar()) ? (
+                <span class="avatar-emoji">{avatar()}</span>
+              ) : (
+                <img src={avatar()} alt={agent()?.name} class="avatar-img" />
+              )}
+            </Show>
+          </div>
           <div class="agent-info-text">
             <div class="agent-title-row">
               <div class="agent-name">{agent()?.name ?? "Loading..."}<RemoteAgentMark gateway={agent()?.gateway} /></div>
@@ -942,9 +944,7 @@ export function ChatView() {
             when={agent()?.avatar}
             fallback={
               <div class="hero-avatar">
-                <span class="avatar-emoji">
-                  {agent()?.name?.[0]?.toUpperCase() ?? "A"}
-                </span>
+                <img src={defaultAvatarUrl(params.agentId)} alt="" class="avatar-img" />
               </div>
             }
           >

@@ -49,6 +49,7 @@ import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { teamRemovalWarning } from "../lib/team-removal";
 import { usePrivateItemsVisibility, visibleDashboards } from "../lib/private-items";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -675,7 +676,7 @@ export function EditAgent() {
         <Show when={agent()}>
           {(current) => (
             <div class="edit-agent-header">
-              <Show when={current().avatar}>
+              <Show when={current().avatar} fallback={<div class="edit-agent-avatar"><img src={defaultAvatarUrl(params.agentId)} alt={current().name} class="avatar-img" /></div>}>
                 {(avatar) => (
                   <div class="edit-agent-avatar">
                     {isEmoji(avatar()) ? (

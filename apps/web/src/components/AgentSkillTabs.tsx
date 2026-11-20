@@ -1,6 +1,7 @@
-import { For, Show, createResource, type JSX } from "solid-js";
+import { For, createResource, type JSX } from "solid-js";
 import { fetchAgents } from "../api/agents";
 import type { SkillRow } from "../api/skills";
+import { AgentAvatarFill } from "./AgentAvatarFill";
 
 // One tab per agent that owns workspace skills. The caller keeps the selected tab and renders each row as an <li>.
 export function AgentSkillTabs(props: { rows: SkillRow[]; selected: string | undefined; onSelect: (agentId: string) => void; renderRow: (row: SkillRow) => JSX.Element }) {
@@ -26,7 +27,7 @@ export function AgentSkillTabs(props: { rows: SkillRow[]; selected: string | und
   };
   return <>
     <div class="skills-tabs" role="tablist" aria-label="Agents" onKeyDown={moveTab}><For each={agentTabs()}>{(tab) => <button type="button" role="tab" class="skills-tab" data-agent={tab.id} aria-selected={activeAgent() === tab.id} tabindex={activeAgent() === tab.id ? 0 : -1} onClick={() => props.onSelect(tab.id)}>
-      <span class="skills-tab-avatar" aria-hidden="true"><Show when={avatarOf(tab.id)} fallback={tab.name.slice(0, 1).toUpperCase()}>{(avatar) => <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}><img src={avatar()} alt="" /></Show>}</Show></span>
+      <span class="skills-tab-avatar" aria-hidden="true"><AgentAvatarFill avatar={avatarOf(tab.id)} agentId={tab.id} /></span>
       {tab.name}<span class="skills-tab-count">{tab.count}</span></button>}</For></div>
     <div role="tabpanel" aria-label={agentTabs().find((tab) => tab.id === activeAgent())?.name}><ul class="skills-list"><For each={props.rows.filter((row) => (row.agentId ?? "") === activeAgent())}>{props.renderRow}</For></ul></div>
     <style>{`
