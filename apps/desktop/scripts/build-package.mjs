@@ -9,6 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { checkBuilderEnv, releaseOptions, stapleRelease } from "./mac-release.mjs";
+import { checkGateway, pruneGateway, reportGatewaySize } from "./prune-gateway.mjs";
 
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(desktopDir, "../..");
@@ -79,23 +80,30 @@ fs.cpSync(path.join(repoRoot, "apps/web/dist"), webOutDir, { recursive: true });
 // Restore the saved state after the deploy, so the next command needs no install.
 const workspaceState = fs.existsSync(workspaceStateFile) ? fs.readFileSync(workspaceStateFile) : undefined;
 try {
-  run("pnpm", ["--filter", "@yoplai/gateway", "deploy", "--prod", "--legacy", stageDir]);
+  // The copy option prevents the second store copy on macOS with pnpm 12.3.4.
+  run("pnpm", ["--filter", "@yoplai/gateway", "deploy", "--prod", "--legacy", "--config.package-import-method=copy", stageDir]);
 } finally {
   if (workspaceState) fs.writeFileSync(workspaceStateFile, workspaceState);
 }
 
 pruneStage(stageDir);
+pruneGateway(stageDir, "before-rebuild");
 
 run("pnpm", [
   "--filter", "@yoplai/desktop", "exec", "electron-rebuild",
   "--force", "--module-dir", stageDir, "--version", electronVersion, "--arch", ARCH,
 ]);
 
+pruneGateway(stageDir, "after-rebuild");
+checkGateway(stageDir);
+reportGatewaySize(stageDir);
+
 const builderArgs = ["--filter", "@yoplai/desktop", "exec", "electron-builder", "--config", "electron-builder.yml"];
 if (release) checkBuilderEnv(desktopDir);
 run("pnpm", [...builderArgs, ...(release?.args ?? [])], { cwd: desktopDir });
 
 const releaseDir = path.join(desktopDir, release ? "release/signed" : "release");
+checkGateway(path.join(releaseDir, "mac-arm64", "Yoplai.app", "Contents", "Resources", "gateway"));
 if (release) {
   const { version } = JSON.parse(fs.readFileSync(path.join(desktopDir, "package.json"), "utf8"));
   stapleRelease(releaseDir, version, release.env);

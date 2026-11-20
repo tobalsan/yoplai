@@ -2,6 +2,8 @@
 
 `pnpm --filter @yoplai/desktop dist` makes an ad-hoc build in `apps/desktop/release`. It does not use a certificate or the notary service.
 
+The desktop build uses pnpm copy mode to prevent a second gateway store. It prunes unused package files and keeps the runtime assets and license files. It checks the assets in the stage and in the app. Electron keeps English and French locales.
+
 ## Set up a release Mac
 
 1. In Keychain Access, create a certificate signing request (CSR) with Certificate Assistant.

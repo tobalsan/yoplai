@@ -1,5 +1,6 @@
 appId: ai.yoplai.desktop
 productName: Yoplai
+electronLanguages: [en, fr]
 directories:
   output: release
 # Only the compiled shell goes in the asar. The gateway, the web UI, and the templates sit outside it.
@@ -33,4 +34,5 @@ mac:
     - target: dmg
       arch: arm64
 dmg:
+  format: ULFO
   sign: false
