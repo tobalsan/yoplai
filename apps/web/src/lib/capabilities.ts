@@ -69,11 +69,29 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
   return loadPromise;
 }
 
+let queuedReload: Promise<CapabilitiesResponse> | null = null;
+
+/**
+ * Reads the capabilities after a local write. A read already in flight may have started before the write,
+ * so one more read is queued behind it. Writes that finish meanwhile share that one queued read.
+ */
+export function reloadCapabilities(): Promise<CapabilitiesResponse> {
+  if (!loadPromise) return loadCapabilities();
+  queuedReload ??= loadPromise
+    .catch(() => undefined)
+    .then(() => {
+      queuedReload = null;
+      return loadCapabilities();
+    });
+  return queuedReload;
+}
+
 export function resetCapabilitiesForTests(): void {
   setCapabilities({ ...defaultCapabilities, gatewayLink: undefined });
   setCapabilitiesReady(false);
   setCapabilitiesFailed(false);
   loadPromise = null;
+  queuedReload = null;
 }
 
 export function setCapabilitiesForTests(

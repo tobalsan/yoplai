@@ -40,6 +40,7 @@ import {
   capabilitiesReady,
   capabilities,
   loadCapabilities,
+  reloadCapabilities,
 } from "./lib/capabilities";
 import {
   toggleSidebarCollapsed,
@@ -99,7 +100,7 @@ function Layout(props: { children?: JSX.Element }) {
     // A local write carries no gateway name, which a CustomEvent holds as null. It changes the extensions
     // the gateway loaded, so the app reads the capabilities again.
     const refreshCapabilities = (event: Event) => {
-      if (event instanceof CustomEvent && event.detail === null) void loadCapabilities().catch(() => undefined);
+      if (event instanceof CustomEvent && event.detail === null) void reloadCapabilities().catch(() => undefined);
     };
     window.addEventListener(releaseCatalogChanged, refreshCapabilities);
     onCleanup(() => window.removeEventListener(releaseCatalogChanged, refreshCapabilities));

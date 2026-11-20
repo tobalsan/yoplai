@@ -39,7 +39,7 @@ export default function AdminMcpServersPage() {
   );
   // The catalog of another gateway is never current data. Server names repeat across gateways.
   const servers = createMemo<McpCatalogServer[] | undefined>(() => {
-    if (result.error || !choice.ready()) return undefined;
+    if (result.error || !choice.ready() || !mcpOn()) return undefined;
     // `latest` keeps the last data while a read runs, and it does not suspend the page.
     const value = result.latest;
     return value?.key === gatewayKey(gateway()) ? value.servers : undefined;
@@ -172,7 +172,7 @@ export default function AdminMcpServersPage() {
     >
       <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
       <Show when={missing()}>{(selection) => <p class="mcps-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
-      <Show when={requester().ready && requester().unknown}>
+      <Show when={choice.ready() && requester().ready && requester().unknown}>
         <RequesterFailure requester={requester} class="mcps-error">Could not read your permissions on {gateway() ?? "this gateway"}. The controls stay off.</RequesterFailure>
       </Show>
       <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
