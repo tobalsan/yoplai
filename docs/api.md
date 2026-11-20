@@ -48,6 +48,54 @@ Unknown/revoked tokens and deleted sessions return 404. The share store is
 `$YOPLAI_HOME/chat-shares.json`; it never contributes to agent prompts.
 Media download permissions are unchanged: the shared UI renders filenames only.
 
+## Desktop setup and model access
+
+The Yoplai Desktop app uses these routes for first-run setup. They are not a
+general API. `GET /api/capabilities` reports `desktopSetup: true` only when the
+request passes the desktop access checks below.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET/PUT | `/api/desktop-setup` | Read or patch the setup state |
+| GET | `/api/desktop-setup/turns/:agentId/:sessionId/:turnId` | `{ state }`: `none`, `running`, `answered` or `failed` |
+| GET | `/api/model-access` | `{ external, owned, oauthProviders, apiKeyProviders, attempts }` |
+| POST | `/api/model-access/oauth/:provider` | Start sign-in for `openai-codex` or `anthropic`; body `{ replace?, warningAccepted? }`. Returns `202` with the attempt, or `200` with the existing attempt and `resumed: true`. |
+| GET | `/api/model-access/oauth/attempts/:handle` | Read `{ handle, provider, state, message? }` |
+| POST | `/api/model-access/oauth/attempts/:handle/answer` | Submit `{ code }`; returns the attempt |
+| POST | `/api/model-access/oauth/attempts/:handle/cancel` | Cancel without a body; returns the attempt |
+| POST | `/api/model-access/api-key` | Body `{ provider, key, checkOnly?, replace? }`; returns `{ provider, model, ready, saved }` |
+| POST | `/api/model-access/external/:source` | Body `{ enabled, warningAccepted? }` for `codex`, `claude-code`, `opencode`, `pi` |
+| GET | `/api/model-access/models` | `{ models: [{ provider, model, name, source, ready, default, free }] }` |
+| POST | `/api/model-access/models/check` | Body `{ provider, model }`; `{ provider, model, ready }` (`422` with `message` if not ready) |
+| DELETE | `/api/model-access/:provider` | Remove the owned credential (`204`) |
+| POST | `/api/agents` | Create a desktop agent (same guard as the routes above) |
+
+Attempt `state` is `waiting-browser`, `waiting-code`, `done`, `failed`, or
+`cancelled`. Model access responses do not return stored keys. Use
+`checkOnly: true` to check an API key without saving it.
+
+These routes require `YOPLAI_DESKTOP=1`, relay enabled, and multi-user mode off.
+The listener, socket peer and all forwarded addresses must be loopback. `Host`
+must be `127.0.0.1`, `localhost` or `[::1]` with the gateway port. `Origin`, if
+present, must be an HTTP origin using one of those hosts on the UI port. `Sec-Fetch-Site` must be absent, `same-origin` or `none`.
+The guard returns `403 desktop_setup_unavailable` when access is denied and
+`415 json_required` for nonempty write bodies without `application/json`.
+Responses use `Cache-Control: no-store`.
+
+Setup state is saved in `$YOPLAI_HOME/desktop-setup.json`. PUT accepts a partial
+`DesktopSetupStateSchema` and returns the saved state. Setting `completed: true`
+requires the saved `firstChat` (`{ agentId, sessionId, turnId }`) to match an
+answered turn. Changing `firstChat` clears completion. To retry a claimed,
+failed greeting, submit the same agent and session with a fresh UUID in
+`firstChat.turnId` and the old UUID in `retryOf`. If the failed turn is no longer
+current, the gateway returns `409 retry_conflict`.
+
+Agent creation takes `{ requestId, name, purpose?, avatar, model: { provider,
+model } }`. Use a UUID for `requestId`, an integer from 1 to 10 for `avatar`, and
+an eligible model from the model list. The response is `{ id, instructions }`,
+where `instructions` is `model` or `template` (`201` for creation, `200` when
+reusing a saved request ID).
+
 ## Extension catalog
 
 | Method | Path | `200` response |

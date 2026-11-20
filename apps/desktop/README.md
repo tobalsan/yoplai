@@ -1,8 +1,6 @@
 # Desktop packaging
 
-`pnpm --filter @yoplai/desktop dist` makes an ad-hoc build in `apps/desktop/release`. It does not use a certificate or the notary service.
-
-The desktop build uses pnpm copy mode to prevent a second gateway store. It prunes unused package files and keeps the runtime assets and license files. It checks the assets in the stage and in the app. Electron keeps English and French locales.
+On Apple Silicon, `pnpm --filter @yoplai/desktop dist` builds an ad-hoc-signed `Yoplai.app` and DMG in `apps/desktop/release`. It does not use a Developer ID certificate or the notary service.
 
 ## Set up a release Mac
 
@@ -46,6 +44,4 @@ Use `pnpm desktop --fresh` or `YOPLAI_DESKTOP_FRESH=1 pnpm desktop` for a new te
 
 **CAUTION:** Do not run a second gateway on the same home. Both gateways can write to the same state files.
 
-The desktop seed creates a config only if neither `yoplai.json` nor `aihub.json` exists. It adds `OAUTH_ENCRYPTION_KEY` to `.env` only if both the shell and the file lack the key. The seed does not change agent or session files. If the config lacks agent discovery rules or a usable `oauth.encryptionKey`, the desktop app warns but does not change the config.
-
-The gateway makes separate writes at start. The dashboard registry migration writes `canvas/schema.json` and can update `canvas/registry.json`. The gateway also resets `run/active-turns.json` to an empty turn list.
+In persistent mode, the desktop seed leaves existing config, agent, and session files alone. It creates a config if neither `yoplai.json` nor `aihub.json` exists, and adds `OAUTH_ENCRYPTION_KEY` to `.env` only if neither the shell nor the file defines it. It warns about missing agent discovery rules or an unusable `oauth.encryptionKey` without rewriting the config.

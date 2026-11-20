@@ -6,15 +6,7 @@ Self-hosted gateway for running AI agents through a web UI, CLI, messaging chann
 
 Yoplai keeps configuration, conversations, and project data on your machine. Start with one agent locally, then add channels, automation, authentication, or container isolation as needed.
 
-## Extension catalog
-
-Open **Admin → Extensions** to browse the catalog. Use the search field or the category filters to find an extension.
-Use **Install**, **Update**, or **Remove** on an extension. If an action fails, read the error on the extension row.
-Use the gateway selector for a linked gateway. In multi-user mode, the selected gateway requires a superadmin.
-Catalog changes do not require a restart. The catalog does not replace or remove extensions that you manage by hand.
-The gateway stops the bundle check after 30 seconds and reports an error.
-If the gateway cannot restore an extension, it keeps the backup.
-The gateway stops serving that extension and the extensions that need it.
+See the [desktop guide](apps/desktop/README.md) to run Yoplai in a desktop window or build the macOS app.
 
 ## What you get
 
