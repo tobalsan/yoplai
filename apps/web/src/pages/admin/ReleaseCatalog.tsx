@@ -12,6 +12,10 @@ const badge = (entry: ReleaseCatalogRow) => ({ available: "Available", installed
 const label = (entry: ReleaseCatalogRow) => entry.name ?? entry.id;
 const usage = (entry: ReleaseCatalogRow) => `Used by ${entry.usedByAgents} ${entry.usedByAgents === 1 ? "agent" : "agents"}`;
 
+/** A linked-gateway call whose result is unknown: a dropped connection, or the relay 502 after a timeout or unreadable reply. */
+const lostResponse = (error: unknown) => error instanceof TypeError ||
+  (error instanceof Error && (error.message === "gateway_offline" || error.message === "invalid_remote_response"));
+
 export function ReleaseCatalog(props: {
   gateway: GatewayName; ready: boolean; canWrite: boolean; icon: (url?: string) => JSX.Element; onChange: () => void;
 }) {
@@ -30,6 +34,7 @@ export function ReleaseCatalog(props: {
   const [confirm, setConfirm] = createSignal<string>();
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
   const [errors, setErrors] = createSignal<Record<string, string | undefined>>({});
+  const [unknownRows, setUnknownRows] = createSignal<Record<string, boolean>>({});
   let visit = 0;
   createComputed(() => {
     void [props.gateway, props.ready];
@@ -39,6 +44,7 @@ export function ReleaseCatalog(props: {
     setCategory(undefined);
     setPending({});
     setErrors({});
+    setUnknownRows({});
   });
   onCleanup(() => { visit++; });
   const categories = createMemo(() => Array.from(new Set(data()?.entries.flatMap((entry) => entry.category ? [entry.category] : []))).sort());
@@ -53,6 +59,16 @@ export function ReleaseCatalog(props: {
     setPending((all) => ({ ...all, [item.id]: true }));
     setErrors((all) => ({ ...all, [item.id]: undefined }));
     try {
+      if (unknownRows()[item.id]) {
+        const fresh = await fetchReleaseCatalog(gateway);
+        if (mine !== visit) return;
+        if (!fresh) throw new Error("Could not read the current catalog.");
+        setUnknownRows((all) => ({ ...all, [item.id]: false }));
+        mutate({ key: gatewayKey(gateway), data: fresh });
+        window.dispatchEvent(new CustomEvent(releaseCatalogChanged, { detail: gateway }));
+        props.onChange();
+        return;
+      }
       const entry = await changeReleaseCatalog(gateway, item.id, remove);
       window.dispatchEvent(new CustomEvent(releaseCatalogChanged, { detail: gateway }));
       if (mine !== visit) return;
@@ -61,7 +77,12 @@ export function ReleaseCatalog(props: {
       props.onChange();
       await refetch();
     } catch (error) {
-      if (mine === visit) setErrors((all) => ({ ...all, [item.id]: error instanceof Error ? error.message : "The extension operation failed." }));
+      if (mine !== visit) return;
+      if (gateway !== undefined && !remove && lostResponse(error)) {
+        setUnknownRows((all) => ({ ...all, [item.id]: true }));
+      } else {
+        setErrors((all) => ({ ...all, [item.id]: error instanceof Error ? error.message : "The extension operation failed." }));
+      }
     } finally {
       if (mine === visit) setPending((all) => ({ ...all, [item.id]: false }));
     }
@@ -100,8 +121,10 @@ export function ReleaseCatalog(props: {
                   <span class="top-sub">{[entry.category, entry.version ?? entry.installedVersion].filter(Boolean).join(" · ")}</span>
                 </div>
                 <div class="release-catalog-actions">
-                  <span class="release-catalog-badge" data-state={entry.state}>{badge(entry)}</span>
-                  <Show when={props.canWrite}>
+                  <span class="release-catalog-badge" data-state={unknownRows()[entry.id] ? "unknown" : entry.state}>
+                    {unknownRows()[entry.id] ? "Outcome unknown" : badge(entry)}
+                  </span>
+                  <Show when={props.canWrite && !unknownRows()[entry.id]}>
                     <Show when={entry.state === "available" || entry.state === "update"}>
                       <Button variant="primary" disabled={pending()[entry.id]} onClick={() => void change(entry, false)}>
                         {entry.state === "update" ? "Update" : "Install"}
@@ -110,6 +133,9 @@ export function ReleaseCatalog(props: {
                     <Show when={entry.installedVersion && entry.state !== "manual"}>
                       <Button disabled={pending()[entry.id]} onClick={() => setConfirm(entry.id)}>Remove</Button>
                     </Show>
+                  </Show>
+                  <Show when={props.canWrite && unknownRows()[entry.id]}>
+                    <Button disabled={pending()[entry.id]} onClick={() => void change(entry, false)}>Check current status</Button>
                   </Show>
                 </div>
               </div>
@@ -125,6 +151,9 @@ export function ReleaseCatalog(props: {
                   confirmLabel="Confirm removal" danger onCancel={() => setConfirm(undefined)} onConfirm={() => change(entry, true)} />
               </Show>
               <Show when={pending()[entry.id]}><p class="release-catalog-detail" role="status">Operation in progress.</p></Show>
+              <Show when={unknownRows()[entry.id]}>
+                <p class="release-catalog-detail top-error" role="alert">The result is unknown because the response was lost. Check the current status before retrying.</p>
+              </Show>
               <Show when={errors()[entry.id]}><p class="release-catalog-detail top-error" role="alert">{errors()[entry.id]}</p></Show>
             </article>
           )}</For>

@@ -376,6 +376,65 @@ it("recovers a rename without a reload while a new create waits for the recovery
   expect((await list()).map(({ id }: { id: string }) => id)).toEqual(["new", "recovered"]);
 });
 
+it("keeps the last successful publication when a queued create fails", async () => {
+  const { withExtensionMutation } = await import("../extensions/registry.js");
+  const { reloadAfterExtensionWrite } = await import("../extensions/reload.js");
+  expect(await list()).toEqual([]);
+  const resume = deferred();
+  const held = withExtensionMutation(() => resume.promise);
+  const renamed = deferred();
+  beforeRename.next = async () => { renamed.resolve(); };
+  const publish = reloadAfterExtensionWrite();
+  const input = body("Queued");
+  const pending = create(input);
+  try {
+    await renamed.promise;
+    await fixture(dir("latest"));
+    await config({ agents: "agents/latest" });
+    // The public create should now be queued behind the successful reload.
+    expect(await Promise.race([pending.then(() => "returned"), new Promise((resolve) => setTimeout(resolve, 80, "waiting"))])).toBe("waiting");
+    await fs.access(path.join(dir("queued"), ".desktop-create.json"));
+  } finally {
+    resume.resolve();
+  }
+  await held;
+  await publish;
+  const result = await pending;
+  expect(result.status).toBe(500);
+  expect(await result.json()).toMatchObject({ error: "reload_failed" });
+  expect(await list()).toEqual([expect.objectContaining({ id: "latest" })]);
+  await config();
+  const retry = await create(input);
+  expect(retry.status).toBe(200);
+  expect(await retry.json()).toEqual({ id: "queued", instructions: "template" });
+  expect(await fs.readdir(dir(""))).toEqual(["latest", "queued"]);
+});
+
+it("publishes a created agent even when an unrelated extension reload hook throws", async () => {
+  const { reloadConfig } = await import("../config/index.js");
+  const { loadExtensions } = await import("../extensions/registry.js");
+  const folder = path.join(home, "extensions", "throwing");
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(path.join(folder, "package.json"), '{"type":"module"}');
+  await fs.writeFile(path.join(folder, "index.js"), `export default {
+    id: "throwing", displayName: "Throwing", description: "Fixture", dependencies: [],
+    configSchema: { parse: (value) => value, safeParse: (data) => ({ success: true, data }) },
+    validateConfig: () => ({ valid: true, errors: [] }),
+    routePrefixes: [], registerRoutes() {}, start() {}, stop() {}, capabilities: () => [],
+    onConfigReload() { throw new Error("Fixture reload rejected."); },
+  };`);
+  await fs.writeFile(path.join(home, "yoplai.json"), JSON.stringify({
+    version: 3, agents: agentsGlob, extensions: { throwing: { enabled: true } },
+  }));
+  await loadExtensions(reloadConfig());
+  const warn = vi.spyOn(console, "warn");
+  const res = await create(body("Published"));
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("throwing config reload hook failed: Fixture reload rejected."));
+  expect(res.status).toBe(201);
+  expect(await res.json()).toMatchObject({ id: "published" });
+  expect(await list()).toEqual([expect.objectContaining({ id: "published" })]);
+});
+
 it("keeps the agent on disk after a reload failure and reloads it on retry", async () => {
   const input = body("Repair");
   validate.next = async () => { throw new Error("Internal test detail."); };

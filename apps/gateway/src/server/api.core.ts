@@ -1,6 +1,6 @@
 import { allowsCatalogWriteOrigin } from "./extension-catalog-policy.js";
 import { CatalogOperationError, installFromCatalog, listReleaseCatalog, removeFromCatalog } from "../extensions/release-catalog.js";
-import { ExtensionOperationBusyError } from "../extensions/registry.js";
+import { ExtensionOperationBusyError, withExtensionMutation } from "../extensions/registry.js";
 import { desktopSetupAllowed } from "../desktop/guard.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
@@ -286,11 +286,11 @@ function extensionCatalogError(c: Context, error: unknown) {
 }
 
 api.get(extensionCatalogPath, async (c) => {
-  try { return c.json(await listReleaseCatalog(loadConfig())); }
+  try { return c.json(await withExtensionMutation(() => listReleaseCatalog(loadConfig()), true)); }
   catch (error) { return extensionCatalogError(c, error); }
 });
 api.post(`${extensionCatalogPath}/refresh`, async (c) => {
-  try { return c.json(await listReleaseCatalog(loadConfig(), true)); }
+  try { return c.json(await withExtensionMutation(() => listReleaseCatalog(loadConfig(), true), true)); }
   catch (error) { return extensionCatalogError(c, error); }
 });
 api.post(`${extensionCatalogPath}/:id/install`, async (c) => {

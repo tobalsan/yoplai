@@ -30,7 +30,7 @@ describe("createExtensionContext media helpers", () => {
     const { createExtensionContext, bindExtensionContext } = await import("./context.js");
     const { loadConfig } = await import("../config/index.js");
     const { validateContainerToken, getContainerTokenUserId, getContainerTokenContext } = await import("../sdk/container/tokens.js");
-    const ctx = bindExtensionContext(createExtensionContext(loadConfig()), "scheduler");
+    const ctx = bindExtensionContext(createExtensionContext(loadConfig()), { id: "scheduler" });
     const minted = ctx.mintToolToken!({ agentId: "alpha", userId: "alice", sessionId: "scheduler:job:run", runId: "run" });
     try {
       expect(validateContainerToken(minted.token, "alpha")).toBe(true);
@@ -738,7 +738,7 @@ describe("updateAgentExtensionConfig host API", () => {
 
   it("lets a bound extension write only its own config", async () => {
     const { mod, writer } = await load();
-    const ctx = mod.bindExtensionContext(mod.createExtensionContext({} as GatewayConfig), "threadit");
+    const ctx = mod.bindExtensionContext(mod.createExtensionContext({} as GatewayConfig), { id: "threadit" });
     await expect(ctx.updateAgentExtensionConfig!("bot", "slack", {})).rejects.toThrow(/only write its own/);
     expect(writer).not.toHaveBeenCalled();
     await ctx.updateAgentExtensionConfig!("bot", "threadit", { enabled: true });

@@ -94,7 +94,7 @@ export async function startGatewayCommand(
   }
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
-    await extension.start(bindExtensionContext(extensionContext, extension.id));
+    await extension.start(bindExtensionContext(extensionContext, extension));
   }
   (await import("../dream/service.js")).startDreamTimers();
   (await import("../model-quota/runtime.js")).startModelQuotaPollers(config.modelQuota?.enabled === true);
@@ -102,7 +102,7 @@ export async function startGatewayCommand(
   // Allow extensions enabled at runtime (via the per-agent PATCH endpoint or a
   // config-file edit) to be brought online without a restart.
   setExtensionActivator(async (extension) => {
-    await extension.start(bindExtensionContext(extensionContext, extension.id));
+    await extension.start(bindExtensionContext(extensionContext, extension));
   }, buildInnerApi, innerApi);
 
   startServer(port, opts.host, extensionRuntime);

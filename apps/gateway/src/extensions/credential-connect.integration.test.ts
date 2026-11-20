@@ -64,7 +64,7 @@ it("uses host credential hooks from a genuinely discovered file-URL extension", 
   const toolContext: ExtensionAgentToolContext = { agent: agent!, config };
   const provider = vi.fn(async () => "https://gateway.test/connect/link");
   const unregisterProvider = registerCredentialConnectLinkProvider(provider);
-  await extension.start(bindExtensionContext(context, extension.id));
+  await extension.start(bindExtensionContext(context, extension));
   try {
     expect(extension.foreign).toThrow("only register its own");
     await expect(extension.request(toolContext, target)).resolves.toBe("https://gateway.test/connect/link");

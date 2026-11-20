@@ -689,15 +689,15 @@ A valid `.install.json` in an extension folder marks a catalog install. A symlin
 One lock protects catalog changes, file-based config reloads, and config reconciliation.
 New agent forks use the same lock to reload config. Independent reload requests wait for the lock.
 The gateway refuses a config write from its own extension hook before it changes the file.
-The gateway publishes new routes and OAuth providers without a restart.
-If reconciliation or a reload hook fails, the gateway restores the files before it restarts the old objects.
-If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.
-The catalog reports the first error if the move of the new bundle and the backup restore both fail.
+The registry stops affected extensions before moving their live files. It publishes the new set after activation succeeds.
+If activation or a reload hook fails, the registry reverses completed file moves before restarting stopped extensions.
+If file recovery or restart fails, it withdraws that extension and its dependents and reports both errors. Failed restarts can be retried by the next reload.
+After a crash between renames, recovery from `.trash` is manual (see [extensions](extensions.md#catalog-installs-and-manual-installs)).
 If route registration fails during recovery, the server uses the core API and the gateway still stops the unavailable extensions.
 The next config reload or catalog change tries to build the extension API again.
 An active run can still hold an old tool.
 The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
-The catalog shows the gateway error on the extension row.
+The catalog shows the gateway error on the extension row. If a linked install loses its response, the row asks for a fresh read before retry.
 `scripts/dev.ts` excludes both paths to the extension folder from `tsx watch`: the configured path and its real path.
 The default folder is `$YOPLAI_HOME/extensions`.
 Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. The relay checks the browser origin for a linked write. It does not send that header to the linked gateway.

@@ -48,7 +48,7 @@ describe("extension browser pages", () => {
     runtime.load([extension]);
     const { bindExtensionContext, createExtensionContext } = await import("../extensions/context.js");
     const { loadConfig } = await import("../config/index.js");
-    await extension.start(bindExtensionContext(createExtensionContext(loadConfig()), extension.id));
+    await extension.start(bindExtensionContext(createExtensionContext(loadConfig()), extension));
     ({ app } = await import("./index.js"));
   });
   afterAll(async () => {

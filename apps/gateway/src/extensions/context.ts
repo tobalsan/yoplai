@@ -71,12 +71,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Bind extension-owned connector registration to the extension being started. */
-export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
+export function bindExtensionContext(context: ExtensionContext, extension: Pick<Extension, "id" | "registerPageRoutes">): ExtensionContext {
+  const extensionId = extension.id;
   const credentialConnect = context.credentialConnect;
   const writeConfig = context.updateAgentExtensionConfig;
   return {
     ...context,
-    pageRoutePrefix: getLoadedExtensions().some((extension) => extension.id === extensionId && extension.registerPageRoutes)
+    pageRoutePrefix: extension.registerPageRoutes
       ? `/x/${encodeURIComponent(extensionId)}` : undefined,
     updateAgentExtensionConfig: writeConfig && (async (agentId, targetId, patch) => {
       if (targetId !== extensionId) throw new Error("An extension can only write its own config.");

@@ -7,9 +7,8 @@ import {
   type GatewayConfig, type InstallRecord, type ReleaseCatalogEntry, type ReleaseCatalogRow, type ReleaseCatalogView,
 } from "@yoplai/shared";
 import {
-  getExternalExtensionsPath, getLoadedExtensions, markExtensionUnavailable, reconcileExternal, reservedExtensionIds, withExtensionMutation,
+  getExternalExtensionsPath, getLoadedExtensions, reconcileExternal, reservedExtensionIds, withExtensionMutation,
 } from "./registry.js";
-import { logError } from "../logging.js";
 import { defaultCatalogUrl, fetchReleaseCatalog } from "./release-catalog-fetch.js";
 import { stageReleaseBundle } from "./release-bundle.js";
 
@@ -134,6 +133,42 @@ async function cleanFolder(folder: string) {
   catch { console.warn("Could not remove the extension work folder."); }
 }
 
+function prepareFileChange(id: string, target: string, trash: string, previous: InstallRecord | undefined, staging?: string) {
+  let backedUp = false;
+  let installed = false;
+  return {
+    id,
+    async apply() {
+      const current = await checkTarget(target);
+      if (current?.sha256 !== previous?.sha256) {
+        throw new CatalogOperationError(409, "The extension folder changed during the operation.");
+      }
+      if (previous) {
+        await fs.rename(target, trash);
+        backedUp = true;
+      }
+      if (staging) {
+        if (await checkTarget(target)) throw new CatalogOperationError(409, "The extension folder changed during the operation.");
+        await fs.rename(staging, target);
+        installed = true;
+      }
+    },
+    async restore() {
+      if (installed && staging) {
+        if (!(await checkTarget(target))) throw new Error("The installed extension folder is missing.");
+        await fs.rename(target, staging);
+      }
+      if (backedUp) {
+        if (await lstat(target)) throw new Error("The extension folder changed during the operation.");
+        await fs.rename(trash, target);
+      }
+    },
+    async discardBackup() {
+      if (backedUp) await cleanFolder(trash);
+    },
+  };
+}
+
 export function installFromCatalog(config: GatewayConfig, id: string, actor: string) {
   return withExtensionMutation(async () => {
     checkId(id);
@@ -157,28 +192,7 @@ export function installFromCatalog(config: GatewayConfig, id: string, actor: str
       await checkCollision(root, id);
       const trash = path.join(await makeWorkFolder(root, ".trash"), `${id}-${randomUUID()}`);
       const previous = await checkTarget(target);
-      if (previous) await fs.rename(target, trash);
-      try {
-        if (await checkTarget(target)) throw new CatalogOperationError(409, "The extension folder changed during the operation.");
-        await fs.rename(staging, target);
-      } catch (error) {
-        if (previous) {
-          try {
-            if (await lstat(target)) throw new Error("The extension folder changed during the operation.");
-            await fs.rename(trash, target);
-          } catch (failure) {
-            logError("Could not restore extension files", failure);
-            await markExtensionUnavailable(id);
-          }
-        }
-        throw error;
-      }
-      await reconcileExternal(config, { requiredExternalId: id, fileChange: { id, restore: async () => {
-        if (!(await checkTarget(target))) throw new Error("The installed extension folder is missing.");
-        await fs.rm(target, { recursive: true });
-        if (previous) await fs.rename(trash, target);
-      } } });
-      if (previous) await cleanFolder(trash);
+      await reconcileExternal(config, { requiredExternalId: id, fileChange: prepareFileChange(id, target, trash, previous, staging) });
       return { entry: row(config, id, entry, install), action: previous ? "extension.update" : "extension.install", previousSha256: previous?.sha256 ?? null };
     } finally {
       await cleanFolder(staging);
@@ -198,12 +212,7 @@ export function removeFromCatalog(config: GatewayConfig, id: string) {
     await checkCollision(root, id);
     const previous = await checkTarget(target);
     if (!previous) throw new CatalogOperationError(404, "Extension not found.");
-    await fs.rename(target, trash);
-    await reconcileExternal(config, { fileChange: { id, restore: async () => {
-      if (await lstat(target)) throw new Error("The extension folder changed during the operation.");
-      await fs.rename(trash, target);
-    } } });
-    await cleanFolder(trash);
+    await reconcileExternal(config, { fileChange: prepareFileChange(id, target, trash, previous) });
     return previous.sha256;
   });
 }

@@ -13,6 +13,11 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
 
+### Fixed
+
+- The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
+- Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
+
 ### Added
 
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.
@@ -104,9 +109,10 @@ Breaking changes are marked **⚠ BREAKING**.
 - `pnpm dev` keeps the gateway online when the catalog changes bundles in a custom or symlinked extension folder.
 
 - The extension catalog records the actor and bundle digests for installs, updates, and removals.
-- Config reloads wait for catalog changes. If a reload hook fails, the catalog restores the previous bundle.
-- If file recovery fails, the gateway keeps the backup and stops serving the extension and the extensions that need it.
-- The catalog reports the first error if the move of the new bundle and the backup restore both fail.
+- Catalog updates and removals stop extensions while their files are still in place. Recovery reports both failures and withdraws extensions that cannot restart and their dependents.
+- Hot-installed extensions get their own page route prefix at startup.
+- A linked install that loses its response shows an unknown outcome and asks the user to check current status before retrying.
+- A failed desktop agent create keeps the latest published configuration and can be retried with the same request ID.
 - If the gateway cannot rebuild the extension routes during recovery, it stops the unavailable extensions and serves only core API routes.
 - New agent forks wait for catalog changes before they reload the gateway config.
 - The gateway refuses a config write from its own extension hook before it changes the file.
