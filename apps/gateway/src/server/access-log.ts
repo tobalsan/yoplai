@@ -102,7 +102,7 @@ export function accessLogger(): MiddlewareHandler {
     if (c.res.status < 300 && elapsedMs <= SLOW_REQUEST_MS) return;
 
     console.log(
-      `--> ${c.req.method} ${c.req.path} ${c.res.status} ${elapsedMs}ms`
+      `--> ${c.req.method} ${redactedTarget(c.req.path) ?? c.req.path} ${c.res.status} ${elapsedMs}ms`
     );
   };
 }
