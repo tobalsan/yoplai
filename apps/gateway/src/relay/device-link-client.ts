@@ -31,6 +31,8 @@ export type DeviceLinkManagerOptions = {
   executor: DeviceExecutor;
   /** The linked gateways. The list is empty while the relay is off. */
   getGateways: () => RemoteGateway[];
+  /** Live runtime policy, checked independently of gateway reconciliation. */
+  isRelayEnabled?: () => boolean;
   deviceName?: string;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
@@ -74,6 +76,10 @@ class DeviceLinkClient {
   }
 
   private connect(): void {
+    if (this.options.isRelayEnabled?.() === false) {
+      this.scheduleReconnect();
+      return;
+    }
     const socket = new WebSocket(remoteDeviceUrl(this.gateway), {
       headers: remoteWsHeaders(this.gateway),
       handshakeTimeout: 10_000,
@@ -85,6 +91,10 @@ class DeviceLinkClient {
     let ready = false;
 
     socket.on("open", () => {
+      if (this.options.isRelayEnabled?.() === false) {
+        socket.close();
+        return;
+      }
       socket.send(
         JSON.stringify({
           type: "hello",
@@ -145,6 +155,7 @@ class DeviceLinkClient {
   }
 
   private runCall(socket: WebSocket, calls: Map<string, AbortController>, call: DeviceCall): void {
+    if (this.options.isRelayEnabled?.() === false) return;
     const reject = (error: string) => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "result", callId: call.callId, ok: false, error }));
@@ -155,7 +166,7 @@ class DeviceLinkClient {
     const controller = new AbortController();
     calls.set(call.callId, controller);
     const send = (payload: Record<string, unknown>) => {
-      if (controller.signal.aborted || socket.readyState !== WebSocket.OPEN) return;
+      if (controller.signal.aborted || socket.readyState !== WebSocket.OPEN || this.options.isRelayEnabled?.() === false) return;
       socket.send(JSON.stringify({ type: "result", callId: call.callId, ...payload }));
     };
     this.options.executor

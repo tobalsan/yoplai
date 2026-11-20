@@ -481,7 +481,7 @@ function contentDispositionFilename(filename: string): string {
 
 // OAuth connect framework (authorize + callback + status/disconnect).
 api.route("/", createMainAgentRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, getEligibleAgents: getEligibleMainAgents }));
-api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId }));
+api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
 api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createSkillRoutes({
   getContext: getSkillContext,
@@ -1144,6 +1144,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
   }
   const auth = await getRequestAuthContext(c);
   const personalScope = credentialScope === "personal";
+  if (personalScope && !isExtensionLoaded("multiUser")) return c.json({ error: "personal_scope_unavailable" }, 400);
   if (personalScope && !auth) return c.json({ error: "Personal credentials require login" }, 401);
 
   const patch: ExtensionConfigPatch = {};

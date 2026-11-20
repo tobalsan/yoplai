@@ -12,6 +12,7 @@ import type { SettingsAuditChange } from "@yoplai/shared";
 export function createConnectionRoutes(options: {
   canAccessAgent: (c: Context, agentId: string) => Promise<boolean>;
   getUserId: (c: Context) => Promise<string | undefined>;
+  isMultiUser: () => boolean;
   config?: () => GatewayConfig;
   catalog?: typeof buildExtensionCatalog;
   oauth?: ReturnType<typeof getOAuthService>;
@@ -26,25 +27,27 @@ export function createConnectionRoutes(options: {
     value.agents.find((agent) => agent.id === id) ?? value.pool?.find((agent) => agent.id === id);
 
   router.use("/agents/:id/connections/*", async (c, next) => {
-    if (!(await options.getUserId(c))) return c.json({ error: "login_required" }, 401);
+    const multiUser = options.isMultiUser();
+    if (multiUser && !(await options.getUserId(c))) return c.json({ error: "login_required" }, 401);
+    if (c.req.method === "DELETE" && !multiUser) return c.json({ error: "personal_scope_unavailable" }, 400);
     if (!(await options.canAccessAgent(c, c.req.param("id")!))) return c.json({ error: "forbidden" }, 403);
     await next();
   });
 
   router.get("/agents/:id/connections", async (c) => {
-    const userId = (await options.getUserId(c))!;
+    const userId = options.isMultiUser() ? (await options.getUserId(c))! : undefined;
     const value = config();
     const agent = findAgent(value, c.req.param("id"));
     if (!agent) return c.json({ error: "agent_not_found" }, 404);
     const connections = listOAuthProviders().map((provider) => ({
       kind: "oauth", id: provider.id, name: provider.id,
-      personal: !!oauth.getScopedConnection(agent.id, provider.id, { type: "personal", userId }),
+      personal: userId !== undefined && !!oauth.getScopedConnection(agent.id, provider.id, { type: "personal", userId }),
       team: !!oauth.getScopedConnection(agent.id, provider.id, { type: "team" }),
     }));
     for (const entry of await catalog(value, agent)) {
       const fields = extensionSecretFields(entry);
       if (!fields.length) continue;
-      const tokens = getPersonalExtensionTokens(store, agent.id, userId, entry.id);
+      const tokens = userId === undefined ? undefined : getPersonalExtensionTokens(store, agent.id, userId, entry.id);
       const root = value.extensions?.[entry.id];
       const scoped = agent.extensions?.[entry.id];
       const shared: Record<string, unknown> = {

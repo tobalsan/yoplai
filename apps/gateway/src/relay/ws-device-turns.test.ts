@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { DEVICE_PROTOCOL_VERSION } from "@yoplai/shared";
+import type { DeviceExecutor } from "./device-exec.js";
 type Socket = { sent: Array<Record<string, unknown>>; emit(event: string, ...args: unknown[]): boolean; readyState: number };
-const state = vi.hoisted(() => ({ sockets: [] as Socket[], generation: "remote-1" }));
+const state = vi.hoisted(() => ({ sockets: [] as Socket[], generation: "remote-1", enabled: true }));
 vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
   class WebSocket extends EventEmitter {
@@ -10,19 +12,84 @@ vi.mock("ws", async () => {
     constructor() { super(); state.sockets.push(this); }
     send(raw: string) { this.sent.push(JSON.parse(raw)); }
     close() { this.readyState = 3; this.emit("close"); }
+    terminate() { this.close(); }
   }
   return { WebSocket };
 });
 vi.mock("../config/index.js", () => ({ getAgent: () => undefined }));
 vi.mock("./state.js", () => ({
-  isTrustedRequest: () => true, isRelayEnabled: () => true,
-  getLinkedGateways: () => [{ name: "remote", url: "http://synthetic.invalid", generation: state.generation }],
+  isTrustedRequest: () => true, isRelayEnabled: () => state.enabled,
+  getLinkedGateways: () => state.enabled ? [{ name: "remote", url: "http://synthetic.invalid", generation: state.generation }] : [],
   resolveRemoteAgent: () => ({ agentId: "pom", gateway: "remote" }),
 }));
-vi.mock("./remote.js", () => ({ remoteWsUrl: () => "ws://synthetic.invalid", remoteWsHeaders: () => ({}) }));
+vi.mock("./remote.js", () => ({
+  remoteDeviceUrl: () => "ws://synthetic.invalid/device",
+  remoteWsUrl: () => "ws://synthetic.invalid",
+  remoteWsHeaders: () => ({}),
+}));
+import { DeviceLinkManager } from "./device-link-client.js";
 import { RelayWsBridge } from "./ws.js";
 import { getDeviceTurns, TURN_TOKEN_TTL_MS } from "./device-turns.js";
-afterEach(() => { vi.useRealTimers(); state.sockets.length = 0; state.generation = "remote-1"; });
+import { getLinkedGateways, isRelayEnabled } from "./state.js";
+afterEach(() => { vi.useRealTimers(); state.sockets.length = 0; state.generation = "remote-1"; state.enabled = true; });
+
+it("discards a pending subscription when the relay is disabled before open", () => {
+  const page = { readyState: 1, send: vi.fn(), close: vi.fn() };
+  const bridge = new RelayWsBridge(page as never, {}, () => {});
+  try {
+    expect(bridge.handle(JSON.stringify({ type: "subscribe", agentId: "pom@remote" }))).toBe(true);
+    const socket = state.sockets[0];
+    expect(socket.sent).toEqual([]);
+    state.enabled = false;
+    socket.emit("open");
+    expect(socket.sent).toEqual([]);
+  } finally {
+    bridge.close();
+  }
+});
+
+it("stops forwarding events and close notifications from an established subscription when disabled", () => {
+  const page = { readyState: 1, send: vi.fn(), close: vi.fn() };
+  const bridge = new RelayWsBridge(page as never, {}, () => {});
+  try {
+    bridge.handle(JSON.stringify({ type: "subscribe", agentId: "pom@remote" }));
+    const socket = state.sockets[0];
+    socket.emit("open");
+    const event = JSON.stringify({ type: "text", data: "fixture" });
+    socket.emit("message", Buffer.from(event));
+    expect(page.send).toHaveBeenCalledWith(event);
+    page.send.mockClear();
+    state.enabled = false;
+    socket.emit("message", Buffer.from(event));
+    socket.emit("close");
+    expect(page.send).not.toHaveBeenCalled();
+    expect(page.close).not.toHaveBeenCalled();
+  } finally {
+    bridge.close();
+  }
+});
+
+it("stops dispatching calls on an established device link before reconciliation", () => {
+  vi.useFakeTimers();
+  const execute = vi.fn(async () => ({ content: [] }));
+  const options = { executor: { execute } as unknown as DeviceExecutor, getGateways: getLinkedGateways, isRelayEnabled };
+  const manager = new DeviceLinkManager(options);
+  manager.start();
+  try {
+    const socket = state.sockets[0];
+    socket.emit("open");
+    socket.emit("message", Buffer.from(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION })));
+    expect(manager.states()[0]?.connected).toBe(true);
+    const call = { type: "call", agentId: "pom", tool: "device_read", arguments: {}, toolCallId: "fixture" };
+    socket.emit("message", Buffer.from(JSON.stringify({ ...call, callId: "before" })));
+    expect(execute).toHaveBeenCalledTimes(1);
+    state.enabled = false;
+    socket.emit("message", Buffer.from(JSON.stringify({ ...call, callId: "after" })));
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    manager.stop();
+  }
+});
 
 it("ends only the matching turn after an out-of-order error, queued marker, and duplicate terminal event", () => {
   const page = { readyState: 1, send: vi.fn(), close: vi.fn() };
