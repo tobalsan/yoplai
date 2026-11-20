@@ -96,6 +96,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - A linked-gateway list read that does not answer within 10 seconds ends, so the link form is no longer stuck busy.
 
+- On the Pairings page, an owner change during a Slack unpair no longer locks the new owner's buttons until the old request answers.
+
 - The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
 
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.
