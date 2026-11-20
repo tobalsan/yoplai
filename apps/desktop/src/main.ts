@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, Menu, session, shell, type MenuItem, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, session, shell, type MenuItem, type MenuItemConstructorOptions } from "electron";
+import { createDesktopTheme } from "./desktop-theme.js";
 import { createDevHome, seedDevHome } from "./dev-home.js";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
@@ -79,11 +80,12 @@ const SECURE_WEB_PREFERENCES = {
   experimentalFeatures: false,
 } as const;
 
-function createWindow(): BrowserWindow {
+function createWindow(theme: ReturnType<typeof createDesktopTheme>): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1280, height: 860, titleBarStyle: "hiddenInset", backgroundColor: "#000000",
-    webPreferences: SECURE_WEB_PREFERENCES,
+    width: 1280, height: 860, titleBarStyle: "hiddenInset", backgroundColor: theme.background(),
+    webPreferences: { ...SECURE_WEB_PREFERENCES, preload: path.join(import.meta.dirname, "theme-preload.cjs") },
   });
+  theme.attach(win, () => mainWindow === win && !quitting ? stackController.current()?.uiOrigin : undefined);
   // Child windows (OAuth) must reach identity providers, so only the main window is pinned.
   win.webContents.on("will-navigate", (event, url) => {
     const decision = decideNavigation({ url, uiOrigin: stackController.current()?.uiOrigin ?? "" });
@@ -224,8 +226,8 @@ void app.whenReady().then(async () => {
   if (!app.isPackaged) app.dock?.setIcon(path.join(import.meta.dirname, "../resources/icon.png"));
   console.log("[desktop] ready");
   installPermissionHandlers();
-  mainWindow = createWindow();
   const userData = app.getPath("userData");
+  mainWindow = createWindow(createDesktopTheme(userData, nativeTheme));
   const splash = readSplashPreference(userData);
   installMenu(userData, splash);
   await startAndLoad(splash ? "splash" : "wait");

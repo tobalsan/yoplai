@@ -135,8 +135,8 @@ describe("AgentSidebar", () => {
     }
   });
 
-  it.each([["Chrome/146", true], ["Electron/45", false]])("shows the brand text in %s when expected", (userAgent, visible) => {
-    const agent = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(userAgent);
+  it.each([["a browser", false, true], ["an Electron user agent without the Yoplai bridge", false, true], ["the Yoplai window", true, false]])("shows the brand text in %s when expected", (_label, marked, visible) => {
+    if (marked) document.documentElement.setAttribute("data-yoplai-desktop", "");
     const container = document.body.appendChild(document.createElement("div"));
     const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
@@ -145,7 +145,7 @@ describe("AgentSidebar", () => {
       expect(getByRole(container, "navigation", { name: "Primary" })).toBeTruthy();
     } finally {
       dispose();
-      agent.mockRestore();
+      document.documentElement.removeAttribute("data-yoplai-desktop");
     }
   });
 

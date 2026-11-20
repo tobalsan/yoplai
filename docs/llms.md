@@ -8,7 +8,12 @@ This document is the cross-package map for coding agents. Use it to find ownersh
 
 ## Repository layout
 
-- `apps/desktop` (`@yoplai/desktop`): Electron window. `pnpm desktop` builds with `tsc` and runs `launch.mjs`, a dev launcher that starts Electron in its own process group and forwards the first SIGINT/SIGTERM. `YOPLAI_UI_HOST` sets the bind host of the UI child. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. The desktop sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`. `src/launch-plan.ts` is the only module that knows how children start (dev mode: pnpm, tsx, Vite). `stack.ts` starts the plan in process groups, `links.ts` routes links, permissions, and navigation. No preload.
+- `apps/desktop` (`@yoplai/desktop`): Electron window. `pnpm desktop` builds with `tsc` and runs `launch.mjs`, a dev launcher that starts Electron in its own process group and forwards the first SIGINT/SIGTERM. `YOPLAI_UI_HOST` sets the bind host of the UI child. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. The desktop sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`. `src/launch-plan.ts` is the only module that knows how children start (dev mode: pnpm, tsx, Vite). `stack.ts` starts the plan in process groups, `links.ts` routes links, permissions, and navigation.
+  The Yoplai window is detected once: the main-window preload (`theme-preload.cts`) exposes `window.yoplaiDesktopTheme`, and the `index.html` script sets `data-yoplai-desktop` on `<html>` before paint. `isDesktopWindow()` and the first-screen CSS read that marker, so another Electron host with the same user agent keeps browser chrome. `main.tsx` starts the first-screen fade.
+
+  The desktop stores the theme choice in `desktop-preferences.json` next to the splash choice. The saved choice takes priority before the first paint, even when the UI port changes. Without a saved choice, the splash uses System. On the first trusted load, the UI imports `yoplai-theme` or the legacy `aihub-theme` from that origin. If both keys are absent, it saves System. System uses the current macOS appearance and responds to changes.
+
+  A sandboxed preload sends the theme choice to the main process before paint and when the choice changes. The main process accepts only the top frame of the main window at the active UI origin.
 
   `src/dev-home.ts` selects and seeds the dev home. `pnpm desktop` keeps `HOME` and uses `YOPLAI_HOME` or `~/.yoplai`. Only persistent mode sets `YOPLAI_DESKTOP_KEYCHAIN=1` for the gateway. Its seed does not generate `OAUTH_ENCRYPTION_KEY` if the shell supplies it. See [Desktop development](../apps/desktop/README.md#run-the-desktop-app-from-source).
 

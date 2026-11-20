@@ -42,6 +42,14 @@ await check("runtime", () => {
   return `Node ${node} satisfies ${engines ?? ">=22.19.0"}`;
 });
 
+await check("theme preload", () => {
+  const entry = "dist/theme-preload.cjs";
+  if (!fs.statSync(path.join(resources, "app.asar", entry), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error("The app archive does not contain the theme preload.");
+  }
+  return entry;
+});
+
 await check("sqlite", () => {
   const Database = gatewayRequire("better-sqlite3");
   const db = new Database(":memory:");

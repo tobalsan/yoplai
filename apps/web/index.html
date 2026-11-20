@@ -12,13 +12,27 @@
     <link rel="manifest" href="/api/manifest.webmanifest" />
     <title>Yoplai</title>
     <script>
-      if (/\bElectron\//.test(navigator.userAgent)) {
+      // The Yoplai window is the one with the theme bridge of the main-window preload, not any Electron host.
+      var desktop = !!window.yoplaiDesktopTheme;
+      if (desktop) {
+        document.documentElement.setAttribute('data-yoplai-desktop', '');
         var firstDesktopScreen = true;
         try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
         if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
       }
       var t;
       try { t = localStorage.getItem('yoplai-theme') ?? localStorage.getItem('aihub-theme'); } catch {}
+      if (desktop) {
+        var choice = t === 'light' || t === 'dark' ? t : 'system';
+        var saved = window.yoplaiDesktopTheme.load(choice);
+        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+          if (saved !== choice) {
+            try { localStorage.setItem('yoplai-theme', saved); } catch {}
+          }
+          document.documentElement.dataset.desktopThemeChoice = saved;
+          t = saved;
+        }
+      }
       if (t !== 'light' && t !== 'dark') {
         t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       }
@@ -111,8 +125,13 @@
         background: var(--bg-base);
         color: var(--text-primary);
       }
-      html[data-desktop-first-screen], html[data-desktop-first-screen] body {
+      html[data-yoplai-desktop][data-desktop-first-screen], html[data-yoplai-desktop][data-desktop-first-screen] body {
+        --desktop-first-screen: #000;
         background: #000;
+      }
+      html[data-yoplai-desktop][data-desktop-first-screen][data-theme="light"], html[data-yoplai-desktop][data-desktop-first-screen][data-theme="light"] body {
+        --desktop-first-screen: #fff;
+        background: #fff;
       }
       #root {
         height: 100%;

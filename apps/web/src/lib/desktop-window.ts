@@ -1,5 +1,6 @@
+/** The page script of `index.html` marks the Yoplai window from the theme bridge of the main-window preload. */
 export function isDesktopWindow(): boolean {
-  return /\bElectron\//.test(globalThis.navigator?.userAgent ?? "");
+  return globalThis.document?.documentElement.hasAttribute("data-yoplai-desktop") ?? false;
 }
 
 export function fadeInDesktopWindow(root: HTMLElement): void {
@@ -21,7 +22,7 @@ export function fadeInDesktopWindow(root: HTMLElement): void {
       return;
     }
     const background = root.style.backgroundColor;
-    root.style.backgroundColor = "var(--bg-base)";
+    root.style.backgroundColor = "var(--desktop-first-screen)";
     const finish = () => {
       root.style.backgroundColor = background;
       restore();
@@ -32,6 +33,3 @@ export function fadeInDesktopWindow(root: HTMLElement): void {
   observer.observe(root, { childList: true, subtree: true, characterData: true, attributes: true });
   showFirstScreen();
 }
-
-const root = globalThis.document?.getElementById("root");
-if (root) fadeInDesktopWindow(root);

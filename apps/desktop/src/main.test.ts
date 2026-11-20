@@ -39,10 +39,12 @@ vi.mock("electron", () => ({
   BrowserWindow: class {
     constructor(options: BrowserWindowConstructorOptions) { desktop.options(options); }
     on = desktop.onWindowEvent;
+    once = vi.fn();
     loadFile = desktop.loadFile;
     loadURL = desktop.loadURL;
-    webContents = { on: desktop.onNavigation, executeJavaScript: desktop.execute };
+    webContents = { on: desktop.onNavigation, executeJavaScript: desktop.execute, ipc: { on: vi.fn() } };
   },
+  nativeTheme: { shouldUseDarkColors: true, on: vi.fn(), removeListener: vi.fn() },
   Menu: { buildFromTemplate: desktop.menu, setApplicationMenu: vi.fn() },
   session: { defaultSession: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() } },
   shell: { openExternal: vi.fn() },
@@ -220,7 +222,7 @@ it("starts in wait mode from the Restart link after the user corrects invalid JS
   expect(desktop.options).toHaveBeenCalledWith(expect.objectContaining({
     titleBarStyle: "hiddenInset", backgroundColor: "#000000",
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false,
-      allowRunningInsecureContent: false, experimentalFeatures: false },
+      allowRunningInsecureContent: false, experimentalFeatures: false, preload: expect.stringMatching(/theme-preload\.cjs$/) },
   }));
 
   await fs.writeFile(config, '{"version":3,"agents":[]}');
