@@ -4,6 +4,7 @@ import { fireEvent, getByRole, queryAllByRole, queryAllByText, queryByRole, quer
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
+import { ToolbarOnlyShell } from "./ChatView.test-shell";
 import { TurnNotifier } from "./TurnNotifier";
 import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
@@ -215,7 +216,7 @@ const mountedViews = new Set<() => void>();
 function renderView() {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const stop = render(() => <ChatView />, container);
+  const stop = render(() => <ChatView shell={ToolbarOnlyShell} />, container);
   const dispose = () => { mountedViews.delete(dispose); stop(); };
   mountedViews.add(dispose);
   return { container, dispose };
@@ -234,7 +235,7 @@ describe("ChatView abort handling", () => {
     sessionStorage.clear();
     delegateEvents(["click", "input", "keydown"]);
     Element.prototype.scrollIntoView = vi.fn();
-    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     URL.createObjectURL = vi.fn(() => "blob:preview");
     URL.revokeObjectURL = vi.fn();
 

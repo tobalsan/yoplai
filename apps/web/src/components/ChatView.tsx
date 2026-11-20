@@ -117,7 +117,7 @@ type DropZone = "history" | "composer" | "attach";
 
 export { ThinkingLine } from "./chat/ChatBlocks";
 
-export function ChatView(props: { children?: JSX.Element; shell?: Component<{ toolbar: JSX.Element; children: JSX.Element }> }) {
+export function ChatView(props: { children?: JSX.Element; shell: Component<{ toolbar: JSX.Element; children: JSX.Element }> }) {
   const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
   const handleCodeCopy = (event: MouseEvent) => {
@@ -955,10 +955,6 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
       }}
     >
       <div class="chat-main">
-      <Show when={!props.shell}>
-        <header class="standalone-chat-bar">{toolbar()}</header>
-      </Show>
-
       <Show when={firstChat.failed() || missingModel()}>
         <div class="desktop-chat-repair">
           <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
@@ -1252,7 +1248,7 @@ export function ChatView(props: { children?: JSX.Element; shell?: Component<{ to
   const Shell = props.shell;
   return (
     <DashboardAnnotationsContext.Provider value={annotations}>
-      {Shell ? <Shell toolbar={toolbar()}>{body()}</Shell> : body()}
+      <Shell toolbar={toolbar()}>{body()}</Shell>
     </DashboardAnnotationsContext.Provider>
   );
 }
