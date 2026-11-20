@@ -48,6 +48,43 @@ Unknown/revoked tokens and deleted sessions return 404. The share store is
 `$YOPLAI_HOME/chat-shares.json`; it never contributes to agent prompts.
 Media download permissions are unchanged: the shared UI renders filenames only.
 
+## Extension catalog
+
+| Method | Path | `200` response |
+| ------ | ---- | -------------- |
+| GET | `/api/admin/extension-catalog` | Catalog list |
+| POST | `/api/admin/extension-catalog/refresh` | Catalog list after a refresh |
+| POST | `/api/admin/extension-catalog/:id/install` | Catalog row after an install or update |
+| DELETE | `/api/admin/extension-catalog/:id` | `{ ok: true }` |
+
+Send no request body. Use the extension ID from the catalog row for `:id`.
+
+The catalog list returns `{ source, fetchedAt, stale, error?, entries }`.
+`source` is the catalog URL. `fetchedAt` is an ISO timestamp or `null`.
+Each row includes `id`, `usedByAgents`, and `state`: `available`, `installed`,
+`update`, `manual`, or `incompatible`. A row can also include `installedVersion`.
+Catalog metadata includes `name`, `tagline`, `description`, `category`, `version`,
+`minYoplai`, `url`, `size`, `sha256`, and optional `iconUrl` and `docsUrl`.
+Local entries without a catalog match can omit catalog metadata.
+
+If a catalog fetch fails, list and refresh return `200` with `stale: true` and
+`error`. They use the last catalog copy if one exists. Without a copy, they
+return only local entries and set `fetchedAt` to `null`.
+
+| Status | Meaning |
+| ------ | ------- |
+| `403` | The caller is not a superadmin in multi-user mode, or the write has an untrusted `Origin`. |
+| `404` | The catalog is disabled, or the extension ID is unknown. |
+| `409` | The gateway is busy with another extension change, or the operation fails. |
+| `502` | The install has no usable catalog. |
+
+Errors return `{ error: "<message>" }`. If a write supplies an `Origin` header,
+it must match an allowed origin.
+
+For a linked gateway, add `/api/relay/gateways/:name` before the full route.
+The relay checks the browser origin before it forwards a write. It rejects a
+write with a body (`400`). The linked gateway checks the linked user's role.
+
 ## Extension route groups
 
 - scheduler: `/api/schedules/*`

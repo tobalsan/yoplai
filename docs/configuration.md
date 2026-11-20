@@ -268,6 +268,17 @@ Root `extensions.<id>` configures and loads extension. Tool-style extensions add
 
 See [Extensions](extensions.md).
 
+### Extension catalog
+
+The `extensionCatalog` setting in `yoplai.json` controls the catalog.
+
+| Setting | Meaning |
+| ------- | ------- |
+| `extensionCatalog.enabled` | Defaults to `true`. Set it to `false` to disable the catalog. |
+| `extensionCatalog.url` | Defaults to `https://github.com/tobalsan/yoplai-extensions/releases/latest/download/catalog.json`. |
+
+Use HTTPS for the catalog URL. The gateway accepts HTTP for direct loopback requests only. Every redirect must use HTTPS.
+
 ## Gateway and UI
 
 | Setting                    | Meaning                                                                                           |

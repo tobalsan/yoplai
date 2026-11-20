@@ -682,10 +682,10 @@ External extension discovery skips dot folders. It uses the install digest for c
 Manual extensions with multiple files still need a restart after a rebuild.
 
 The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.url` selects the catalog source. `extensionCatalog.enabled: false` disables it.
-The gateway caches the last catalog with its ETag. The catalog uses HTTPS, with an HTTP exception for loopback tests.
+The gateway caches the last catalog with its ETag. Direct loopback requests can use HTTP. Other requests and all redirects require HTTPS.
 The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
 A worker checks the exported definition. The gateway gives the worker 30 seconds and stops it before it releases the lock.
-The install record at `<extensionsPath>/<id>/.install.json` marks a catalog install. The catalog does not replace or remove manual extensions.
+A valid `.install.json` in an extension folder marks a catalog install. A symlink is always manual, even if its target has a valid record. The catalog does not change manual extensions.
 One lock protects catalog changes, file-based config reloads, and config reconciliation.
 New agent forks use the same lock to reload config. Independent reload requests wait for the lock.
 The gateway refuses a config write from its own extension hook before it changes the file.
@@ -700,7 +700,7 @@ The audit store records the actor, extension ID, and old and new bundle digests 
 The catalog shows the gateway error on the extension row.
 `scripts/dev.ts` excludes both paths to the extension folder from `tsx watch`: the configured path and its real path.
 The default folder is `$YOPLAI_HOME/extensions`.
-Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.
+Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. The relay checks the browser origin for a linked write. It does not send that header to the linked gateway.
 The extension and MCP settings forms use team credentials in single-user mode.
 
 Access logs emit one completion line. Fast successful GETs for health, session polling/history, chat-project lists/details, skill lists/details (except import-token and recipients), and static assets are quiet; status >= 300 or elapsed > 500 ms still logs. Nested metadata routes and session search remain logged.
