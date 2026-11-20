@@ -87,7 +87,10 @@ export async function fetchLinkRows(): Promise<LinkRow[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), METADATA_DEADLINE_MS);
   try {
-    return (await call<{ gateways: LinkRow[] }>("/metadata", { ...post({}), signal: controller.signal })).gateways;
+    const body = await call<{ gateways: LinkRow[] }>("/metadata", { ...post({}), signal: controller.signal });
+    // `call` reads a failed body as empty, so an abort during the body must still fail the read.
+    controller.signal.throwIfAborted();
+    return body.gateways;
   } finally {
     clearTimeout(timer);
   }

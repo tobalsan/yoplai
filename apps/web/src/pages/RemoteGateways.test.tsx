@@ -518,6 +518,18 @@ describe("RemoteGateways", () => {
       expect(screen.queryByText("Loading linked gateways…")).toBeNull();
     });
 
+    it("starts no second read when a link finishes while the first page read is pending", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      holdReads();
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(metadataReads()).toBe(1);
+      await linkAtOnce(screen);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(metadataReads()).toBe(1);
+    });
+
     it("stops reading when the user disconnects", async () => {
       rows = [browserRow({ connection: "connecting" })];
       const screen = mount();

@@ -72,7 +72,10 @@ export function GatewayLinkPanel(props: {
   onLinked?: () => Promise<void>;
   registerLeave?: (leave: () => Promise<boolean>) => void;
 }) {
-  const [rows, { refetch }] = createResource(() => !props.onLinked, fetchLinkRows);
+  // One metadata read at a time: the first page read and a later refetch share the read that is pending.
+  let metadataRead: Promise<LinkRow[]> | undefined;
+  const readMetadata = () => (metadataRead ??= fetchLinkRows().finally(() => { metadataRead = undefined; }));
+  const [rows, { refetch }] = createResource(() => !props.onLinked, readMetadata);
   const [remote, setRemote] = createSignal("");
   const [name, setName] = createSignal("");
   const [busy, setBusy] = createSignal(false);
