@@ -296,8 +296,10 @@ api.post(`${extensionCatalogPath}/refresh`, async (c) => {
 api.post(`${extensionCatalogPath}/:id/install`, async (c) => {
   try {
     const actor = await getAuditActor(c);
-    const { entry, action } = await installFromCatalog(loadConfig(), c.req.param("id"), actor.actorUserId ?? "local");
-    recordSettingsChange({ ...actor, action, targetType: "extension", targetId: entry.id, changes: [] });
+    const actorUserId = actor.actorUserId ?? "local";
+    const { entry, action, previousSha256 } = await installFromCatalog(loadConfig(), c.req.param("id"), actorUserId);
+    recordSettingsChange({ ...actor, actorUserId, action, targetType: "extension", targetId: entry.id,
+      changes: [{ field: "sha256", before: previousSha256, after: entry.sha256 }] });
     return c.json(entry);
   } catch (error) { return extensionCatalogError(c, error); }
 });
@@ -305,8 +307,9 @@ api.delete(`${extensionCatalogPath}/:id`, async (c) => {
   try {
     const actor = await getAuditActor(c);
     const id = c.req.param("id");
-    await removeFromCatalog(loadConfig(), id);
-    recordSettingsChange({ ...actor, action: "extension.remove", targetType: "extension", targetId: id, changes: [] });
+    const previousSha256 = await removeFromCatalog(loadConfig(), id);
+    recordSettingsChange({ ...actor, actorUserId: actor.actorUserId ?? "local", action: "extension.remove", targetType: "extension", targetId: id,
+      changes: [{ field: "sha256", before: previousSha256, after: null }] });
     return c.json({ ok: true });
   } catch (error) { return extensionCatalogError(c, error); }
 });

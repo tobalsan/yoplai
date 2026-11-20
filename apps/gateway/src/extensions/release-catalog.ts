@@ -164,13 +164,13 @@ export function installFromCatalog(config: GatewayConfig, id: string, actor: str
         if (previous && !(await lstat(target))) await fs.rename(trash, target);
         throw error;
       }
-      await reconcileExternal(config, { requiredExternalId: id, restoreFiles: async () => {
+      await reconcileExternal(config, { requiredExternalId: id, fileChange: { id, restore: async () => {
         if (!(await checkTarget(target))) throw new Error("The installed extension folder is missing.");
         await fs.rm(target, { recursive: true });
         if (previous) await fs.rename(trash, target);
-      } });
+      } } });
       if (previous) await cleanFolder(trash);
-      return { entry: row(config, id, entry, install), action: previous ? "extension.update" : "extension.install" };
+      return { entry: row(config, id, entry, install), action: previous ? "extension.update" : "extension.install", previousSha256: previous?.sha256 ?? null };
     } finally {
       await cleanFolder(staging);
     }
@@ -186,12 +186,15 @@ export function removeFromCatalog(config: GatewayConfig, id: string) {
     const target = path.join(root, id);
     if (!(await checkTarget(target))) throw new CatalogOperationError(404, "Extension not found.");
     const trash = path.join(await makeWorkFolder(root, ".trash"), `${id}-${randomUUID()}`);
-    if (!(await checkTarget(target))) throw new CatalogOperationError(404, "Extension not found.");
+    await checkCollision(root, id);
+    const previous = await checkTarget(target);
+    if (!previous) throw new CatalogOperationError(404, "Extension not found.");
     await fs.rename(target, trash);
-    await reconcileExternal(config, { restoreFiles: async () => {
+    await reconcileExternal(config, { fileChange: { id, restore: async () => {
       if (await lstat(target)) throw new Error("The extension folder changed during the operation.");
       await fs.rename(trash, target);
-    } });
+    } } });
     await cleanFolder(trash);
+    return previous.sha256;
   });
 }

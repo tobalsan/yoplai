@@ -90,6 +90,11 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The extension catalog records the actor and bundle digests for installs, updates, and removals.
+- Config reloads wait for catalog changes. If a reload hook fails, the catalog restores the previous bundle.
+- If file recovery fails, the gateway keeps the backup and takes the affected extension offline.
+- The catalog refuses removal when a manual folder uses the same extension ID.
+
 - Extension and MCP settings use team credentials in single-user mode.
 
 - The full-screen chat panel keeps its tabs and close buttons clear of the toolbar. Narrow chat toolbars group secondary controls under More chat controls. The Agents heading sits in the toolbar.

@@ -657,7 +657,7 @@ export function reloadExtensions(config: GatewayConfig): Promise<Extension[]> {
 
 export async function reconcileExternal(
   config: GatewayConfig,
-  { restoreFiles, requiredExternalId }: { restoreFiles?: () => Promise<void>; requiredExternalId?: string } = {}
+  { fileChange, requiredExternalId }: { fileChange?: { id: string; restore: () => Promise<void> }; requiredExternalId?: string } = {}
 ): Promise<Extension[]> {
   const current = extensionRuntime.getLoadedExtensions();
   const previousHome = extensionRuntime.getHomeExtension();
@@ -666,6 +666,14 @@ export async function reconcileExternal(
   const stopping: Extension[] = [];
   const starting: Extension[] = [];
   const start = activateExtension;
+  async function restartStopped(available: Extension[]) {
+    if (!start) return;
+    for (const extension of available) {
+      if (!stopping.includes(extension)) continue;
+      try { await start(extension); }
+      catch (failure) { logError(`Could not start extension ${extension.id} during recovery`, failure); }
+    }
+  }
   try {
     const { extensions, homeExtensionId } = await deriveExtensionsToLoad(config, requiredExternalId);
     const wanted = new Set(extensions);
@@ -674,7 +682,7 @@ export async function reconcileExternal(
     const removed = current.filter((extension) => !wanted.has(extension));
     const providers = buildOAuthProviderState(extensions);
     if (!start && (added.length || removed.length)) {
-      if (restoreFiles) throw new Error("The gateway cannot load extensions at runtime.");
+      if (fileChange) throw new Error("The gateway cannot load extensions at runtime.");
       await notifyConfigReload(current);
       return current;
     }
@@ -699,17 +707,35 @@ export async function reconcileExternal(
       try { await extension.stop(); }
       catch (failure) { logError(`Could not stop extension ${extension.id} during recovery`, failure); }
     }
-    try { await restoreFiles?.(); }
-    catch (failure) { logError("Could not restore extension files", failure); }
+    if (fileChange) {
+      try {
+        await fileChange.restore();
+      } catch (failure) {
+        logError("Could not restore extension files", failure);
+        const unavailable = new Set([fileChange.id]);
+        for (const extension of current) {
+          if (extension.dependencies.some((id) => unavailable.has(id))) unavailable.add(extension.id);
+        }
+        const available = current.filter((extension) => !unavailable.has(extension.id));
+        replaceOAuthProviderState(buildOAuthProviderState(available));
+        extensionRuntime.publish(available, previousHome && !unavailable.has(previousHome) ? previousHome : undefined);
+        innerApi = buildApi?.(available);
+        for (const extension of current.slice().reverse()) {
+          if (!unavailable.has(extension.id) || stopping.includes(extension)) continue;
+          try { await extension.stop(); }
+          catch (stopError) { logError(`Could not stop extension ${extension.id} during recovery`, stopError); }
+        }
+        await restartStopped(available);
+        const message = (value: unknown) => value instanceof Error ? value.message : String(value);
+        throw new AggregateError([error, failure],
+          `Could not restore extension ${fileChange.id}: ${message(failure)} First error: ${message(error)}`,
+          { cause: error });
+      }
+    }
     if (previousOAuth) replaceOAuthProviderState(previousOAuth);
     extensionRuntime.publish(current, previousHome);
     innerApi = previousApi;
-    if (start) {
-      for (const extension of stopping.reverse()) {
-        try { await start(extension); }
-        catch (failure) { logError(`Could not start extension ${extension.id} during recovery`, failure); }
-      }
-    }
+    await restartStopped(current);
     throw error;
   }
 }
@@ -724,15 +750,18 @@ export function stopCurrentExtensions(): Promise<void> {
 }
 
 export async function notifyConfigReload(extensions: Extension[]): Promise<void> {
+  let firstFailure: { error: unknown } | undefined;
   for (const extension of extensions) {
     try {
       await extension.onConfigReload?.();
     } catch (error) {
+      firstFailure ??= { error };
       console.warn(
         `[extensions] ${extension.id} config reload hook failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
+  if (firstFailure) throw firstFailure.error;
 }
 
 export function getLoadedExtensions(): Extension[] {

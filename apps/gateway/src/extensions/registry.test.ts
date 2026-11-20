@@ -79,7 +79,7 @@ describe("extension registry", () => {
       stop: async () => undefined,
       capabilities: () => [],
     };
-    await notifyConfigReload([
+    await expect(notifyConfigReload([
       {
         ...base,
         id: "thrower",
@@ -94,7 +94,7 @@ describe("extension registry", () => {
           laterRan = true;
         },
       },
-    ]);
+    ])).rejects.toBeNull();
     expect(laterRan).toBe(true);
   });
 

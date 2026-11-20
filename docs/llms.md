@@ -684,8 +684,12 @@ The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.
 The gateway caches the last catalog with its ETag. The catalog uses HTTPS, with an HTTP exception for loopback tests.
 The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
 The install record at `<extensionsPath>/<id>/.install.json` marks a catalog install. The catalog does not replace or remove manual extensions.
-One lock protects catalog changes and config reconciliation. The gateway publishes new routes and OAuth providers without a restart.
-If reconciliation fails, the gateway restores the files before it restarts the old objects. An active run can still hold an old tool.
+One lock protects catalog changes, file-based config reloads, and config reconciliation.
+The gateway publishes new routes and OAuth providers without a restart.
+If reconciliation or a reload hook fails, the gateway restores the files before it restarts the old objects.
+If file recovery fails, the gateway keeps the backup and excludes the affected extension from the runtime.
+An active run can still hold an old tool.
+The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
 Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.
 The extension and MCP settings forms use team credentials in single-user mode.
 

@@ -11,6 +11,7 @@ Yoplai keeps configuration, conversations, and project data on your machine. Sta
 Open **Admin → Extensions** to browse the catalog. Use **Install**, **Update**, or **Remove** on an extension.
 Use the gateway selector for a linked gateway. In multi-user mode, the selected gateway requires a superadmin.
 Catalog changes do not require a restart. The catalog does not replace or remove extensions that you manage by hand.
+If the gateway cannot restore an extension after a failed change, it keeps the backup and stops serving that extension.
 
 ## What you get
 
