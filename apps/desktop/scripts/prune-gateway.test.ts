@@ -110,20 +110,16 @@ it("keeps SQLite loader files and removes build files only after the rebuild", (
   for (const file of keep) expect(exists(`better-sqlite3/${file}`), file).toBe(true);
 });
 
-it("keeps documents, licenses, manifests, and TypeScript outside the audited versions", () => {
+it("keeps documents, licenses, manifests, and TypeScript", () => {
   pkg("isarray", "isarray", "1.0.0");
-  pkg("typebox", "typebox", "1.3.27");
-  pkg("typebox-new", "typebox", "1.3.28");
-  pkg("ajv", "ajv", "8.20.0");
   pkg("local-alias", "@yoplai/extension-sample");
   pkg("pi-alias", "@earendil-works/pi-coding-agent");
   const keep = [
-    "isarray/README.md", "typebox/README.md", "typebox/LICENSE.map", "typebox/licenses/sample.map",
-    "typebox/no-sibling.ts", "typebox/index.mjs", "typebox-new/index.d.mts", "ajv/refs/schema.json",
+    "isarray/README.md", "isarray/LICENSE.map", "isarray/licenses/sample.map",
     "local-alias/manifest.json", "local-alias/skills/SKILL.md", "pi-alias/examples/test.js", "pi-alias/README.md",
     "pi-alias/dist/utils/changelog.js", "pi-alias/dist/test.d.ts",
   ];
-  const remove = ["typebox/index.mts", "typebox/index.d.mts", "ajv/index.d.cts", "ajv/index.d.ts", "local-alias/index.js.map", "pi-alias/index.js.map"];
+  const remove = ["local-alias/index.js.map", "pi-alias/index.js.map"];
   for (const file of [...keep, ...remove]) write(file);
   prune();
   for (const file of keep) expect(exists(file), file).toBe(true);

@@ -2,7 +2,6 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-const auditedTypeScript = new Set(["typebox@1.3.27", "ajv@8.20.0"]);
 const sqliteBinaries = [
   "build/Debug/better_sqlite3.node",
   "build/Release/better_sqlite3.node",
@@ -11,7 +10,6 @@ const sqliteBinaries = [
 const sqliteBuildDirs = ["deps", "src", "build/Release/obj.target", "build/Release/obj"];
 const otherPlatform = /^(?:(?:linux|linuxmusl|win32)(?:-(?:arm64|x64))?|darwin-x64)(?:\.node)?$/;
 const typeScript = /\.(?:ts|mts|cts)$/;
-const declaration = /\.d\.(?:ts|mts|cts)$/;
 const flatSlot = /^(?:@[a-z0-9._-]+\+)?[a-z0-9._-]+@(?:\d+\.\d+\.\d+(?:[-+][a-z0-9.+-]+)?|file\+[a-z0-9.+-]+|https\+\+\+[a-z0-9.+-]+)(?:_patch_hash=[a-f0-9]+)?(?:_[a-z0-9@._+-]+)?$/i;
 
 export function checkGatewayStoreLayout(stage) {
@@ -78,7 +76,7 @@ function documentFile(parts) {
     || /\.(?:md|markdown|mdx|txt|rst|adoc|pdf|rtf|html?)$/i.test(parts.at(-1));
 }
 
-function shouldPrune(phase, pkg, parts, file) {
+function shouldPrune(phase, pkg, parts) {
   const name = parts.at(-1);
   const relative = parts.join("/");
   if (protectedFile(parts)) return false;
@@ -96,11 +94,7 @@ function shouldPrune(phase, pkg, parts, file) {
     if (sqliteBuildDirs.some((dir) => relative.startsWith(`${dir}/`))) return true;
     if (/\.(?:a|o|mk)$/.test(name) || name === "Makefile" || name === "binding.gyp") return true;
   }
-  if (!auditedTypeScript.has(`${pkg.name}@${pkg.version}`)) return false;
-  if (declaration.test(name)) return true;
-  if (!typeScript.test(name)) return false;
-  const base = file.replace(typeScript, "");
-  return [".js", ".mjs", ".cjs"].some((ext) => fs.statSync(base + ext, { throwIfNoEntry: false })?.isFile());
+  return false;
 }
 
 export function pruneGateway(stage, phase) {
@@ -121,7 +115,7 @@ export function pruneGateway(stage, phase) {
       packages.set(root, fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")) : null);
     }
     const pkg = packages.get(root);
-    if (typeof pkg?.name === "string" && shouldPrune(phase, pkg, parts.slice(end), file)) fs.unlinkSync(file);
+    if (typeof pkg?.name === "string" && shouldPrune(phase, pkg, parts.slice(end))) fs.unlinkSync(file);
   }
 }
 
