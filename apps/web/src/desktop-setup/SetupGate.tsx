@@ -4,12 +4,12 @@ import type { DesktopSetupState } from "@yoplai/shared/types";
 import { capabilities } from "../lib/capabilities";
 import { chatRouteSession, stripBase } from "../lib/path";
 import { MissingItems } from "./MissingItems";
-import { readModels, readSetup, saveSetup, type Model } from "./api";
+import { readModels, readSetup, saveSetup, type Model, type SetupUpdate } from "./api";
 
 const Setup = createContext<{
   state: () => DesktopSetupState | undefined;
   models: () => Model[] | undefined;
-  save: (update: Partial<DesktopSetupState>, when?: () => boolean) => Promise<void>;
+  save: (update: SetupUpdate, when?: () => boolean) => Promise<void>;
   refresh: () => Promise<void>;
 }>();
 export const useOptionalSetup = () => useContext(Setup);

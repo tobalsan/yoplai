@@ -72,7 +72,12 @@ export function createFirstChat(input: {
     await setup.refresh();
     const latest = setup.state()?.firstChat;
     if (setup.state()?.completed || latest?.agentId !== first.agentId || latest.sessionId !== first.sessionId || latest.turnId !== first.turnId) return;
-    await setup.save({ firstChat: { ...first, turnId: crypto.randomUUID() } });
+    try {
+      await setup.save({ firstChat: { ...first, turnId: crypto.randomUUID() }, retryOf: first.turnId }, () => pending()?.turnId === first.turnId);
+    } catch (error) {
+      if (error instanceof SetupError && error.code === "retry_conflict") await setup.refresh();
+      else setReadError(true);
+    }
   };
   return { retry, failed: () => !!pending() && failed(), readError: () => !!pending() && readError() };
 }
