@@ -23,7 +23,6 @@ import type {
 import {
   CONFIG_DIR,
   loadConfig,
-  reloadConfig,
   getAgent,
   getActiveAgents as getAgents,
   isAgentActive,
@@ -55,6 +54,7 @@ import { resolveCredential } from "../credentials/resolver.js";
 import { credentialConnectHost } from "../credentials/connect.js";
 import { recordSettingsChange } from "../audit/store.js";
 import { updateAgentExtensionConfig } from "./agent-config-writer.js";
+import { assertOutsideExtensionMutation } from "./registry.js";
 import { reloadAfterExtensionWrite } from "./reload.js";
 import { getLoadedExtensions } from "./registry.js";
 import { getTask } from "../tasks/store.js";
@@ -71,12 +71,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Bind extension-owned connector registration to the extension being started. */
-export function bindExtensionContext(context: ExtensionContext, extensionId: string): ExtensionContext {
+export function bindExtensionContext(context: ExtensionContext, extension: Pick<Extension, "id" | "registerPageRoutes">): ExtensionContext {
+  const extensionId = extension.id;
   const credentialConnect = context.credentialConnect;
   const writeConfig = context.updateAgentExtensionConfig;
   return {
     ...context,
-    pageRoutePrefix: getLoadedExtensions().some((extension) => extension.id === extensionId && extension.registerPageRoutes)
+    pageRoutePrefix: extension.registerPageRoutes
       ? `/x/${encodeURIComponent(extensionId)}` : undefined,
     updateAgentExtensionConfig: writeConfig && (async (agentId, targetId, patch) => {
       if (targetId !== extensionId) throw new Error("An extension can only write its own config.");
@@ -164,6 +165,7 @@ export function createExtensionContext(
       };
     },
     updateAgentExtensionConfig: async (agentId, extensionId, patch) => {
+      assertOutsideExtensionMutation();
       const agent = getAgent(agentId);
       if (!agent) throw new Error(`Unknown agent: ${agentId}`);
       await updateAgentExtensionConfig(
@@ -185,7 +187,7 @@ export function createExtensionContext(
     setActiveWork: reportExtensionWork,
     getConfig: () => loadConfig(),
     getDataDir: () => CONFIG_DIR,
-    reloadConfig: () => reloadConfig(),
+    reloadConfig: async () => { await reloadAfterExtensionWrite(); },
     notifyAgentListChanged: () =>
       agentEventBus.emitAgentChanged({
         type: "agent_changed",

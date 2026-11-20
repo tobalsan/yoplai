@@ -6,6 +6,8 @@ Self-hosted gateway for running AI agents through a web UI, CLI, messaging chann
 
 Yoplai keeps configuration, conversations, and project data on your machine. Start with one agent locally, then add channels, automation, authentication, or container isolation as needed.
 
+See the [desktop guide](apps/desktop/README.md) to run Yoplai in a desktop window or build the macOS app.
+
 ## What you get
 
 - Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.

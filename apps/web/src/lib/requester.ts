@@ -1,6 +1,6 @@
 import { createMemo, createResource, type Accessor } from "solid-js";
 import { useSession } from "../auth/client";
-import { capabilities } from "./capabilities";
+import { capabilities, capabilitiesFailed, capabilitiesReady, loadCapabilities } from "./capabilities";
 import { fetchGatewayCapabilities, type GatewayName } from "../api/gateway";
 import { hasStaffRole, isSuperadmin, type SessionRole } from "./roles";
 
@@ -8,7 +8,7 @@ import { hasStaffRole, isSuperadmin, type SessionRole } from "./roles";
  * Who asks, from the point of view of the gateway that serves the page.
  * A local page uses the local session and capabilities. A remote page uses
  * the capabilities of the remote and the identity of the linked bearer owner.
- * A remote read that failed is `unknown`, and it grants no rights.
+ * A read that failed, local or remote, is `unknown`, and it grants no rights.
  */
 export type Requester = {
   gateway: GatewayName;
@@ -19,7 +19,7 @@ export type Requester = {
   enableCronMonitoring: boolean;
   user?: { id: string; name?: string | null; email?: string | null; image?: string | null; role?: SessionRole };
   isExtensionEnabled: (id: string) => boolean;
-  /** Reads the capabilities of the gateway again. A local requester has nothing to read. */
+  /** Reads the capabilities of the gateway again. */
   retry: () => void;
   isStaff: boolean;
   isSuperadmin: boolean;
@@ -41,14 +41,14 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
       const role = (user as { role?: SessionRole } | undefined)?.role;
       return {
         gateway: undefined,
-        ready: !session().isPending,
-        unknown: false,
+        ready: !session().isPending && capabilitiesReady(),
+        unknown: capabilitiesFailed(),
         multiUser: capabilities.multiUser,
         forkedAgents: capabilities.forkedAgents === true,
         enableCronMonitoring: capabilities.enableCronMonitoring === true,
         user,
         isExtensionEnabled: (id) => capabilities.extensions[id] === true,
-        retry: () => undefined,
+        retry: () => void loadCapabilities().catch(() => undefined),
         isStaff: hasStaffRole(role),
         isSuperadmin: isSuperadmin(role),
       };

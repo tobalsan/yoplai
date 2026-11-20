@@ -48,6 +48,7 @@ Core TypeScript/Node.js process. Main ownership:
 - Link page device state (`apps/web/src/pages/RemoteGateways.tsx`): `connecting` reads "Device connecting…" and `offline` reads "Device not connected", except while the refresh cycle of that row runs, when it reads "Device connecting…". The device socket opens on the next 5 s scan of the device manager, so after each successful link (both paths), and on page load with a `connecting` row, the page reads the link rows every 2 s. It stops when the watched row is `connected`, `replaced`, or `unauthorized`, after 30 reads, on disconnect, or on unmount.
 - MCP catalog writes: `App.tsx` refreshes local capabilities after a local extension catalog write, queuing a fresh read if one is already pending. The MCP servers page shows neither cached rows nor Add server when MCP is off or requester permissions are unknown. An unresolved named gateway does not offer a local permission Retry.
 - Remote configuration transport: `relay/configuration.ts` owns the method/path allowlist and `POST /api/relay/oauth/start`. `relayConfigurationHttp()` runs the allowlist before the local extension gate and replaces a consumed local schedule body with a bounded rebuilt request. `/api/relay/gateways/:name/api/...` keeps each object request on its linked gateway. Query and schedule body fields rewrite only their named agent selector. `server/origins.ts` supplies the trusted browser origins for CORS and OAuth start. Core starts use `OAuthAuthorizationStartSchema` through `Accept: application/json` on the remote authorize route, and the local registry does not decide remote providers. `remote.ts` limits media and list redirects to five safe hops within their route family. Remote `/api/capabilities` supplies the requester context, and local authentication never replaces it. See [the transport contract](relay-configuration.md) for the route table and OAuth handoffs.
+  - Linked catalog: the relay forwards only the four catalog routes. It checks the browser origin and refuses bodies on writes. The destination checks the linked user's superadmin role.
   - Skills: exact skill rules and the bounded multipart branch (`skillUpload`, `SKILL_UPLOAD_LIMIT`) in `relay/configuration.ts`; `api/skills.ts`, `pages/Skills.tsx` (`SkillsView` per visit), `pages/admin/Skills.tsx`, `SkillImportDialog`, `SkillVersionsDialog`, `lib/skill-import-url.ts`. Import is never proxied with the linked bearer. The alias `/api/skill-ids/:wireId` (codec `packages/shared/src/skill-id-wire.ts`) serves every remote object helper through the same handlers (`skills/routes.ts` `skillId` accessor and `object` helper). See [Skills](relay-configuration.md#skills) and [Skill ID alias](relay-configuration.md#skill-id-alias).
   - Global controls: `GET /api/relay/gateways` (names only), `lib/gateway-choice.ts` and `GatewaySelect` for `?gateway=`, `pages/admin/Extensions.tsx`, `pages/admin/McpServers.tsx`, per-gateway alert dots in `lib/schedule-alerts.ts`. See [Global controls](relay-configuration.md#global-controls).
   - Slack pairing management: see [Slack pairing management](relay-configuration.md#slack-pairing-management).
@@ -679,6 +680,31 @@ See [orchestrator README](../packages/extensions/orchestrator/README.md) for `WO
 ## Principal API surfaces
 
 Routes are composed from core plus enabled extensions. Exact route definitions and shared schemas are source of truth.
+
+External extension discovery skips dot folders. It uses the install digest for catalog bundles and the file time and size for manual extensions.
+Manual extensions with multiple files still need a restart after a rebuild.
+
+The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.url` selects the catalog source. `extensionCatalog.enabled: false` disables it.
+The gateway caches the last catalog with its ETag. Direct loopback requests can use HTTP. Other requests and all redirects require HTTPS.
+The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
+A worker checks the exported definition. The gateway gives the worker 30 seconds and stops it before it releases the lock.
+A valid `.install.json` in an extension folder marks a catalog install. A symlink is always manual, even if its target has a valid record. The catalog does not change manual extensions.
+One lock protects catalog changes, file-based config reloads, and config reconciliation.
+New agent forks use the same lock to reload config. Independent reload requests wait for the lock.
+The gateway refuses a config write from its own extension hook before it changes the file.
+The registry stops affected extensions before moving their live files. It publishes the new set after activation succeeds.
+If activation or a reload hook fails, the registry reverses completed file moves before restarting stopped extensions.
+If file recovery or restart fails, it withdraws that extension and its dependents and reports both errors. Failed restarts can be retried by the next reload.
+After a crash between renames, recovery from `.trash` is manual (see [extensions](extensions.md#catalog-installs-and-manual-installs)).
+If route registration fails during recovery, the server uses the core API and the gateway still stops the unavailable extensions.
+The next config reload or catalog change tries to build the extension API again.
+An active run can still hold an old tool.
+The audit store records the actor, extension ID, and old and new bundle digests for each successful change.
+The catalog shows the gateway error on the extension row. If a linked install loses its response, the row asks for a fresh read before retry.
+`scripts/dev.ts` excludes both paths to the extension folder from `tsx watch`: the configured path and its real path.
+The default folder is `$YOPLAI_HOME/extensions`.
+Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. The relay checks the browser origin for a linked write. It does not send that header to the linked gateway.
+The extension and MCP settings forms use team credentials in single-user mode.
 
 Access logs emit one completion line. Fast successful GETs for health, session polling/history, chat-project lists/details, skill lists/details (except import-token and recipients), and static assets are quiet; status >= 300 or elapsed > 500 ms still logs. Nested metadata routes and session search remain logged.
 

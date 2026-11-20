@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { render } from "solid-js/web";
 import { createStore } from "solid-js/store";
 
@@ -64,6 +65,8 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
 });
+beforeEach(() => setCapabilitiesForTests({ multiUser: true }));
+afterEach(resetCapabilitiesForTests);
 afterEach(() => { dispose?.(); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("McpServerDetails", () => {

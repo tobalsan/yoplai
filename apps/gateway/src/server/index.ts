@@ -1,3 +1,4 @@
+import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
 import { createModelAccess } from "../desktop/model-access.js";
@@ -22,7 +23,7 @@ import {
 } from "../agents/container.js";
 import { loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
-import { getExtensionRuntime } from "../extensions/registry.js";
+import { getCurrentInnerApi, getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
@@ -162,7 +163,7 @@ app.use("/api/*", async (c, next) => {
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
     // These core routes are also available without multi-user.
-    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota")) continue;
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || ownsExtensionCatalogPath(path))) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
@@ -304,14 +305,14 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
 });
 
 app.all("/hooks/*", async (c) => {
   if (!currentExtensionRuntime().isEnabled("webhooks")) {
     return c.json({ error: "extension_disabled", extension: "webhooks" }, 404);
   }
-  return api.fetch(c.req.raw);
+  return (getCurrentInnerApi() ?? api).fetch(c.req.raw);
 });
 
 app.get("/health", (c) => c.json({ ok: true }));

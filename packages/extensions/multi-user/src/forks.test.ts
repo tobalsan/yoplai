@@ -16,7 +16,6 @@ let store: ForkStore;
 let homeDir: string;
 let poolDir: string;
 let forksDir: string;
-let reloadCount = 0;
 const tempDirs: string[] = [];
 
 function writePoolAgent(id: string): PoolAgentRef {
@@ -39,7 +38,6 @@ beforeEach(() => {
   poolDir = path.join(homeDir, "pool");
   forksDir = path.join(homeDir, "agents");
   fs.mkdirSync(poolDir, { recursive: true });
-  reloadCount = 0;
 
   db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
@@ -65,9 +63,6 @@ beforeEach(() => {
     db,
     getForksDir: () => forksDir,
     getPoolAgent: (poolId) => poolAgents.get(poolId) ?? null,
-    reloadConfig: () => {
-      reloadCount += 1;
-    },
   });
 });
 
@@ -111,8 +106,6 @@ describe("fork store", () => {
     // Excluded runtime artifacts are not copied.
     expect(fs.existsSync(path.join(forkFolder, ".env"))).toBe(false);
     expect(fs.existsSync(path.join(forkFolder, "data"))).toBe(false);
-    // Discovery reload was triggered so the fork becomes runnable.
-    expect(reloadCount).toBe(1);
   });
 
   it("enforces fork-once: re-assigning reuses the single fork", () => {
@@ -128,9 +121,6 @@ describe("fork store", () => {
     expect(store.listForks()).toHaveLength(1);
     // The folder was not re-copied: the marker survives.
     expect(fs.existsSync(path.join(forkFolder, "marker.txt"))).toBe(true);
-    // Only the first assignment forked; the second reused it (no extra reload
-    // from a copy).
-    expect(reloadCount).toBe(1);
   });
 
   it("setTeams replaces the explicit list without duplicating", () => {

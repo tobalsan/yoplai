@@ -42,7 +42,7 @@ const multiUserState = vi.hoisted(() => ({
 const reloadConfig = vi.fn(() => loadConfigValue);
 const setLoadedConfig = vi.fn();
 const resolveStartupConfig = vi.fn(async (config) => config);
-const reloadExtensions = vi.fn();
+const reconcileExternal = vi.fn();
 
 vi.mock("../config/index.js", () => ({
   CONFIG_DIR: "/tmp/yoplai-test",
@@ -63,7 +63,8 @@ vi.mock("../config/validate.js", () => ({
 
 vi.mock("../extensions/registry.js", () => ({
   getLoadedExtensions: () => [],
-  reloadExtensions,
+  reconcileExternal,
+  withExtensionMutation: (run: () => Promise<unknown>) => run(),
   isExtensionLoaded: (extensionId: string) =>
     extensionId === "multiUser" && multiUserState.loaded,
   getExtensionRuntime: () => ({
@@ -1112,7 +1113,7 @@ describe("api core session resolution", () => {
       expect(await response.json()).toEqual({ name: "incoming", credentialMode: "owner", enabled: true, url: URL_ALPHA, ownerUserId: "alice", ownerDisplayName: "Alice" });
       expect(await (await api.request("/agents/alpha/webhooks")).json()).toEqual([{ name: "incoming", credentialMode: "owner", enabled: true, url: URL_ALPHA, ownerUserId: "alice", ownerDisplayName: "Alice" }]);
       expect(parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")).webhooks.incoming).toMatchObject({ credentialMode: "owner", ownerUserId: "alice" });
-      expect(reloadExtensions).toHaveBeenCalledOnce();
+      expect(reconcileExternal).toHaveBeenCalledOnce();
     });
     it("rejects owner requests without an authenticated user in either install mode", async () => {
       const { api } = await import("./api.core.js");
@@ -1437,7 +1438,7 @@ describe("api core session resolution", () => {
       expect(reloadConfig).toHaveBeenCalled();
       expect(resolveStartupConfig).toHaveBeenCalledWith(loadConfigValue);
       expect(setLoadedConfig).toHaveBeenCalledWith(loadConfigValue);
-      expect(reloadExtensions).toHaveBeenCalledWith(loadConfigValue);
+      expect(reconcileExternal).toHaveBeenCalledWith(loadConfigValue);
     });
 
     it("rejects root-managed extensions without writing", async () => {
@@ -1561,7 +1562,7 @@ describe("api core session resolution", () => {
 
       expect(response.status).toBe(200);
       expect(setLoadedConfig).toHaveBeenCalledWith(resolvedReloaded);
-      expect(reloadExtensions).toHaveBeenCalledWith(resolvedReloaded);
+      expect(reconcileExternal).toHaveBeenCalledWith(resolvedReloaded);
       expect(buildExtensionCatalog).toHaveBeenCalledWith(
         resolvedReloaded,
         resolvedReloaded.agents[0],

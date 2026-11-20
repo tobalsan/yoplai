@@ -6,7 +6,7 @@ import { AgentYamlConfigSchema } from "@yoplai/shared";
 import { Hono } from "hono";
 import yaml from "js-yaml";
 import { z } from "zod";
-import { allowsDesktopAgentDiscovery, desktopDiscoveryCaseAliases, getActiveAgents, getConfigPath, isAgentActive, loadConfig, setLoadedConfig } from "../config/index.js";
+import { allowsDesktopAgentDiscovery, desktopDiscoveryCaseAliases, getActiveAgents, getConfigPath, isAgentActive, loadConfig } from "../config/index.js";
 import { reloadAfterExtensionWrite } from "../extensions/reload.js";
 import type { createInstructionWriter } from "./agent-instructions.js";
 import type { createModelAccess } from "./model-access.js";
@@ -124,13 +124,12 @@ async function listed(parent: string, id: string): Promise<boolean> {
 
 async function recoverAgent(parent: string, found: FoundAgent, needsReload: boolean) {
   if (!needsReload && await listed(parent, found.id)) return found;
-  const prior = loadConfig();
   try {
-    await reloadAfterExtensionWrite();
-    if (!(await listed(parent, found.id))) throw new AgentCreateError("reload_failed");
+    await reloadAfterExtensionWrite(async () => {
+      if (!(await listed(parent, found.id))) throw new AgentCreateError("reload_failed");
+    });
     return found;
   } catch {
-    setLoadedConfig(prior);
     throw new AgentCreateError("reload_failed");
   }
 }

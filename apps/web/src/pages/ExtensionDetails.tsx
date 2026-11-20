@@ -46,13 +46,16 @@ export function ExtensionDetails(props: {
   );
   const [busy, setBusy] = createSignal(false);
   // The OAuth card's selected tab also selects which settings the form edits.
-  const [scope, setScope] = createSignal<CredentialScope>("personal");
+  const [pickedScope, setScope] = createSignal<CredentialScope>("personal");
+  const singleUser = () => requester().ready && !requester().unknown && !requester().multiUser;
+  const scope = () => singleUser() ? "team" : pickedScope();
   let settingsActions: ConnectSettingsActions | undefined;
   const [toggleError, setToggleError] = createSignal<string | null>(null);
   // Each change of the form key starts a new generation. A late result checks both before it changes the page.
   let generation = 0;
   createComputed(() => {
     void formKey();
+    setScope("personal");
     generation++;
     setBusy(false);
     setToggleError(null);
@@ -208,6 +211,7 @@ export function ExtensionDetails(props: {
                         agentId={params.agentId}
                         gateway={gateway()}
                         scope={scope()}
+                        singleUser={singleUser()}
                         onSaved={(list) => saved(catalogKey, form, mine, list)}
                         registerConnectActions={(actions) => { settingsActions = actions; }}
                       />
@@ -221,6 +225,7 @@ export function ExtensionDetails(props: {
                   entry={ext()}
                   agentId={params.agentId}
                   gateway={gateway()}
+                  singleUser={singleUser()}
                   onSaved={(list) => saved(catalogKey, form, mine, list)}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />

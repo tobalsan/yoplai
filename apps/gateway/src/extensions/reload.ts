@@ -1,26 +1,27 @@
 import type { GatewayConfig } from "@yoplai/shared";
-import { reloadConfig, setLoadedConfig } from "../config/index.js";
+import { loadConfig, reloadConfig, setLoadedConfig } from "../config/index.js";
 import { resolveStartupConfig } from "../config/validate.js";
-import { reloadExtensions } from "./registry.js";
+import { reconcileExternal, withExtensionMutation } from "./registry.js";
 
-/**
- * Reload the gateway config after an `agent.yaml` write.
- *
- * This clears the config cache, so the next run and the next catalog read see
- * the change. It also brings a newly enabled extension online without a
- * gateway restart (ALG-349). It only adds extensions that are not loaded. It
- * never restarts running ones.
- */
-export async function reloadAfterExtensionWrite(): Promise<GatewayConfig> {
-  const rawReloaded = reloadConfig();
-  const reloaded = await resolveStartupConfig(rawReloaded);
-  setLoadedConfig(reloaded);
-  try {
-    await reloadExtensions(reloaded);
-  } catch (error) {
-    console.warn(
-      `[extensions] runtime reconcile after enable failed: ${(error as Error).message}`
-    );
-  }
-  return reloaded;
+/** Read and publish the config under the extension mutation lock. */
+export async function reloadAfterExtensionWrite(verify?: () => Promise<void>): Promise<GatewayConfig> {
+  return withExtensionMutation(async () => {
+    const previous = verify ? loadConfig() : undefined;
+    try {
+      const reloaded = await resolveStartupConfig(reloadConfig());
+      setLoadedConfig(reloaded);
+      await verify?.();
+      try {
+        await reconcileExternal(reloaded);
+      } catch (error) {
+        console.warn(
+          `[extensions] runtime reconcile after enable failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      return reloaded;
+    } catch (error) {
+      if (previous) setLoadedConfig(previous);
+      throw error;
+    }
+  }, true);
 }

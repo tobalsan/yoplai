@@ -1,8 +1,9 @@
+import { allowsCatalogWriteOrigin, ownsExtensionCatalogPath } from "../server/extension-catalog-policy.js";
 import { OAuthAuthorizationStartSchema } from "@yoplai/shared";
 import { decodeSkillId } from "@yoplai/shared/skill-id-wire";
 import { getAgent } from "../config/index.js";
 import { allowedCorsOrigins } from "../server/origins.js";
-import { isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
+import { isLoopbackForwardedFor, isRelayEnabled, isTrustedRequest, resolveRemoteAgent } from "./state.js";
 import { fetchRemote, isSafeRemotePath, remoteHttpUrl } from "./remote.js";
 import type { RemoteGateway } from "./store.js";
 
@@ -29,6 +30,10 @@ const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/schedules\/[^/]+\/[^/]+\/runs(?:\/[^/]+\/trace)?$/, agent: "path" },
   { methods: ["GET"], path: /^\/api\/(?:agents|mcp\/catalog|schedule-alerts|dashboards(?:\/recipients)?|pool(?:\/[^/]+\/avatar)?|pool-actions|teams|admin\/forks|top-extensions|admin\/top-extensions|capabilities)$/ },
   // Global extension and MCP catalog administration. The remote checks its own superadmin policy.
+  { methods: ["GET"], path: /^\/api\/admin\/extension-catalog$/ },
+  { methods: ["POST"], path: /^\/api\/admin\/extension-catalog\/refresh$/, bodyless: true },
+  { methods: ["POST"], path: /^\/api\/admin\/extension-catalog\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\/install$/, bodyless: true },
+  { methods: ["DELETE"], path: /^\/api\/admin\/extension-catalog\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, bodyless: true },
   { methods: ["PUT"], path: /^\/api\/admin\/top-extensions$/, json: true },
   { methods: ["POST"], path: /^\/api\/mcp\/catalog$/, json: true },
   { methods: ["POST"], path: /^\/api\/mcp\/catalog\/update$/, json: true },
@@ -122,6 +127,25 @@ function browserStartError(request: Request): Response | undefined {
   const denied = originError(request);
   if (denied) return denied;
   if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return fail("json_required", 415);
+}
+
+async function hasBodyBytes(request: Request): Promise<boolean> {
+  const reader = request.body?.getReader();
+  if (!reader) return false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return false;
+      if (value.byteLength > 0) {
+        void reader.cancel().catch(() => {});
+        return true;
+      }
+    }
+  } catch {
+    return true;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function jsonBody(request: Pick<Request, "body" | "signal">): Promise<Record<string, unknown> | Response> {
@@ -335,7 +359,11 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   // resolves to a remote agent below, and the same check then runs before any forward.
   const unsafePath = !isSafeRemotePath(url.pathname);
   if (unsafePath && (prefix || isStart || authorize)) return fail("invalid_remote_path");
-  const trusted = isTrustedRequest(request.headers.get("origin"), request.headers.get("x-forwarded-for"));
+  const origin = request.headers.get("origin");
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  const trusted = ownsExtensionCatalogPath(path) && request.method !== "GET"
+    ? allowsCatalogWriteOrigin(origin) && isLoopbackForwardedFor(forwardedFor)
+    : isTrustedRequest(origin, forwardedFor);
   if (prefix || isStart) {
     if (!trusted || gateways.length === 0) return fail("relay_unavailable", 403);
     if (isStart) return startOAuth(request, gateways);
@@ -401,7 +429,14 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (isResponse(upload)) return upload;
     request = upload;
   }
-  if (rule?.bodyless && (request.headers.has("transfer-encoding") || (request.headers.get("content-length") ?? "0") !== "0")) return fail("body_not_allowed");
+  if (rule?.bodyless) {
+    if (request.headers.has("transfer-encoding") || (request.headers.get("content-length") ?? "0") !== "0") return fail("body_not_allowed");
+    if (ownsExtensionCatalogPath(path) && request.body) {
+      // The Node adapter supplies a stream even for a write with no body.
+      if (await hasBodyBytes(request)) return fail("body_not_allowed");
+      request = new Request(request.url, { method: request.method, headers: request.headers, signal: request.signal });
+    }
+  }
   const mcpAdd = request.method === "POST" && path === "/api/mcp/servers";
   if (mcpAdd) {
     const denied = browserStartError(request);

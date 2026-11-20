@@ -8,11 +8,10 @@ import {
 import { startServer } from "../server/index.js";
 import { initializeDashboardRegistry } from "../canvas/migration.js";
 import { CONFIG_DIR } from "../config/index.js";
-import { api } from "../server/api.core.js";
+import { buildInnerApi } from "../server/api.core.js";
 import {
   getExtensionRuntime,
   loadExtensions,
-  reloadExtensions,
   setExtensionActivator,
 } from "../extensions/registry.js";
 import { resetActiveTurns } from "../agents/active-turns.js";
@@ -70,9 +69,7 @@ export async function startGatewayCommand(
     process.env.YOPLAI_DEV = "1";
   }
 
-  for (const extension of extensions) {
-    extension.registerRoutes(api);
-  }
+  const innerApi = buildInnerApi(extensions);
 
   const port = opts.port ? parseInt(opts.port, 10) : undefined;
   const actualPort = port ?? config.gateway?.port ?? 4000;
@@ -97,7 +94,7 @@ export async function startGatewayCommand(
   }
   const extensionContext = createExtensionContext(runtimeConfig);
   for (const extension of extensions) {
-    await extension.start(bindExtensionContext(extensionContext, extension.id));
+    await extension.start(bindExtensionContext(extensionContext, extension));
   }
   (await import("../dream/service.js")).startDreamTimers();
   (await import("../model-quota/runtime.js")).startModelQuotaPollers(config.modelQuota?.enabled === true);
@@ -105,21 +102,11 @@ export async function startGatewayCommand(
   // Allow extensions enabled at runtime (via the per-agent PATCH endpoint or a
   // config-file edit) to be brought online without a restart.
   setExtensionActivator(async (extension) => {
-    extension.registerRoutes(api);
-    await extension.start(bindExtensionContext(extensionContext, extension.id));
-  });
+    await extension.start(bindExtensionContext(extensionContext, extension));
+  }, buildInnerApi, innerApi);
 
   startServer(port, opts.host, extensionRuntime);
   startGatewayHotReload(runtimeConfig, {
-    async onReload(nextConfig) {
-      try {
-        await reloadExtensions(nextConfig);
-      } catch (error) {
-        console.warn(
-          `[hot-reload] Extension reconcile failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    },
     onError(error) {
       console.warn(
         `[hot-reload] Reload failed; keeping last good config: ${error instanceof Error ? error.message : String(error)}`

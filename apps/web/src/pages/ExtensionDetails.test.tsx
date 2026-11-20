@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { getByRole, queryByRole } from "@testing-library/dom";
 import type { ExtensionCatalogEntry } from "../api/extensions";
 
 const {
@@ -71,6 +72,7 @@ function entry(
 }
 
 function setSession(role: string | null) {
+  setCapabilitiesForTests({ multiUser: role !== null });
   useSessionMock.mockReturnValue(() => ({
     isPending: false,
     data: role ? { user: { role } } : { user: {} },
@@ -102,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   dispose?.();
+  resetCapabilitiesForTests();
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -389,6 +392,19 @@ describe("ExtensionDetails", () => {
       checkbox().click();
       await flush();
       expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team", config: { allowWrite: true } }), undefined);
+    });
+
+    it("writes team settings and hides Just me on a single-user gateway", async () => {
+      setSession(null);
+      fetchAgentExtensionsMock.mockResolvedValue([driveEntry({ canConfigureTeam: true })]);
+      patchAgentExtensionMock.mockResolvedValue([writeEntry("team", true)]);
+      await mount("scribe", "drive");
+      await flush();
+      expect(queryByRole(container, "tab", { name: /Just me/ })).toBeNull();
+      expect(getByRole(container, "tab", { name: /Whole team/ }).getAttribute("aria-selected")).toBe("true");
+      getByRole(container, "checkbox", { name: /writing files/i }).click();
+      await flush();
+      expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "drive", expect.objectContaining({ credentialScope: "team" }), undefined);
     });
 
     it("shows an inline error when the immediate save fails", async () => {

@@ -1,3 +1,6 @@
+import { allowsCatalogWriteOrigin } from "./extension-catalog-policy.js";
+import { CatalogOperationError, installFromCatalog, listReleaseCatalog, removeFromCatalog } from "../extensions/release-catalog.js";
+import { ExtensionOperationBusyError, withExtensionMutation } from "../extensions/registry.js";
 import { desktopSetupAllowed } from "../desktop/guard.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
@@ -270,6 +273,52 @@ async function isSuperadminRequest(c: Context): Promise<boolean> {
   return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 }
 
+const extensionCatalogPath = "/admin/extension-catalog";
+api.use(`${extensionCatalogPath}/*`, async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  if (loadConfig().extensionCatalog?.enabled === false) return c.json({ error: "The catalog is disabled." }, 404);
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "Only a superadmin can use the catalog." }, 403);
+  if (c.req.method !== "GET" && !allowsCatalogWriteOrigin(c.req.header("Origin"))) {
+    return c.json({ error: "The browser origin is not allowed." }, 403);
+  }
+  await next();
+});
+
+function extensionCatalogError(c: Context, error: unknown) {
+  if (error instanceof CatalogOperationError) return c.json({ error: error.message }, error.status);
+  if (error instanceof ExtensionOperationBusyError) return c.json({ error: error.message }, 409);
+  return c.json({ error: error instanceof Error ? error.message : "The extension operation failed." }, 409);
+}
+
+api.get(extensionCatalogPath, async (c) => {
+  try { return c.json(await withExtensionMutation(() => listReleaseCatalog(loadConfig()), true)); }
+  catch (error) { return extensionCatalogError(c, error); }
+});
+api.post(`${extensionCatalogPath}/refresh`, async (c) => {
+  try { return c.json(await withExtensionMutation(() => listReleaseCatalog(loadConfig(), true), true)); }
+  catch (error) { return extensionCatalogError(c, error); }
+});
+api.post(`${extensionCatalogPath}/:id/install`, async (c) => {
+  try {
+    const actor = await getAuditActor(c);
+    const actorUserId = actor.actorUserId ?? "local";
+    const { entry, action, previousSha256 } = await installFromCatalog(loadConfig(), c.req.param("id"), actorUserId);
+    recordSettingsChange({ ...actor, actorUserId, action, targetType: "extension", targetId: entry.id,
+      changes: [{ field: "sha256", before: previousSha256, after: entry.sha256 }] });
+    return c.json(entry);
+  } catch (error) { return extensionCatalogError(c, error); }
+});
+api.delete(`${extensionCatalogPath}/:id`, async (c) => {
+  try {
+    const actor = await getAuditActor(c);
+    const id = c.req.param("id");
+    const previousSha256 = await removeFromCatalog(loadConfig(), id);
+    recordSettingsChange({ ...actor, actorUserId: actor.actorUserId ?? "local", action: "extension.remove", targetType: "extension", targetId: id,
+      changes: [{ field: "sha256", before: previousSha256, after: null }] });
+    return c.json({ ok: true });
+  } catch (error) { return extensionCatalogError(c, error); }
+});
+
 api.get("/top-extensions", (c) => c.json(readTopExtensions()));
 
 api.get("/admin/model-quota", async (c) => {
@@ -305,7 +354,7 @@ api.get("/admin/model-quota", async (c) => {
 
 async function listTopExtensionCandidates() {
   const config = loadConfig();
-  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_" } as AgentConfig);
+  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_", workspace: CONFIG_DIR } as AgentConfig);
   const catalog = await buildExtensionCatalog(config, sampleAgent, { configurable: false });
   const extensions = catalog.map((entry) => ({
     id: entry.id,
@@ -1739,7 +1788,14 @@ api.get("/media/allowed-types", (c) => {
   return c.json({ types: getAllowedMimeTypes() });
 });
 
-export { api };
+export { api, api as coreApi };
+
+export function buildInnerApi(extensions: { registerRoutes: (app: Hono) => void }[]): Hono {
+  const app = new Hono();
+  app.route("/", api);
+  for (const extension of extensions) extension.registerRoutes(app);
+  return app;
+}
 
 api.route("/dashboards", createDashboardResourceRoutes({
   getConfig: loadConfig, getAgent,

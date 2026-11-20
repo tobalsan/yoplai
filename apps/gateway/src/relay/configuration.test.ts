@@ -736,3 +736,30 @@ describe("media and list redirect refusals", () => {
     }
   });
 });
+
+describe("linked extension catalog", () => {
+  const collection = "/api/admin/extension-catalog";
+  it.each([
+    ["GET", collection], ["POST", `${collection}/refresh`],
+    ["POST", `${collection}/sample/install`], ["DELETE", `${collection}/sample`],
+  ])("forwards %s %s with the linked bearer", async (method, path) => {
+    expect((await app.request(`${prefix()}${path}`, { method, headers: { origin } })).status).toBe(200);
+    expect(records.map((record) => [record.url.pathname, record.headers.get("authorization"), record.headers.get("origin")]))
+      .toEqual([[path, "Bearer fake-east-bearer", null]]);
+  });
+
+  it("refuses a catalog write with a body before forwarding", async () => {
+    const response = await app.request(`${prefix()}${collection}/sample/install`, { method: "POST", body: "{}", headers: { origin } });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "body_not_allowed" });
+    expect(records).toHaveLength(0);
+  });
+
+  it("refuses other admin paths and catalog writes from an untrusted origin or address", async () => {
+    const route = `${prefix()}${collection}/sample/install`;
+    expect((await app.request(route, { method: "POST", headers: { origin: "http://localhost:3799" } })).status).toBe(403);
+    expect((await app.request(route, { method: "POST", headers: { origin, "x-forwarded-for": "192.0.2.1" } })).status).toBe(403);
+    expect((await app.request(`${prefix()}/api/admin/unknown`)).status).toBe(405);
+    expect(records).toHaveLength(0);
+  });
+});

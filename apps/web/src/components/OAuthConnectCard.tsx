@@ -68,7 +68,8 @@ export function OAuthConnectCard(props: {
   const requester = () => props.requester();
   const flow = createOAuthPopupFlow();
   const [ownScope, setOwnScope] = createSignal<CredentialScope>(oauthResult?.scope ?? "personal");
-  const scope = () => props.scope ?? ownScope();
+  const singleUser = () => requester().ready && !requester().unknown && !requester().multiUser;
+  const scope = () => singleUser() ? "team" : props.scope ?? ownScope();
   const setScope = (next: CredentialScope) => {
     setOwnScope(next);
     props.onScopeChange?.(next);
@@ -98,7 +99,7 @@ export function OAuthConnectCard(props: {
           : readOAuthStatus(props.agentId, props.provider, target, props.gateway);
       const [team, personal] = await Promise.all([
         load("team"),
-        requester().user ? load("personal") : undefined,
+        !singleUser() && requester().user ? load("personal") : undefined,
       ]);
       if (request !== statusRequest) return;
       if (team.canConfigureTeam === false) setCanConfigureTeam(false);
@@ -236,6 +237,7 @@ export function OAuthConnectCard(props: {
       <CredentialScopeTabs
         value={scope()}
         personalDisabled={!requester().user}
+        hidePersonal={singleUser()}
         teamLocked={!canConfigureTeam()}
         status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
         onChange={(next) => {

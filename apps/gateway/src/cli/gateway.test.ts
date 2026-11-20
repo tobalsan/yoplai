@@ -13,7 +13,7 @@ const startServer = vi.fn();
 const loadExtensions = vi.fn();
 const getExtensionRuntime = vi.fn(() => ({ runtime: true }));
 const createExtensionContext = vi.fn();
-const bindExtensionContext = vi.fn((context: Record<string, unknown>, extensionId: string) => ({ ...context, extensionId }));
+const bindExtensionContext = vi.fn((context: Record<string, unknown>, extension: { id: string }) => ({ ...context, extensionId: extension.id }));
 const setExtensionActivator = vi.fn();
 const prepareStartupConfig = vi.fn();
 const logComponentSummary = vi.fn();
@@ -33,7 +33,11 @@ vi.mock("../server/index.js", () => ({
 }));
 
 vi.mock("../server/api.core.js", () => ({
-  api: {},
+  buildInnerApi: (extensions: { registerRoutes: (app: object) => void }[]) => {
+    const app = {};
+    for (const extension of extensions) extension.registerRoutes(app);
+    return app;
+  },
 }));
 
 vi.mock("../extensions/registry.js", () => ({

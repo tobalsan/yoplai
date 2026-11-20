@@ -43,6 +43,8 @@ Agents can generate images, and compaction summaries follow a fixed template for
 ### Fixed
 
 - Account connections only shows the Threadit and Mattermost section when a local account link exists.
+- The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
+- Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
 - Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
 - Desktop setup keeps config links during migration. Restart works after you correct a config error.
 - Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
