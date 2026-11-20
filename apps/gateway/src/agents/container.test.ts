@@ -14,6 +14,7 @@ import {
 import {
   buildContainerArgs,
   buildVolumeMounts,
+  cleanupOrphanContainers,
   cleanupOrphanIpcNamespaces,
   ensureAgentImage,
   filterSecretEnvVars,
@@ -837,5 +838,64 @@ describe("gateway socket transport", () => {
     );
 
     expect(mounts.map((mount) => mount.target)).not.toContain("/run/yoplai");
+  });
+});
+
+describe("cleanupOrphanContainers", () => {
+  function fakeDocker(containers: { id: string; labels: string[]; name: string }[]) {
+    const removed: string[] = [];
+    const queries: string[][] = [];
+    vi.mocked(execFileSync).mockImplementation(((_command: string, args: string[]) => {
+      if (args[0] === "ps") {
+        queries.push(args);
+        const filters = args.flatMap((a, i) => (args[i - 1] === "--filter" ? [a] : []));
+        return containers
+          .filter((c) => {
+            const names = filters.filter((f) => f.startsWith("name="));
+            const labels = filters.filter((f) => f.startsWith("label="));
+            return (!names.length || names.some((f) => c.name.includes(f.slice("name=".length)))) &&
+              labels.every((f) => c.labels.includes(f.slice("label=".length)));
+          })
+          .map((c) => c.id)
+          .join("\n");
+      }
+      if (args[0] === "rm") removed.push(...args.slice(2));
+      return "";
+    }) as never);
+    return { removed, queries };
+  }
+
+  function agentArgs(home: string): string[] {
+    const agent = AgentConfigSchema.parse({
+      id: "cloud",
+      name: "Cloud",
+      workspace: "/tmp/w",
+      model: { provider: "anthropic", model: "x" },
+    });
+    return buildContainerArgs(agent, {} as never, [], home, "u");
+  }
+
+  it("labels agent containers and removes only those of the cleaned home", () => {
+    const homeA = tmpDir();
+    const homeB = tmpDir();
+    const alias = path.join(tmpDir(), "alias");
+    fs.symlinkSync(homeA, alias);
+    const labelOf = (home: string) => argValues(agentArgs(home), "--label")[0];
+    expect(labelOf(homeA)).toMatch(/^yoplai\.agent\.home=[0-9a-f]{64}$/);
+    expect(labelOf(homeA)).not.toBe(labelOf(homeB));
+
+    const docker = fakeDocker([
+      { id: "a1", name: "yoplai-agent-x", labels: [labelOf(homeA)] },
+      { id: "a2", name: "yoplai-agent-y", labels: [labelOf(homeA)] },
+      { id: "b1", name: "yoplai-agent-z", labels: [labelOf(homeB)] },
+      { id: "legacy", name: "yoplai-agent-old", labels: [] },
+    ]);
+
+    cleanupOrphanContainers(alias);
+    expect(docker.removed).toEqual(["a1", "a2"]);
+
+    cleanupOrphanContainers(homeB);
+    expect(docker.removed).toEqual(["a1", "a2", "b1"]);
+    expect(docker.queries.flat()).not.toContain("name=yoplai-agent-");
   });
 });
