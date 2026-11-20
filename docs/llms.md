@@ -680,6 +680,15 @@ Routes are composed from core plus enabled extensions. Exact route definitions a
 External extension discovery skips dot folders. It uses the install digest for catalog bundles and the file time and size for manual extensions.
 Manual extensions with multiple files still need a restart after a rebuild.
 
+The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.url` selects the catalog source. `extensionCatalog.enabled: false` disables it.
+The gateway caches the last catalog with its ETag. The catalog uses HTTPS, with an HTTP exception for loopback tests.
+The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
+The install record at `<extensionsPath>/<id>/.install.json` marks a catalog install. The catalog does not replace or remove manual extensions.
+One lock protects catalog changes and config reconciliation. The gateway publishes new routes and OAuth providers without a restart.
+If reconciliation fails, the gateway restores the files before it restarts the old objects. An active run can still hold an old tool.
+Catalog routes under `/api/admin/extension-catalog` require a superadmin in multi-user mode. Both gateways check the browser origin before a linked write.
+The extension and MCP settings forms use team credentials in single-user mode.
+
 Access logs emit one completion line. Fast successful GETs for health, session polling/history, chat-project lists/details, skill lists/details (except import-token and recipients), and static assets are quiet; status >= 300 or elapsed > 500 ms still logs. Nested metadata routes and session search remain logged.
 
 - **Core agents:** `/api/agents`, status, messages, history, sessions, extension catalog/config. `GET /api/agents/sessions/search?q=words` shares the sidebar's filename-based enumeration and reads each candidate once for its summary and match. It returns `{ items }` (summaries with avatar plus `match: "title" | "content"`, optional snippet), excludes archived chats, and searches the caller's visible-agent interactive sessions including chat Projects. Case-insensitive substring words must all occur across the shown label (`title || firstUserMessage || sessionId`) and user/assistant text; tool/thinking/system content is excluded. Title matches precede content matches, newest first within each group, capped at 50; blank input returns no items. No index/cache; search remains access-logged.

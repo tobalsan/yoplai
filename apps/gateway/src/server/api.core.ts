@@ -346,7 +346,7 @@ api.get("/admin/model-quota", async (c) => {
 
 async function listTopExtensionCandidates() {
   const config = loadConfig();
-  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_" } as AgentConfig);
+  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_", workspace: CONFIG_DIR } as AgentConfig);
   const catalog = await buildExtensionCatalog(config, sampleAgent, { configurable: false });
   const extensions = catalog.map((entry) => ({
     id: entry.id,

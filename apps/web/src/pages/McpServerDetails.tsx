@@ -134,11 +134,13 @@ export function McpServerDetails() {
   const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
   window.addEventListener("pageshow", onPageShow);
   onCleanup(() => window.removeEventListener("pageshow", onPageShow));
-  const [scope, setScope] = createSignal<McpScope>(oauthResult?.scope ?? "personal");
+  const [pickedScope, setScope] = createSignal<McpScope>(oauthResult?.scope ?? "personal");
+  const singleUser = () => requester().ready && !requester().unknown && !requester().multiUser;
+  const scope = () => singleUser() ? "team" : pickedScope();
   let scopePicked = !!oauthResult;
-  let scopeKey = JSON.stringify([params.agentId, params.serverName]);
+  let scopeKey = JSON.stringify([params.agentId, params.serverName, gateway()]);
   createEffect(() => {
-    const key = JSON.stringify([params.agentId, params.serverName]);
+    const key = JSON.stringify([params.agentId, params.serverName, gateway()]);
     if (key !== scopeKey) {
       scopeKey = key;
       scopePicked = false;
@@ -369,6 +371,7 @@ export function McpServerDetails() {
           <CredentialScopeTabs
             value={scope()}
             personalDisabled={!requester().user}
+            hidePersonal={singleUser()}
             teamLocked={!canConfigureTeam()}
             status={{ personal: tabStatus("personal"), team: tabStatus("team") }}
             onChange={(next) => { scopePicked = true; setScope(next); }}

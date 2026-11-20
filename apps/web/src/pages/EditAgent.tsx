@@ -1,3 +1,4 @@
+import { releaseCatalogChanged } from "../api/release-catalog";
 import { decodeRouteParam } from "../lib/path";
 import {
   createComputed,
@@ -337,6 +338,11 @@ export function EditAgent() {
     }),
     (key) => fetchAgentExtensions(key.id, key.gateway)
   );
+  const refreshInstalled = (event: Event) => {
+    if (event instanceof CustomEvent && event.detail === gateway()) void refetchExtensions();
+  };
+  window.addEventListener(releaseCatalogChanged, refreshInstalled);
+  onCleanup(() => window.removeEventListener(releaseCatalogChanged, refreshInstalled));
   const extensionCatalog = () => extensions.error ? [] : extensions() ?? [];
   // Without the mcp extension on the gateway, the page reads no MCP servers and shows no MCP control.
   const mcpAvailable = () => requester().isExtensionEnabled("mcp");
@@ -807,6 +813,9 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "extensions"}>
+          <Show when={singleUser() || isSuperadmin()}>
+            <A href={gateway() === undefined ? "/admin/extensions" : `/admin/extensions?gateway=${encodeURIComponent(gateway()!)}`}>Browse the catalog</A>
+          </Show>
           <section class="edit-agent-extensions">
             <div class="edit-agent-ext-head">
               <h2 class="edit-agent-section-title">Extensions</h2>

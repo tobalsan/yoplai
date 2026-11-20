@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { createStore } from "solid-js/store";
@@ -18,6 +19,8 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const docs = { name: "docs", title: "Docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "disconnected", personalState: "connected", teamState: "disconnected", personalAccount: "alice@example.test", status: "pending", readOnly: true };
 let dispose: (() => void) | undefined;
 beforeEach(() => { route[1]({ agentId: "fast-details", serverName: "docs" }); });
+beforeEach(() => setCapabilitiesForTests({ multiUser: true }));
+afterEach(resetCapabilitiesForTests);
 afterEach(() => { dispose?.(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 it.each([

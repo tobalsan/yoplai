@@ -6,6 +6,12 @@ Self-hosted gateway for running AI agents through a web UI, CLI, messaging chann
 
 Yoplai keeps configuration, conversations, and project data on your machine. Start with one agent locally, then add channels, automation, authentication, or container isolation as needed.
 
+## Extension catalog
+
+Open **Admin → Extensions** to browse the catalog. Use **Install**, **Update**, or **Remove** on an extension.
+Use the gateway selector for a linked gateway. In multi-user mode, the selected gateway requires a superadmin.
+Catalog changes do not require a restart. The catalog does not replace or remove extensions that you manage by hand.
+
 ## What you get
 
 - Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.

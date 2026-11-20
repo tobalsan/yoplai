@@ -15,6 +15,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Admins can install, update, and remove extensions from the catalog without a gateway restart.
+
 - External extension discovery ignores work folders and uses versioned imports.
 
 - The macOS release has a Developer ID signature and an Apple notarization ticket.
@@ -87,6 +89,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - A multi-user gateway lets the exact `GET /api/mcp/oauth/callback` and the exact `GET /api/oauth/<provider>/callback` of a registered core OAuth provider through the authentication gate, so a sign-in finishes when the browser returns with no session cookie. The one-use state, PKCE, provider, owner scope, and start-time policy are unchanged. Unknown providers, other methods and paths, and every other route need credentials as before.
 
 ### Fixed
+
+- Extension and MCP settings use team credentials in single-user mode.
 
 - The full-screen chat panel keeps its tabs and close buttons clear of the toolbar. Narrow chat toolbars group secondary controls under More chat controls. The Agents heading sits in the toolbar.
 - The desktop dev home does not generate an OAuth key if the shell supplies one.

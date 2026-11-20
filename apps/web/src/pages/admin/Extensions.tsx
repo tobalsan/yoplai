@@ -1,3 +1,4 @@
+import { ReleaseCatalog } from "./ReleaseCatalog";
 import { For, Show, createComputed, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import {
   fetchAdminTopExtensions,
@@ -181,6 +182,7 @@ export default function AdminExtensionsPage() {
       <Show when={choice.ready() && loaded.error}>
         <p class="top-error">{loaded.error instanceof Error ? loaded.error.message : "Failed to load."}</p>
       </Show>
+      <ReleaseCatalog gateway={gateway()} ready={choice.ready()} canWrite={canWrite()} icon={(src) => <ExtensionIcon src={src} />} onChange={() => void refetch()} />
       <Show when={data()} fallback={<Show when={choice.selection().state === "loading" || (choice.ready() && loaded.loading)}><div class="top-empty">Loading…</div></Show>}>
         {(loaded) => (
           <>
