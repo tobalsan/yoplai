@@ -100,6 +100,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - A failed read of the local capabilities (for example HTTP 500) now shows a permission error with Retry on the MCP servers page, not "The MCP extension is not installed".
 
+- Only the Yoplai desktop window gets the first-screen fade, window-button inset and hidden sidebar branding. Another Electron host that shows the UI keeps browser chrome.
+
 - The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
 
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.

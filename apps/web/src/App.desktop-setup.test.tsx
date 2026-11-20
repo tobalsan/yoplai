@@ -750,7 +750,7 @@ it("lists missing local items, and keeps the bar closed until a new app start", 
 });
 
 it("keeps the desktop setup links on a page without a sidebar", async () => {
-  const userAgent = vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Electron/45");
+  document.documentElement.setAttribute("data-yoplai-desktop", "");
   try {
     wizardExited = true;
     overrides = (path) => path === "/api/model-access/models" ? response({ models: [] }) : undefined;
@@ -768,7 +768,7 @@ it("keeps the desktop setup links on a page without a sidebar", async () => {
     await heading("Link a device");
     expect(queryByRole(root, "complementary", { name: "Missing setup items" })).toBeNull();
   } finally {
-    userAgent.mockRestore();
+    document.documentElement.removeAttribute("data-yoplai-desktop");
   }
 });
 

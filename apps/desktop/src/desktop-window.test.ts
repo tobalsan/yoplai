@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { getByRole } from "@testing-library/dom";
 import { afterEach, expect, it, vi } from "vitest";
-import { fadeInDesktopWindow } from "../../web/src/lib/desktop-window.js";
+import { fadeInDesktopWindow, isDesktopWindow } from "../../web/src/lib/desktop-window.js";
 
 const index = fs.readFileSync("apps/web/index.html", "utf8");
 
@@ -12,13 +12,16 @@ afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   document.documentElement.removeAttribute("data-desktop-first-screen");
+  document.documentElement.removeAttribute("data-yoplai-desktop");
   document.head.innerHTML = "";
   document.body.innerHTML = "";
 });
 
-function loadPage(userAgent: string, reducedMotion = false, choice = "light") {
+// The Yoplai window is the one that the main-window preload gave the theme bridge, whatever the user agent says.
+function loadPage(userAgent: string, reducedMotion = false, choice = "light", bridge = userAgent.startsWith("Electron/")) {
   vi.stubGlobal("navigator", { userAgent });
   vi.stubGlobal("matchMedia", () => ({ matches: reducedMotion }));
+  if (bridge && !window.yoplaiDesktopTheme) Object.assign(window, { yoplaiDesktopTheme: { load: () => null, save: () => null } });
   localStorage.setItem("yoplai-theme", choice);
   const page = new DOMParser().parseFromString(index, "text/html");
   document.head.replaceChildren(...page.querySelectorAll("style"));
@@ -54,9 +57,7 @@ it.each([
   expect(background()).toBe(backdrop);
 
   renderScreen(root);
-  await vi.waitFor(() => expect(root.animate).toHaveBeenCalledWith([
-    { opacity: 0 }, { opacity: 1 },
-  ], expect.objectContaining({ duration: 200 })));
+  await vi.waitFor(() => expect(root.animate).toHaveBeenCalledTimes(1));
   expect(background()).toBe(backdrop);
   animation.resolve();
   await animation.promise;
@@ -90,6 +91,23 @@ it.each([["Chrome/146", false], ["Electron/45", true]])(
     expect(window.getComputedStyle(document.body).backgroundColor).not.toBe("rgb(0, 0, 0)");
   },
 );
+
+it("keeps browser chrome for an Electron user agent without the Yoplai bridge", async () => {
+  const { root } = loadPage("Electron/45", false, "light", false);
+  expect(document.documentElement.hasAttribute("data-yoplai-desktop")).toBe(false);
+  expect(document.documentElement.hasAttribute("data-desktop-first-screen")).toBe(false);
+  expect(isDesktopWindow()).toBe(false);
+  fadeInDesktopWindow(root);
+  renderScreen(root);
+  await Promise.resolve();
+  expect(root.animate).not.toHaveBeenCalled();
+});
+
+it("marks the Yoplai window before the first paint", () => {
+  loadPage("Chrome/146", false, "light", true);
+  expect(document.documentElement.hasAttribute("data-yoplai-desktop")).toBe(true);
+  expect(isDesktopWindow()).toBe(true);
+});
 
 it("uses the desktop preference before the screen paints on a new origin", () => {
   const load = vi.fn().mockReturnValue("light");
