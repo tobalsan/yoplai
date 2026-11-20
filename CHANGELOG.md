@@ -92,6 +92,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Installing or removing the MCP extension from the catalog updates the MCP pages without a reload.
+
 - The gateway ends a stalled catalog bundle check after 30 seconds so later catalog changes can proceed.
 
 - Superadmins can refresh, install, update, and remove catalog extensions on a linked gateway.
