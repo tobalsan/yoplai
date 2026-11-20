@@ -76,3 +76,33 @@ it("shows the server error or a fallback on the extension row", async () => {
   fireEvent.click(card().getByRole("button", { name: "Install" }));
   await vi.waitFor(() => expect(card().getByRole("alert").textContent).toBe("The extension operation failed."));
 });
+
+it.each([
+  ["a dropped connection", () => { throw new TypeError("Failed to fetch"); }],
+  ["a relay timeout", () => Response.json({ error: "gateway_offline", gateway: "east" }, { status: 502 })],
+])("reads the linked gateway again before retrying after a lost install response (%s)", async (_name, lose) => {
+  let sample = available;
+  let installs = 0;
+  request.mockImplementation(async (target, init) => {
+    if (target === path && init?.method === "GET") return catalog(sample);
+    if (target === `${path}/sample/install` && init?.method === "POST") {
+      installs++;
+      if (installs === 1) {
+        setTimeout(() => { sample = { ...sample, state: "installed", installedVersion: "1.0.0" }; }, 20);
+        return lose();
+      }
+      return Response.json(sample);
+    }
+    throw new Error(`Unexpected request: ${target}`);
+  });
+  dispose = render(() => <ReleaseCatalog gateway="east" ready canWrite icon={() => null} onChange={() => undefined} />, document.body);
+  const card = () => within(getByRole(document.body, "article", { name: "Sample" }));
+  await vi.waitFor(() => expect(card().getByRole("button", { name: "Install" })).toBeTruthy());
+  fireEvent.click(card().getByRole("button", { name: "Install" }));
+  await vi.waitFor(() => expect(card().getByRole("alert").textContent).toContain("unknown"));
+  expect(card().queryByRole("button", { name: "Install" })).toBeNull();
+  await new Promise((done) => setTimeout(done, 40));
+  fireEvent.click(card().getByRole("button", { name: "Check current status" }));
+  await vi.waitFor(() => expect(card().getByText("Installed")).toBeTruthy());
+  expect(installs).toBe(1);
+});
