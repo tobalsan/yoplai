@@ -3,6 +3,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import type { AnyModel, Api, AssistantMessage, AuthResult, Model } from "@earendil-works/pi-ai";
 import type { ModelRuntimeAuthOverrides } from "@earendil-works/pi-coding-agent";
+import { getProviderErrorCategory, isRetryableProviderError } from "@yoplai/shared";
+import { classifyRunFailure } from "@yoplai/shared/run-failure";
 import { CONFIG_DIR } from "../config/index.js";
 import { desktopEnabled } from "./guard.js";
 import { isRelayEnabled } from "../relay/state.js";
@@ -20,10 +22,28 @@ export function isSafeModelAccessError(message: string | undefined): message is 
   return message === CODEX_EXPIRED || message === CLAUDE_LOGIN_UNAVAILABLE;
 }
 
-function safeExternalError(provider: string, message?: string): string {
+function safeProviderError(provider: string, external: boolean, status: number | undefined, message = ""): string {
   if (isSafeModelAccessError(message)) return message;
-  if (provider === "openai-codex" && /\b401\b/.test(message ?? "")) return CODEX_EXPIRED;
-  return EXTERNAL_FAILURE;
+  const response = status && status >= 400 ? { status } : undefined;
+  const category = getProviderErrorCategory(response, message);
+  if (status === 401 || category === "auth") {
+    return external && provider === "openai-codex" ? CODEX_EXPIRED : "401 Unauthorized: provider authentication failed.";
+  }
+  switch (classifyRunFailure(response, message)) {
+    case "safety_refusal": return "The model refused to complete the request.";
+    case "context_overflow": return category === "invalid_request" ? "400 invalid_request_error: context window exceeded." : "The context window was exceeded.";
+    case "quota": return "Provider quota exceeded.";
+    case "rate_limit": return "429 Provider rate limit.";
+    case "overloaded": return "529 Provider overloaded.";
+  }
+  switch (category) {
+    case "invalid_request": return "400 invalid_request_error.";
+    case "timeout": return "Provider request timed out.";
+    case "network": return "Provider network error.";
+    case "unavailable": return "503 Provider temporarily unavailable.";
+  }
+  if (isRetryableProviderError(response, message)) return "503 Provider temporarily unavailable.";
+  return external ? EXTERNAL_FAILURE : "The model call failed.";
 }
 
 export async function createModelAuth(options: {
@@ -81,9 +101,16 @@ export async function createModelAuth(options: {
     }
 
     let external: ExternalCredential | undefined;
+    let externalDiagnosis: Error | undefined;
     if (canReadExternal()) {
       if (scope) scope.external = true;
-      external = await readExternal(provider, model, mode);
+      try {
+        const externalMode = mode ?? (runtime.getProvider(provider)?.auth.apiKey ? undefined : "oauth");
+        external = await readExternal(provider, model, externalMode);
+      } catch (error) {
+        if (!(error instanceof Error) || !isSafeModelAccessError(error.message)) throw error;
+        if (canReadExternal()) externalDiagnosis = error;
+      }
       if (scope) scope.external = external !== undefined;
     }
     if (external) {
@@ -92,13 +119,13 @@ export async function createModelAuth(options: {
       const headers = model && "reasoning" in model ? runtime.getCompatibilityRequestConfig(model).headers : undefined;
       return { auth: { apiKey: external.key, headers }, source: external.source };
     }
-    if (mode === "oauth") return undefined;
     if (scope) scope.source = "environment";
-    if (mode === "api_key") {
-      const key = getEnvApiKey(provider);
-      return key ? native({ ...overrides, apiKey: key }) : undefined;
-    }
-    return native(overrides);
+    const key = mode === "api_key" ? getEnvApiKey(provider) : undefined;
+    const auth = mode === "oauth" ? undefined
+      : mode === "api_key" ? (key ? await native({ ...overrides, apiKey: key }) : undefined)
+      : await native(overrides);
+    if (!auth && externalDiagnosis) throw externalDiagnosis;
+    return auth;
   }
 
   const providerApiKeyEnv: Readonly<Record<string, string>> = {
@@ -165,11 +192,11 @@ export async function createModelAuth(options: {
     const push = result.push.bind(result);
     const end = result.end.bind(result);
     function safe(message: AssistantMessage): AssistantMessage {
-      if (!scope.external) return message;
+      if (!message.diagnostics && message.stopReason !== "error" && message.errorMessage === undefined) return message;
       const clean = { ...message };
       delete clean.diagnostics;
       if (clean.stopReason === "error" || clean.errorMessage !== undefined) {
-        clean.errorMessage = safeExternalError(model.provider, status === 401 ? "401" : clean.errorMessage);
+        clean.errorMessage = safeProviderError(model.provider, scope.external, status, clean.errorMessage);
       }
       return clean;
     }
@@ -206,7 +233,7 @@ type ModelHeaderConfig = {
   }>;
 };
 
-async function readModelConfig(home: string): Promise<string | undefined> {
+export async function readModelConfig(home: string): Promise<string | undefined> {
   try {
     return await fs.readFile(path.join(home, "models.json"), "utf8");
   } catch (error) {
@@ -227,10 +254,10 @@ function hasCustomHeaders(raw: string, provider: string, model: string): boolean
 
 export const CUSTOM_KEY_CHECK_HEADERS = "Yoplai cannot check this key because the model config adds custom headers.";
 
-export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR): Promise<boolean | "custom_headers"> {
+export async function checkLiteralModelKey(provider: string, key: string, modelId: string, home = CONFIG_DIR, snapshot?: { config: string | undefined }): Promise<boolean | "custom_headers"> {
   if (!isLiteralKey(key)) return false;
   try {
-    const config = await readModelConfig(home);
+    const config = snapshot ? snapshot.config : await readModelConfig(home);
     const { runtime } = await createModelAuth({ home, submitted: { provider, key } });
     if (runtime.getError() || config !== await readModelConfig(home)) return false;
     if (config !== undefined && hasCustomHeaders(config, provider, modelId)) return "custom_headers";

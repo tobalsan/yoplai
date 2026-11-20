@@ -39,9 +39,15 @@ it("refuses key commands and environment references", async () => {
   expect(isLiteralKey("fake-literal-key")).toBe(true);
 });
 
-it.each(["stop", "error"] as const)("removes external diagnostics from a %s stream", async (stopReason) => {
+it.each([
+  { source: "external", stopReason: "stop", status: 200 },
+  { source: "external", stopReason: "error", status: 429 },
+  { source: "owned", stopReason: "error", status: 401 },
+] as const)("sanitizes $source provider results without losing HTTP $status", async ({ source, stopReason, status }) => {
+  const { isRetryableProviderError, isFallbackEligibleError } = await import("@yoplai/shared");
   const { createAssistantMessageEventStream } = await import("@earendil-works/pi-ai");
   const { createModelAuth } = await import("./model-auth.js");
+  if (source === "owned") await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned" } }));
   const { runtime } = await createModelAuth({ readExternal: async () => ({ type: "api_key", key: "fake-external", source: "test" }) });
   const provider = runtime.getProvider("openai")!;
   const model = runtime.getModels(provider.id)[0];
@@ -52,8 +58,9 @@ it.each(["stop", "error"] as const)("removes external diagnostics from a %s stre
     diagnostics: [{ type: "provider_transport_failure", timestamp: Date.now(), error: { message: "fake-private-diagnostic", stack: "fake-private-stack" } }],
     ...(stopReason === "error" && { errorMessage: "fake-private-error" }),
   };
-  runtime.registerNativeProvider({ ...provider, streamSimple: () => {
+  runtime.registerNativeProvider({ ...provider, streamSimple: (_model, _context, options) => {
     const stream = createAssistantMessageEventStream();
+    void options?.onResponse?.({ status, headers: {} }, model);
     stream.push({ type: "start", partial: response });
     if (stopReason === "error") stream.push({ type: "error", reason: stopReason, error: response });
     else stream.push({ type: "done", reason: stopReason, message: response });
@@ -68,5 +75,7 @@ it.each(["stop", "error"] as const)("removes external diagnostics from a %s stre
   expect(events.map((event) => event.type)).toEqual(["start", stopReason === "stop" ? "done" : "error"]);
   expect(JSON.stringify({ events, final }).includes("fake-private-")).toBe(false);
   expect(final).not.toHaveProperty("diagnostics");
-  if (stopReason === "error") expect(final.errorMessage).toBe("The external login failed. Check the login in its app.");
+  const message = final.errorMessage ?? "";
+  expect(isRetryableProviderError(final, message)).toBe(status === 429);
+  expect(isFallbackEligibleError(final, message)).toBe(status === 429);
 });
