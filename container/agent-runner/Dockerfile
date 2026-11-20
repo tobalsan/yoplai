@@ -17,6 +17,7 @@ COPY container/agent-runner/playwright-cli.json /opt/playwright-cli.json
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY patches/ ./patches/
 COPY packages/shared/package.json ./packages/shared/package.json
 COPY container/agent-runner/package.json ./container/agent-runner/package.json
 RUN corepack enable && pnpm install --frozen-lockfile --prod --filter @yoplai/agent-runner... 2>/dev/null || pnpm install --prod --filter @yoplai/agent-runner...
