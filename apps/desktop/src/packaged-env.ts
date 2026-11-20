@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseEnv } from "node:util";
 
 /** The only variables that pass from the app environment to the gateway. LC_* passes too. */
 const PASSED_NAMES = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "TZ"];
@@ -43,8 +44,8 @@ export function buildPackagedEnv(input: PackagedEnvInput): NodeJS.ProcessEnv {
 }
 
 /** A leading `~` means the user home, as for YOPLAI_HOME in `packages/shared/src/config-path.ts`. */
-function expandHomePath(rawPath: string): string {
-  return rawPath.startsWith("~") ? path.join(os.homedir(), rawPath.slice(1)) : path.resolve(rawPath);
+export function expandHomePath(rawPath: string, userHome = os.homedir()): string {
+  return rawPath.startsWith("~") ? path.join(userHome, rawPath.slice(1)) : path.resolve(rawPath);
 }
 
 /** YOPLAI_HOME wins. Else the app support folder of the user. */
@@ -65,7 +66,7 @@ export const SEED_CONFIG = {
   oauth: { encryptionKey: "$env:OAUTH_ENCRYPTION_KEY" },
 } as const;
 
-const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
+export const CONFIG_NAMES = ["yoplai.json", "aihub.json"];
 
 function migrateAgentDiscovery(file: string): void {
   const configPath = fs.realpathSync(file);
@@ -92,6 +93,25 @@ function migrateAgentDiscovery(file: string): void {
   }
 }
 
+/** Seed the file unless it already defines a key or the caller uses a shell key. */
+export function seedOAuthKeyFile(home: string, shellKey?: string): Record<string, string | undefined> {
+  const envPath = path.join(home, ".env");
+  let original: Buffer | undefined;
+  try {
+    original = fs.readFileSync(envPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const values = original ? parseEnv(original.toString("utf8")) : {};
+  if (shellKey === undefined && !Object.hasOwn(values, "OAUTH_ENCRYPTION_KEY")) {
+    const key = randomBytes(32).toString("base64url");
+    const separator = original?.length && original.at(-1) !== 10 ? "\n" : "";
+    fs.appendFileSync(envPath, `${separator}OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });
+    values.OAUTH_ENCRYPTION_KEY = key;
+  }
+  return values;
+}
+
 /** Prepare the desktop config. Return true only for a new seed. */
 export function seedHome(home: string): boolean {
   fs.mkdirSync(home, { recursive: true });
@@ -100,9 +120,7 @@ export function seedHome(home: string): boolean {
     migrateAgentDiscovery(config);
     return false;
   }
-  // The gateway loads `$YOPLAI_HOME/.env`. Append, so a `.env` that exists keeps its other values.
-  const key = randomBytes(32).toString("base64url");
-  fs.appendFileSync(path.join(home, ".env"), `OAUTH_ENCRYPTION_KEY=${key}\n`, { mode: 0o600 });
+  seedOAuthKeyFile(home);
   fs.writeFileSync(path.join(home, "yoplai.json"), `${JSON.stringify(SEED_CONFIG, null, 2)}\n`, { flag: "wx" });
   return true;
 }

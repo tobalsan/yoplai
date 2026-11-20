@@ -1,8 +1,7 @@
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPackagedEnv, seedHome } from "./packaged-env.js";
+import type { DevHome } from "./dev-home.js";
+import { buildPackagedEnv } from "./packaged-env.js";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -38,18 +37,21 @@ const LOOPBACK_HOST = "127.0.0.1";
  * YOPLAI_SKIP_WEB=1, so the UI port is the port chosen by the shell.
  * This is the only module that knows about pnpm, tsx, and Vite.
  */
-export function createDevHome(parent = process.env.YOPLAI_DESKTOP_DEV_PARENT || os.tmpdir()): string {
-  const root = fs.mkdtempSync(path.join(path.resolve(parent), "yoplai-desktop-"));
-  seedHome(path.join(root, "home"));
-  return root;
-}
-
-export function createDevLaunchPlan({ gatewayPort, uiPort }: Pick<LaunchPorts, "gatewayPort" | "uiPort">, root: string): LaunchPlan {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, YOPLAI_HOME: path.join(root, "home") };
+export function createDevLaunchPlan(
+  { gatewayPort, uiPort, appsPort }: LaunchPorts,
+  { home, userHome, mode }: DevHome,
+  parentEnv: NodeJS.ProcessEnv,
+  oauthKeyName?: string,
+): LaunchPlan {
+  const env: NodeJS.ProcessEnv = { ...parentEnv, HOME: userHome, YOPLAI_HOME: home };
   delete env.YOPLAI_CONFIG;
   delete env.AIHUB_CONFIG;
+  delete env.YOPLAI_DESKTOP_KEYCHAIN;
+  const webEnv = { ...env };
+  delete webEnv.OAUTH_ENCRYPTION_KEY;
+  if (oauthKeyName) delete webEnv[oauthKeyName];
   const uiUrl = `http://${LOOPBACK_HOST}:${uiPort}`;
-  const gatewayNodeOptions = [process.env.NODE_OPTIONS, "--conditions=development"]
+  const gatewayNodeOptions = [parentEnv.NODE_OPTIONS, "--conditions=development"]
     .filter(Boolean)
     .join(" ");
   return {
@@ -62,7 +64,7 @@ export function createDevLaunchPlan({ gatewayPort, uiPort }: Pick<LaunchPorts, "
         args: ["--filter", "@yoplai/web", "dev"],
         cwd: REPO_ROOT,
         env: {
-          ...env,
+          ...webEnv,
           YOPLAI_DEV: "1",
           YOPLAI_GATEWAY_PORT: String(gatewayPort),
           YOPLAI_UI_PORT: String(uiPort),
@@ -84,12 +86,14 @@ export function createDevLaunchPlan({ gatewayPort, uiPort }: Pick<LaunchPorts, "
           ...env,
           YOPLAI_SKIP_WEB: "1",
           YOPLAI_DESKTOP: "1",
+          YOPLAI_DESKTOP_KEYCHAIN: mode === "persistent" ? "1" : "0",
           YOPLAI_DEV: "1",
           YOPLAI_WORKSPACE_ROOT: REPO_ROOT,
           YOPLAI_GATEWAY_PORT: String(gatewayPort),
           YOPLAI_UI_PORT: String(uiPort),
           YOPLAI_UI_HOST: LOOPBACK_HOST,
           YOPLAI_GATEWAY_HOST: LOOPBACK_HOST,
+          YOPLAI_APPS_PORT: String(appsPort),
           NODE_OPTIONS: gatewayNodeOptions,
         },
       },

@@ -56,6 +56,7 @@ Agents can generate images, and compaction summaries follow a fixed template for
 
 ### Changed
 
+- `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home.
 - The desktop app uses the new Yoplai icon in the Dock.
 - The desktop sidebar header omits the brand text. The browser sidebar keeps it.
 - The desktop sidebar and page start at the top edge. The missing setup items appear in a small panel.

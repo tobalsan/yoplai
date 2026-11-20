@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, Menu, session, shell, type MenuItem, type MenuItemConstructorOptions } from "electron";
+import { createDevHome, seedDevHome } from "./dev-home.js";
 import { errorPageUrl } from "./error-page.js";
 import { decideNavigation, decideWindowOpen, isPermissionAllowed } from "./links.js";
 import { LogBuffer } from "./log-buffer.js";
-import { createDevHome, createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
+import { createDevLaunchPlan, createPackagedLaunchPlan, type LaunchPlan, type LaunchPorts } from "./launch-plan.js";
 import { resolveHome, seedHome } from "./packaged-env.js";
 import { readSplashPreference, writeSplashPreference } from "./preferences.js";
 import { fallbackPath, probeShellPath } from "./shell-path.js";
@@ -11,10 +13,17 @@ import { startStack } from "./stack.js";
 import { createStackController } from "./stack-controller.js";
 
 const log = new LogBuffer(50);
-let devHome: string | undefined;
-let createPlan: (ports: LaunchPorts) => LaunchPlan = (ports) => createDevLaunchPlan(ports, devHome ??= createDevHome());
+let createPlan: ((ports: LaunchPorts) => LaunchPlan) | undefined;
+const devHome = app.isPackaged ? undefined : createDevHome(process.env, process.argv.slice(2), app.getPath("appData"));
+if (devHome) {
+  console.log(`[desktop] YOPLAI_HOME=${devHome.home} (${devHome.mode})`);
+  fs.mkdirSync(devHome.userData, { recursive: true });
+  app.setPath("userData", devHome.userData);
+  app.setPath("sessionData", devHome.userData);
+}
+
 const stackController = createStackController(() =>
-  startStack({ log, createPlan: (ports) => createPlan(ports), onCrash: (reason) => !quitting && showError(reason) })
+  startStack({ log, createPlan: (ports) => createPlan!(ports), onCrash: (reason) => !quitting && showError(reason) })
 );
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
@@ -159,7 +168,14 @@ async function startAndLoad(mode: SplashMode): Promise<void> {
   const isCurrent = () => token === attempt;
   try {
     const pageLoaded = win.loadFile(SPLASH_PATH, { query: { mode } }).then(() => true, () => false);
-    if (app.isPackaged) await preparePackagedPlan();
+    if (devHome) {
+      if (!createPlan) {
+        const keyName = seedDevHome(devHome, process.env);
+        createPlan = (ports) => createDevLaunchPlan(ports, devHome, process.env, keyName);
+      }
+    } else {
+      await preparePackagedPlan();
+    }
     if (!isCurrent()) return;
     const stack = await stackController.restart();
     if (await pageLoaded && isCurrent()) {

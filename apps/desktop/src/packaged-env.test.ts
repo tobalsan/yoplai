@@ -139,6 +139,25 @@ describe("home", () => {
     expect(fs.readFileSync(path.join(home, ".env"), "utf8")).toMatch(/^OTHER=1\nOAUTH_ENCRYPTION_KEY=\S+\n$/);
   });
 
+  it("keeps a quoted OAuth key already present before first run", () => {
+    const home = tempDir();
+    const envFile = path.join(home, ".env");
+    const original = 'export OAUTH_ENCRYPTION_KEY="existing-key"\nOTHER=1';
+    fs.writeFileSync(envFile, original);
+
+    expect(seedHome(home)).toBe(true);
+    expect(fs.readFileSync(envFile, "utf8")).toBe(original);
+  });
+
+  it("starts the new OAuth key on its own line when .env has no final newline", () => {
+    const home = tempDir();
+    const envFile = path.join(home, ".env");
+    fs.writeFileSync(envFile, "OTHER=1");
+
+    expect(seedHome(home)).toBe(true);
+    expect(fs.readFileSync(envFile, "utf8")).toMatch(/^OTHER=1\nOAUTH_ENCRYPTION_KEY=[\w-]{43}\n$/);
+  });
+
   it("keeps an existing config", () => {
     const home = tempDir();
     fs.writeFileSync(path.join(home, "yoplai.json"), '{"version":3,"agents":["x"]}');
