@@ -40,6 +40,12 @@ type RequestAuthContext =
   import("@yoplai/extension-multi-user").RequestAuthContext;
 
 const app = new Hono();
+// Refuse this namespace before CORS or authentication can answer a normalized alias.
+app.use("*", async (c, next) => {
+  if (!currentExtensionRuntime().isEnabled("multiUser")) return next();
+  const { rejectBetterAuthAdminRoute } = await loadMultiUserMiddlewareModule();
+  return rejectBetterAuthAdminRoute(new URL(c.req.url).pathname, true) ?? next();
+});
 app.use("/api/*", async (c, next) => {
   const bearer = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
   if (bearer?.startsWith(SKILL_IMPORT_TOKEN_PREFIX) && !(c.req.method === "POST" && c.req.path === "/api/skills/import")) return c.json({ error: "unauthorized" }, 401);

@@ -56,7 +56,7 @@ Media download permissions are unchanged: the shared UI renders filenames only.
 - board: `/api/board/*`
 - tracker orchestrator: `/api/orchestrator/*`
 - host OAuth: `/api/oauth/:provider/*`
-- multi-user auth/admin: `/api/auth/*`, `/api/me`, `/api/admin/*`, teams/pool routes
+- multi-user auth/admin: `/api/auth/*`, `/api/me`, `/api/admin/*`, teams/pool routes. The gateway returns 404 for Better Auth's `/api/auth/admin/*` namespace.
 - webhooks: `/hooks/:agentId/:name/:secret`
 - sandbox tool bridge: `/internal/tools` (per-run token required)
 

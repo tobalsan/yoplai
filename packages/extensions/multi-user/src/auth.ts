@@ -153,37 +153,13 @@ function buildMultiUserAuth(
     plugins: [
       admin({
         defaultRole: "user",
-        // Both admins and superadmins count as staff for better-auth admin
-        // APIs (listUsers, setRole, impersonation, etc.).
+        // Both staff roles must be declared in the access-control map.
         adminRoles: ["admin", "superadmin"],
-        // Both roles must be declared in the access-control roles map or
-        // better-auth rejects them in `adminRoles`.
-        //
-        // `create`, `set-role`, and `impersonate-admins` are granted ONLY to
-        // `superadmin`. This is the enforcement point for "admins cannot
-        // change roles":
-        //   - Without `set-role`, the built-in `POST /admin/set-role` (and the
-        //     `role` field of `POST /admin/update-user`) rejects admins, so an
-        //     admin cannot escalate an existing user's role.
-        //   - Without `create`, the built-in `POST /admin/create-user` rejects
-        //     admins, so an admin cannot mint a brand-new superadmin account.
-        // Users self-register via the configured sign-in methods (Google
-        // OAuth and/or email/password), so admins never need the built-in
-        // create-user endpoint.
         roles: {
           user: userAc,
-          // Stock admin permissions minus `create` and `set-role`.
+          // Yoplai's admin routes use listUsers and getUser server-side.
           admin: defaultAc.newRole({
-            user: [
-              "list",
-              "ban",
-              "impersonate",
-              "delete",
-              "set-password",
-              "get",
-              "update",
-            ],
-            session: ["list", "revoke", "delete"],
+            user: ["list", "get"],
           }),
           superadmin: defaultAc.newRole({
             user: [
