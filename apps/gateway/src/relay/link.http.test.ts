@@ -10,10 +10,11 @@ import { disconnectRemoteGateway, linkWithBrowser } from "../cli/connect.js";
 import { createFileRemoteGatewayStore } from "./store.js";
 
 /**
- * Two real gateways in two processes with two isolated homes. The remote has multi-user sign-in with a synthetic
+ * Real gateways run in separate processes with isolated homes. The remote has multi-user sign-in with a synthetic
  * email and password account. The local gateway has the relay. The test plays the browser: it signs in on the
  * remote, approves, and posts the callback to the local gateway. It copies no key by hand. Nothing here is a real
  * account, a real key, a browser, an external service, or a protected port.
+ * A third gateway exercises direct links to a remote without sign-in.
  */
 
 const fixture = fileURLToPath(new URL("./link-gateway.fixture.ts", import.meta.url));
@@ -25,6 +26,7 @@ type Running = { child: ChildProcess; port: number; home: string; output: () => 
 let tmpDir: string;
 let remote: Running;
 let local: Running;
+let plain: Running;
 const started: Running[] = [];
 let cookie: string;
 let remoteBase: string;
@@ -56,6 +58,8 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
   let output = "";
   child.stdout?.on("data", (chunk: Buffer) => (output += chunk.toString()));
   child.stderr?.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  const running = { child, port, home, output: () => output };
+  started.push(running);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${name} gateway did not start in time`)), 80_000);
     child.stdout?.on("data", () => {
@@ -69,8 +73,6 @@ async function startGateway(name: string, mode: "remote" | "local"): Promise<Run
       reject(new Error(`${name} gateway exited with ${code}`));
     });
   });
-  const running = { child, port, home, output: () => output };
-  started.push(running);
   // READY can arrive before the HTTP listener accepts connections.
   await until(async () => {
     try {
@@ -167,7 +169,14 @@ const deviceStates = async () => json<Array<{ name: string; connected: boolean; 
 
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-link-http-"));
-  [remote, local] = await Promise.all([startGateway("remote", "remote"), startGateway("local", "local")]);
+  const gateways = [
+    startGateway("remote", "remote"),
+    startGateway("local", "local"),
+    startGateway("plain", "local"),
+  ] as const;
+  // Let all startups settle so teardown sees every spawned gateway.
+  await Promise.allSettled(gateways);
+  [remote, local, plain] = await Promise.all(gateways);
   remoteBase = `http://127.0.0.1:${remote.port}`;
   localBase = `http://127.0.0.1:${local.port}`;
   localStorePath = path.join(local.home, ".yoplai", "remote-gateways.json");
@@ -178,7 +187,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   forwarder?.close();
-  for (const running of started) if (running.child.pid) process.kill(-running.child.pid, "SIGTERM");
+  for (const { child } of started) {
+    if (!child.pid) continue;
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
   await sleep(300);
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
@@ -419,7 +435,6 @@ describe("browser link between two real gateways", () => {
   }, 60_000);
 
   it("links a remote with no sign-in at once, with no key and no consent page", async () => {
-    const plain = await startGateway("plain", "local");
     const plainBase = `http://127.0.0.1:${plain.port}`;
     const response = await startLink("open", undefined, plainBase);
     expect(response.status, response.status === 200 ? undefined : `${await response.text()}\n${plain.output()}`).toBe(200);
