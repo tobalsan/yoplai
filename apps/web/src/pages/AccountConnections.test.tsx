@@ -85,7 +85,17 @@ describe("AccountConnections", () => {
     await tick();
     expect(fetchMock).toHaveBeenCalledWith("/api/surface-links/link-threadit", expect.objectContaining({ method: "DELETE", credentials: "include" }));
     expect(root.textContent).not.toContain("Threadit @river");
-    expect(root.textContent).toContain("No Threadit or Mattermost accounts are linked.");
+    expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
+  });
+
+  it("says nothing about Threadit or Mattermost when no account is linked", async () => {
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    dispose = mountPage();
+    await tick();
+    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
   });
 
   it("keeps pending unlink state scoped to the account that started it", async () => {
@@ -120,7 +130,7 @@ describe("AccountConnections", () => {
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "DELETE").map((call) => call[0])).toEqual([
       "/api/surface-links/alice-link", "/api/surface-links/bob-link",
     ]);
-    expect(root.textContent).toContain("No Threadit or Mattermost accounts are linked.");
+    expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
   });
 
   it("ignores a late linked-account response after the signed-in account changes", async () => {
@@ -153,27 +163,26 @@ describe("AccountConnections", () => {
     }));
     dispose = mountPage();
     await tick();
-    expect(root.textContent).toContain("Loading linked accounts…");
     expect(root.textContent).toContain("Slack user U1");
     root.querySelector<HTMLButtonElement>("button")!.click();
     await tick();
     expect(unpairMock).toHaveBeenCalledWith(pairing, undefined);
     expect(root.textContent).toContain("No Slack accounts are paired.");
-    expect(root.textContent).toContain("Loading linked accounts…");
-    await vi.waitFor(() => expect(root.querySelector('[role="alert"]')).not.toBeNull(), { timeout: 10_000 });
-    expect(signal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 10_000 });
+    await tick();
     expect(root.textContent).toContain("No Slack accounts are paired.");
-    expect(root.textContent).not.toContain("Loading linked accounts…");
+    expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
   }, 15_000);
 
-  it("shows a failed linked-account response without hiding Slack pairings", async () => {
+  it("shows nothing about Threadit or Mattermost when linked accounts fail to load", async () => {
     const [session] = createSignal({ data: { user: { id: "alice" } } });
     useSessionMock.mockReturnValue(session);
     fetchPairingsMock.mockResolvedValue([pairing]);
     fetchMock.mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 }));
     dispose = mountPage();
     await tick();
-    expect(root.querySelector('[role="alert"]')?.textContent).toBe("Failed to load linked accounts");
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair|Failed to load linked accounts/);
     expect(root.textContent).toContain("Slack user U1");
   });
 

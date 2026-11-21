@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Fixed
+
+- Account connections only shows the Threadit and Mattermost section when a local account link exists.
+
 ## v0.29.0 — Linked gateways and device tools
 
 _Released 2026-11-21._
