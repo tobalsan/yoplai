@@ -43,8 +43,6 @@ import {
   getAgentStatuses,
   getSessionHistory,
   getFullSessionHistory,
-  getSessionCurrentTurn,
-  isStreaming,
 } from "../agents/index.js";
 import type { FullHistoryMessage, SimpleHistoryMessage, HistoryViewMode } from "@yoplai/shared";
 import type { AgentConfig, GatewayConfig, WebhookConfig } from "@yoplai/shared";
@@ -53,7 +51,7 @@ import {
   getSessionThinkLevel,
 } from "../sessions/index.js";
 import { resetSession, SessionStillStoppingError } from "../sessions/persistence.js";
-import { getSession } from "../agents/sessions.js";
+import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import {
   saveUploadedFile,
   resolveUploadMimeType,
@@ -1568,8 +1566,9 @@ api.get("/agents/:id/history", async (c) => {
       ? await getSessionThinkLevel(agentId, sessionKey, userId)
       : undefined;
 
-  const streaming = isStreaming(agentId, sessionId);
-  const turn = streaming ? getSessionCurrentTurn(agentId, sessionId) : null;
+  const session = getSession(agentId, sessionId);
+  const streaming = session?.isStreaming === true && !isLiveSessionHiddenFrom(session.storageOwnerId, userId);
+  const turn = streaming ? session.currentTurn : null;
   const activeTurn = turn
     ? {
         // Once the user message is persisted to canonical history, omit it

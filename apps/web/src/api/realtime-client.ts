@@ -13,8 +13,8 @@ export type RealtimeEvent =
       type: "status";
       agentId: string;
       status: "streaming" | "idle";
-      sessionId: string;
-      sessionStatus: "streaming" | "idle";
+      sessionId?: string;
+      sessionStatus?: "streaming" | "idle";
       completion?: WebCompletion;
     }
   | { type: "file_changed"; projectId: string; file: string }

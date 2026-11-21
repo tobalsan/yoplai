@@ -37,6 +37,8 @@ export type AgentStatusChangeEvent = {
   sessionId: string;
   /** Streaming status of that specific session. */
   sessionStatus: "streaming" | "idle";
+  /** Live history owner, used internally to scope delivery. */
+  ownerId?: string | null;
   completion?: WebCompletion;
 };
 
@@ -96,7 +98,11 @@ export class AgentEventBus extends EventEmitter {
   }
 
   emitStatusChange(event: AgentStatusChangeEvent) {
-    this.recordEvent("statusChange", event);
+    const { ownerId, ...status } = event;
+    // The diagnostic buffer has no viewer context.
+    this.recordEvent("statusChange", typeof ownerId === "string"
+      ? { agentId: status.agentId, status: status.status }
+      : status);
     this.emit("statusChange", event);
   }
 

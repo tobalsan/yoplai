@@ -59,7 +59,7 @@ import {
 import { maybeAutoTitleSession } from "../maintenance/session-auto-title.js";
 import { maybeGenerateToolLabel } from "../maintenance/tool-labels.js";
 import { notifyProviderQuota } from "./quota-notification.js";
-import { clearSessionHandle, getSession } from "./sessions.js";
+import { getSession, isLiveSessionHiddenFrom } from "./sessions.js";
 import { HeldReply, hasHeldReply } from "./reply-review.js";
 import { routeSession, shouldDeferRouting, type SessionRoutingDependencies } from "../model-routing/session-router.js";
 
@@ -135,6 +135,13 @@ export async function runAgent(
   params = { ...params, ...actor };
 
   const sessionOwnerId = params.sessionOwnerId === undefined ? params.userId : params.sessionOwnerId ?? undefined;
+  const checkLiveSessionOwner = (sessionId: string) => {
+    if (params.source !== "web" || params.userId === undefined) return;
+    const session = getSession(params.agentId, sessionId);
+    if (session?.isStreaming && isLiveSessionHiddenFrom(session.storageOwnerId, params.userId)) {
+      throw new Error("Session not found");
+    }
+  };
 
   // Resolve SDK adapter
   const sdkId = (agent.sdk ?? getDefaultSdkId()) as SdkId;
@@ -184,6 +191,7 @@ export async function runAgent(
       };
     }
 
+    checkLiveSessionOwner(sessionId);
     const lifecycle = new SessionRunLifecycle({
       agentId: params.agentId,
       sessionId,
@@ -243,6 +251,7 @@ export async function runAgent(
     sessionId = "default";
   }
 
+  checkLiveSessionOwner(sessionId);
   const lifecycle = new SessionRunLifecycle({
     agentId: params.agentId,
     sessionId,
@@ -289,6 +298,7 @@ export async function runAgent(
   const reviewers = await extensionRuntime?.getReplyReviewers(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
   const heldReply = reviewers.length ? new HeldReply(agent.id, sessionId, reviewers) : undefined;
   const commands = await extensionRuntime?.getChatCommands(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
+  checkLiveSessionOwner(sessionId);
   const command = commands.find((command) => command.command === message.trim());
   if (command) {
     const text = await command.run({ agent, config: actorConfig, workspaceDir, sessionId, run: { ...params, sessionId } });
@@ -409,6 +419,7 @@ export async function runAgent(
     message,
     sender: params.sender,
     params: { ...params, message, thinkLevel: params.thinkLevel ?? directiveThinkLevel, sessionOwnerId: sessionOwnerId ?? null },
+    checkAccess: () => checkLiveSessionOwner(sessionId),
   };
 
   await ensureSessionsDir();
@@ -425,6 +436,7 @@ export async function runAgent(
     );
     if (abortController) break;
     const deferRouting = await shouldDeferRouting(routingContext());
+    checkLiveSessionOwner(sessionId);
     const join = await lifecycle.handleJoin({
       ...joinPolicy,
       capabilities: deferRouting ? { ...queueCapabilities, queueWhileStreaming: false } : queueCapabilities,
@@ -589,7 +601,7 @@ export async function runAgent(
       if (!verdict.ok) {
         // Keep the rejected draft in the model context only; rewrite input stays out of stored history.
         heldReply.startRewrite();
-        clearSessionHandle(params.agentId, sessionId);
+        lifecycle.clearRunHandle();
         result = await adapter.run({
           ...runParams,
           message: verdict.rewriteHint,
