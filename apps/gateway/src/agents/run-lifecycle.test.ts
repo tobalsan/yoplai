@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEvent } from "../sdk/types.js";
 import type { SdkAdapter, SdkCapabilities } from "../sdk/types.js";
+import { RunSettledError } from "../sdk/run-settled.js";
 
 const flushedTurns: Array<Array<HistoryEvent>> = [];
 const eagerlyFlushedUsers: Array<Array<HistoryEvent>> = [];
@@ -465,6 +466,88 @@ describe("SessionRunLifecycle", () => {
       name: "run",
       metadata: { jobId: "job-1", thinkingLevel: "high" },
     });
+  });
+});
+
+describe("SessionRunLifecycle live-session owner rechecks", () => {
+  function startOwnedRun(sessionId: string, userId: string) {
+    const lifecycle = new SessionRunLifecycle({
+      agentId: "agent-lifecycle-test",
+      sessionId,
+      userId,
+      requesterId: userId,
+    });
+    lifecycle.beginRun();
+    return lifecycle;
+  }
+
+  const join = (lifecycle: SessionRunLifecycle, adapter: SdkAdapter) =>
+    lifecycle.handleJoin({
+      queueMode: "queue",
+      capabilities: nativeCapabilities,
+      adapter,
+      message: "old-owner follow-up",
+      params: { agentId: "agent-lifecycle-test", userId: "alice", message: "old-owner follow-up" },
+    });
+
+  it("does not deliver when the owner changes while waiting for the session handle", async () => {
+    const sessionId = "owner-race-handle-wait";
+    const queueMessage = vi.fn(async () => undefined);
+    const adapter = makeAdapter({ queueMessage });
+    const lifecycle = startOwnedRun(sessionId, "alice");
+    const handle = { id: "handle" };
+    let resolveHandle!: (value: typeof handle) => void;
+    // A promise-backed handle holds the await without entering the polling loop.
+    const deferredHandle = new Promise<typeof handle>((resolve) => { resolveHandle = resolve; });
+    lifecycle.acceptSessionHandle(deferredHandle, adapter, nativeCapabilities);
+
+    const pending = join(lifecycle, adapter);
+    const newOwner = startOwnedRun(sessionId, "bob");
+    resolveHandle(handle);
+
+    try {
+      const decision = await pending;
+      expect(queueMessage).not.toHaveBeenCalled();
+      expect(newOwner.drainPendingMessages()).toEqual([]);
+      expect(decision).toEqual({ handled: false });
+    } finally {
+      lifecycle.finishRun();
+      newOwner.finishRun();
+    }
+  });
+
+  it.each([
+    { outcome: "successful delivery", rejects: false },
+    { outcome: "RunSettledError rejection", rejects: true },
+  ])("returns unhandled when the owner changes during queueMessage ($outcome)", async ({ rejects }) => {
+    const sessionId = `owner-race-queue-message-${rejects ? "rejected" : "delivered"}`;
+    let startDelivery!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => { startDelivery = resolve; });
+    let finishDelivery!: () => void;
+    const delivery = new Promise<void>((resolve) => { finishDelivery = resolve; });
+    const queueMessage = vi.fn(async () => {
+      startDelivery();
+      await delivery;
+      if (rejects) throw new RunSettledError();
+    });
+    const adapter = makeAdapter({ queueMessage });
+    const lifecycle = startOwnedRun(sessionId, "alice");
+    lifecycle.acceptSessionHandle({ id: "handle" }, adapter, nativeCapabilities);
+
+    const pending = join(lifecycle, adapter);
+    await Promise.race([deliveryStarted, pending]);
+    const newOwner = startOwnedRun(sessionId, "bob");
+    finishDelivery();
+
+    try {
+      const decision = await pending;
+      expect(queueMessage).toHaveBeenCalledTimes(1);
+      expect(newOwner.drainPendingMessages()).toEqual([]);
+      expect(decision).toEqual({ handled: false });
+    } finally {
+      lifecycle.finishRun();
+      newOwner.finishRun();
+    }
   });
 });
 

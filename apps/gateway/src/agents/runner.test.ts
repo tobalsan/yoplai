@@ -615,3 +615,55 @@ describe("runAgent silent response", () => {
     expect(adapter.run).not.toHaveBeenCalled();
   });
 });
+
+describe("runAgent live-session owner recheck", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isAbortTrigger.mockReturnValue(false);
+  });
+
+  it("does not run a chat command when the session owner changes during command lookup", async () => {
+    getSdkAdapter.mockReturnValue(createAdapter());
+    getAgent.mockReturnValue(createAgent({}));
+    const { setSessionStreaming } = await import("./sessions.js");
+    const { ExtensionRuntime } = await import("../extensions/runtime.js");
+    const { runAgent } = await import("./runner.js");
+    const sessionId = "owner-race-command";
+    const runtime = new ExtensionRuntime();
+    const run = vi.fn(async () => "Command response");
+    const commands = [{ command: "/status", run }];
+    let startLookup!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => { startLookup = resolve; });
+    let finishLookup!: (value: typeof commands) => void;
+    const lookup = new Promise<typeof commands>((resolve) => { finishLookup = resolve; });
+    const getChatCommands = vi.spyOn(runtime, "getChatCommands").mockImplementation(() => {
+      startLookup();
+      return lookup;
+    });
+    const onEvent = vi.fn();
+    setSessionStreaming("alpha", sessionId, true, new AbortController(), false, { ownerId: "alice" });
+
+    try {
+      const outcome = runAgent({
+        agentId: "alpha",
+        userId: "alice",
+        source: "web",
+        message: "/status",
+        sessionId,
+        onEvent,
+        extensionRuntime: runtime,
+      }).then(() => null, (error: unknown) => error);
+      await Promise.race([lookupStarted, outcome]);
+      expect(getChatCommands).toHaveBeenCalledOnce();
+      setSessionStreaming("alpha", sessionId, true, new AbortController(), false, { ownerId: "bob" });
+      finishLookup(commands);
+
+      const error = await outcome;
+      expect(run).not.toHaveBeenCalled();
+      expect(error).toEqual(new Error("Session not found"));
+      expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "text" }));
+    } finally {
+      setSessionStreaming("alpha", sessionId, false);
+    }
+  });
+});
