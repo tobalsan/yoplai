@@ -9,6 +9,12 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+## v0.29.0 — Linked gateways and device tools
+
+_Released 2026-11-21._
+
+Link a remote gateway with a browser sign-in, then use its agents, settings, skills, dashboards and Slack pairings from your local page. Remote agents can act on your machine through device tools that you approve. The OpenClaw SDK is gone.
+
 ### Removed
 
 - **⚠ BREAKING**: Removed the OpenClaw SDK and the `claude` SDK id. Agents with `sdk: openclaw`, `sdk: claude`, or an `openclaw:` block now fail validation and must use `pi`.
@@ -55,7 +61,6 @@ Breaking changes are marked **⚠ BREAKING**.
 - Extension catalogs mask channel credentials and display non-secret environment references by name. Agent extension blocks can use names from their workspace `.env` or `extensionEnvAllowlist` in `yoplai.json`.
 - The relay requires valid loopback IP addresses in forwarding headers and for the socket peer.
 - Opening chat settings no longer flashes the page while sharing or default-agent preferences load. The menu matches sidebar context menus in both themes, with icons and Agent settings first, Set as default agent hidden for the current default, then Share link.
-
 - A linked gateway can now list and unlink the Threadit and Mattermost account links of its user. The remote accepts the gateway link key on `GET /api/surface-links` and `DELETE /api/surface-links/<id>`, and the local relay allows these two routes. The `pair` route stays closed to the relay.
 - In a chat with an agent of a linked gateway, an extension view now shows "This view is not available for an agent of a linked gateway." It no longer opens the local page of the same path.
 - Claude quota readings stay fresh while idle by ignoring five-hour windows without a string reset time and retaining valid weekly usage.
