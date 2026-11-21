@@ -265,7 +265,7 @@ describe("buildVolumeMounts", () => {
     });
   });
 
-  it("keeps AGENTS.md and agent.yaml read-only in a writable workspace", () => {
+  it("keeps AGENTS.md, agent.yaml and existing mcp.json read-only in a writable workspace", () => {
     const root = tmpDir();
     const workspace = path.join(root, "workspace");
     fs.mkdirSync(workspace, { recursive: true });
@@ -286,6 +286,9 @@ describe("buildVolumeMounts", () => {
         path.join(root, "yoplai", "ipc", "agent", "session-1-run-1")
       );
 
+    expect(build(true).some((mount) => mount.target === "/workspace/mcp.json")).toBe(false);
+    fs.writeFileSync(path.join(workspace, "mcp.json"), '{"mcpServers":{}}');
+
     expect(build(true)).toEqual(
       expect.arrayContaining([
         {
@@ -296,6 +299,11 @@ describe("buildVolumeMounts", () => {
         {
           source: path.join(workspace, "agent.yaml"),
           target: "/workspace/agent.yaml",
+          readonly: true,
+        },
+        {
+          source: path.join(workspace, "mcp.json"),
+          target: "/workspace/mcp.json",
           readonly: true,
         },
       ])

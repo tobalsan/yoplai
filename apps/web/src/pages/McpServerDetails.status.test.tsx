@@ -70,11 +70,11 @@ it.each([
   expect(requests.filter((request) => request.includes("live=0"))).toHaveLength(1);
 });
 
-it("leaves a disabled shared server available to enable without checking it on focus or OAuth return", async () => {
+it("leaves a disabled shared server available for managers to enable without checking it on focus or OAuth return", async () => {
   const requests: string[] = [];
   vi.stubGlobal("fetch", (input: string) => {
     requests.push(input);
-    return Promise.resolve(json({ servers: [{ ...docs, shared: true, enabled: false }], canConfigureTeam: false }));
+    return Promise.resolve(json({ servers: [{ ...docs, shared: true, enabled: false }], canConfigureTeam: true }));
   });
   dispose = render(() => <McpServerDetails />, document.body);
   await tick(); await tick();

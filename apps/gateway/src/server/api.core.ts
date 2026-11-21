@@ -118,7 +118,14 @@ api.use("*", async (c: Context, next) => {
     multiUserBearerVerified?: boolean;
   } | undefined;
   const authContext = bindings?.multiUserAuthContext;
-  if (authContext) c.set("multiUserAuthContext", authContext);
+  if (authContext) {
+    c.set("multiUserAuthContext", authContext);
+    const agentId = c.req.path.startsWith("/mcp/") ? c.req.query("agent") : undefined;
+    if (agentId) {
+      const { canManageAgent } = await loadMultiUserApiDeps();
+      c.set("mcpCanManageAgent", canManageAgent(authContext, agentId));
+    }
+  }
   // The outer host sets this binding after it verified a bearer. A request header never reaches it.
   if (authContext && bindings?.multiUserBearerVerified === true) c.set("multiUserBearerVerified", true);
   await next();

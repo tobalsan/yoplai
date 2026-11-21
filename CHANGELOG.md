@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- In multi-user mode, the gateway passes agent management permissions to MCP and the web hides shared server controls for members. Writable sandboxes mount existing `mcp.json` files read-only.
 - Scheduler scripts and webhook gates for sandboxed agents run in per-run containers from `/workspace` with the agent's sandbox policy. Agents without sandboxing run their scripts on the gateway host.
 - In multi-user mode, shared extension settings and Enable/Disable controls require an agent manager. Shared settings accept literal values, and extensions still accept credentials through their declared secret fields.
 - Chat header settings menu groups the default-agent picker, agent settings and share/copy/revoke link actions behind one cog.
