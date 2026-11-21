@@ -5,6 +5,7 @@ import type { SdkRunParams } from "../types.js";
 import { projectTools } from "../../chat-projects/tools.js";
 import { skillSaveTool } from "../../skills/tools.js";
 import { instructionTools } from "../../instructions/tools.js";
+import { generateImageTool } from "../../media/generate-tool.js";
 import { yoplaiFileView } from "../../mcp-apps/capture.js";
 
 export class ContainerToolBridge {
@@ -57,6 +58,7 @@ export class ContainerToolBridge {
       extensionId: "gateway", name: "describe_image", description: "Describe an image under /workspace, optionally answering a specific question.",
       parameters: { type: "object", properties: { path: { type: "string", description: "Absolute container image path" }, question: { type: "string" } }, required: ["path"] },
     });
+    if (config.imageGeneration?.enabled === true) gatewayTools.push(generateImageTool);
     if (params.context?.project?.id) gatewayTools.push(...projectTools);
     return tools.map<ContainerExtensionTool>((tool) => ({
       extensionId: tool.extensionId,

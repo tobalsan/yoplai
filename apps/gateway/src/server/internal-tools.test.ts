@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { getEventListeners } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GatewayConfig } from "@yoplai/shared";
+import { GatewayConfigSchema, type GatewayConfig } from "@yoplai/shared";
 import {
   registerContainerToken,
   removeContainerToken,
@@ -599,6 +599,42 @@ describe("internal tools", () => {
       });
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ description: "A single white pixel" });
+    });
+
+    it("writes generated images to the token's conversation folder and reports final errors", async () => {
+      const config = GatewayConfigSchema.parse({
+        agents: [], imageGeneration: { provider: "openai-codex" },
+      });
+      const image = Buffer.from("ffd8ffd9", "hex");
+      const generateImage = vi.fn().mockResolvedValueOnce({ bytes: image, mimeType: "image/jpeg" })
+        .mockRejectedValueOnce(new Error("The ChatGPT image quota is used up; no fallback is configured"));
+      const app = createInternalTools({ getConfig: () => config, generateImage });
+      const body = {
+        tool: "generate_image", args: { prompt: "A white sailboat" },
+        agentId: "agent-1", agentToken: "token-files", sessionId: "session-1",
+      };
+
+      const generated = await postTool(app, body);
+      expect(generated.status).toBe(200);
+      const result: string = await generated.json();
+      const [filename] = await fs.readdir(conversationFiles.hostPath);
+      expect(filename).toMatch(/^generated-image-.+\.jpg$/);
+      expect(result).toContain(`/workspace/files/${filename}`);
+      expect(result).toContain("Call send_file");
+      expect(await fs.readFile(path.join(conversationFiles.hostPath, filename))).toEqual(image);
+
+      const failed = await postTool(app, body);
+      expect(failed.status).toBe(500);
+      expect(await failed.json()).toEqual({ error: "The ChatGPT image quota is used up; no fallback is configured" });
+
+      const disabled = createInternalTools({
+        getConfig: () => GatewayConfigSchema.parse({ agents: [] }), generateImage,
+      });
+      const rejected = await postTool(disabled, body);
+      expect(rejected.ok).toBe(false);
+      expect(await rejected.json()).toEqual({ error: "Image generation is disabled; no fallback is configured" });
+      expect(await fs.readdir(conversationFiles.hostPath)).toEqual([filename]);
+      expect(generateImage).toHaveBeenCalledTimes(2);
     });
 
     it("extracts a PDF from nested conversation folders", async () => {

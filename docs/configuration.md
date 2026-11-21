@@ -189,6 +189,22 @@ Gateway-owned work such as core session titles uses `maintenance` when set:
 
 Both fields are required. The Pi model runtime resolves its credentials from an existing OAuth login, a stored API key, or the provider's host environment key; OneCLI is not used. When omitted, maintenance work uses the session agent's configured model.
 
+### Image generation
+
+Set `imageGeneration` at the top level of `yoplai.json` to enable the `generate_image` tool for every agent, including sandboxed, scheduled, and background runs. Omit the setting or set `enabled: false` to hide the tool. A configured entry defaults to `enabled: true`.
+
+```json
+{
+  "imageGeneration": { "provider": "openai-codex" }
+}
+```
+
+This uses the gateway's connected ChatGPT OAuth account and defaults to `gpt-image-2`. The account's image quota is shared across agents. The Codex image endpoint is undocumented and may change or restrict access.
+
+For another backend, set both `provider` and `model` to an image-generation entry in the Pi catalog, such as OpenRouter's `google/gemini-3.1-flash-image-preview`. The gateway resolves that provider's credentials independently of the agent's chat model.
+
+Generated images are saved in the conversation files folder. The agent calls `send_file` to preview the image in chat and can reuse the saved path. Each revised prompt generates a fresh image. Failures are final for that call, with no model fallback. Codex errors distinguish quota exhaustion, a missing or expired connection, and rejected access. Other provider errors use a fixed message that omits backend response text.
+
 ### Model routing
 
 Model routing chooses and durably locks a model for eligible chat sessions of opted-in Pi agents. `off` (the default) bypasses routing, `shadow` records a pick while keeping the usual model, and `enforce` applies enforce-mode locks. Shadow locks are never promoted. See the [routing guide](model-routing.md) for eligibility, quota policy, failure behavior, rollout and rollback.

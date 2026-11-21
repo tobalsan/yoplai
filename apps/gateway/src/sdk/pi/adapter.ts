@@ -58,6 +58,7 @@ import {
   readInboundAttachment,
 } from "../attachments.js";
 import { describeImage } from "../../media/describe.js";
+import { executeGenerateImage, generateImageTool } from "../../media/generate-tool.js";
 import { getFullHistory } from "../../history/store.js";
 import { getMediaFileMetadata } from "../../media/metadata.js";
 import { createManagedSkillsStaging, getBuiltInSkillsDir } from "./skills.js";
@@ -328,6 +329,21 @@ async function createPiExtensionTools(
           content: [{ type: "text", text: description }],
           details: { description },
         };
+      },
+    });
+  }
+  if (config.imageGeneration?.enabled === true) {
+    const name = claimAgentToolName(generateImageTool.name, usedToolNames);
+    descriptors.push({ ...generateImageTool, name, canonicalName: generateImageTool.name });
+    piTools.push({
+      name,
+      label: "Generate an image",
+      description: generateImageTool.description,
+      parameters: generateImageTool.parameters as ToolDefinition["parameters"],
+      execute: async (_toolCallId, args, signal) => {
+        const callSignal = signal ? AbortSignal.any([signal, params.abortSignal]) : params.abortSignal;
+        const text = await executeGenerateImage(args, config, conversationFiles, callSignal);
+        return { content: [{ type: "text", text }], details: {} };
       },
     });
   }
