@@ -149,7 +149,7 @@ describe("device link: local client", () => {
     expect(started.states()).toEqual([]);
     expect(online()).toBe(false);
     gateways = [{ ...AMS, url: `http://127.0.0.1:${remote?.port}` }];
-    await waitFor(() => online());
+    await waitFor(() => online() && started.states()[0]?.connected === true);
     expect(started.states()).toEqual([{ name: "ams", connected: true, status: "connected" }]);
     gateways = [];
     await waitFor(() => !online());
