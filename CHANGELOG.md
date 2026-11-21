@@ -47,6 +47,7 @@ Link a remote gateway with a browser sign-in, then use its agents, settings, ski
 
 ### Changed
 
+- Manual `/compact` and web auto-compaction request a fixed eight-section summary for resuming the conversation.
 - In multi-user mode, the gateway passes agent management permissions to MCP and the web hides shared server controls for members. Writable sandboxes mount existing `mcp.json` files read-only.
 - Scheduler scripts and webhook gates for sandboxed agents run in per-run containers from `/workspace` with the agent's sandbox policy. Agents without sandboxing run their scripts on the gateway host.
 - In multi-user mode, shared extension settings and Enable/Disable controls require an agent manager. Shared settings accept literal values, and extensions still accept credentials through their declared secret fields.
