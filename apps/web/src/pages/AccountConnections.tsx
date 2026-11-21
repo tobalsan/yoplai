@@ -44,7 +44,6 @@ function PairingsView(props: { gateway?: GatewayName }) {
   const [unknown, setUnknown] = createSignal(false);
   // Threadit and Mattermost links exist on the local gateway only.
   const [surfaceLinks, setSurfaceLinks] = createSignal<SurfaceLink[]>([]);
-  const [surfaceLoading, setSurfaceLoading] = createSignal(false);
   const [surfaceError, setSurfaceError] = createSignal<string>();
   const [surfacePending, setSurfacePending] = createSignal<string>();
   let requestId = 0;
@@ -84,18 +83,11 @@ function PairingsView(props: { gateway?: GatewayName }) {
 
   const refreshSurfaceLinks = async (userId: string) => {
     const currentRequest = ++surfaceRequestId;
-    setSurfaceLoading(true);
-    setSurfaceError(undefined);
     try {
       const next = await fetchSurfaceLinks();
       if (!disposed && currentRequest === surfaceRequestId && activeUserId === userId) setSurfaceLinks(next);
-    } catch (cause) {
-      if (!disposed && currentRequest === surfaceRequestId && activeUserId === userId) {
-        setSurfaceLinks([]);
-        setSurfaceError(cause instanceof Error ? cause.message : "Failed to load linked accounts");
-      }
-    } finally {
-      if (!disposed && currentRequest === surfaceRequestId && activeUserId === userId) setSurfaceLoading(false);
+    } catch {
+      if (!disposed && currentRequest === surfaceRequestId && activeUserId === userId) setSurfaceLinks([]);
     }
   };
 
@@ -115,7 +107,6 @@ function PairingsView(props: { gateway?: GatewayName }) {
       requestId++;
       surfaceRequestId++;
       setLoading(false);
-      setSurfaceLoading(false);
     }
   });
 
@@ -199,14 +190,10 @@ function PairingsView(props: { gateway?: GatewayName }) {
           </li>;
         }}</For>
       </ul>
-      <Show when={gateway === undefined}>
+      <Show when={gateway === undefined && surfaceLinks().length > 0}>
         <h2>Threadit and Mattermost</h2>
         <p>Send <code>!pair</code> to an agent on Threadit or Mattermost to link an account.</p>
-        <Show when={surfaceLoading()}><p role="status">Loading linked accounts…</p></Show>
         <Show when={surfaceError()}>{(message) => <p role="alert" class="account-connections-error">{message()}</p>}</Show>
-        <Show when={!surfaceLoading() && !surfaceError() && surfaceLinks().length === 0 && session().data?.user?.id}>
-          <p>No Threadit or Mattermost accounts are linked.</p>
-        </Show>
         <ul class="account-pairing-list surface-account-links">
           <For each={surfaceLinks()}>{(link) => <li class="account-pairing">
             <div>
