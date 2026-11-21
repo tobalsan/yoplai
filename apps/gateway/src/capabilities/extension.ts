@@ -175,12 +175,13 @@ async function canConfigureAgent(
 
 async function reloadAfterWrite(): Promise<GatewayConfig> {
   const configModule = await import("../config/index.js");
-  const raw = configModule.reloadConfig();
-  const config = await resolveStartupConfig(raw);
-  configModule.setLoadedConfig(config);
-  const { reloadExtensions } = await import("../extensions/registry.js");
-  await reloadExtensions(config);
-  return config;
+  const { reconcileExternal, withExtensionMutation } = await import("../extensions/registry.js");
+  return withExtensionMutation(async () => {
+    const config = await resolveStartupConfig(configModule.reloadConfig());
+    configModule.setLoadedConfig(config);
+    await reconcileExternal(config);
+    return config;
+  }, true);
 }
 
 function outcomeForUnavailable(entry: CapabilityEntry): EnableResult {

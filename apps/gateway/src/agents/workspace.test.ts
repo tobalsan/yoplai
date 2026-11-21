@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { ensureWorkspaceFiles } from "./workspace.js";
 
@@ -13,6 +13,7 @@ describe("agent workspace files", () => {
   let tmpDir: string | undefined;
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (tmpDir) {
       await fs.rm(tmpDir, { recursive: true, force: true });
       tmpDir = undefined;
@@ -27,6 +28,34 @@ describe("agent workspace files", () => {
 
     expect(isFirstRun).toBe(true);
     expect(entries.sort()).toEqual(["AGENTS.md", "USER.md"]);
+  });
+
+  it("reads templates from YOPLAI_TEMPLATES_DIR when it is set", async () => {
+    tmpDir = await makeTempDir();
+    const templatesDir = await makeTempDir();
+    await fs.writeFile(path.join(templatesDir, "AGENTS.md"), "---\nsummary: x\n---\ncustom agents text");
+    await fs.writeFile(path.join(templatesDir, "USER.md"), "custom user text");
+    vi.stubEnv("YOPLAI_TEMPLATES_DIR", templatesDir);
+    try {
+      await ensureWorkspaceFiles(tmpDir);
+
+      expect(await fs.readFile(path.join(tmpDir, "AGENTS.md"), "utf-8")).toBe("custom agents text");
+      expect(await fs.readFile(path.join(tmpDir, "USER.md"), "utf-8")).toBe("custom user text");
+    } finally {
+      await fs.rm(templatesDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the repo templates when YOPLAI_TEMPLATES_DIR is not set", async () => {
+    tmpDir = await makeTempDir();
+    vi.stubEnv("YOPLAI_TEMPLATES_DIR", "");
+
+    await ensureWorkspaceFiles(tmpDir);
+    const repoAgents = await fs.readFile(path.resolve(import.meta.dirname, "../../../../docs/templates/AGENTS.md"), "utf-8");
+
+    expect((await fs.readFile(path.join(tmpDir, "AGENTS.md"), "utf-8")).trim()).toBe(
+      repoAgents.replace(/^---[\s\S]*?\n---\s*/, "").trim()
+    );
   });
 
   it("does not inject old workspace files even if they remain", async () => {

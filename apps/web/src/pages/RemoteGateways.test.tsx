@@ -24,10 +24,17 @@ let startAnswer: Response;
 let cancelAnswer: Response;
 let disconnectAnswers: Response[];
 let metadataAnswer: (() => Response) | undefined;
+/** While set, the metadata route answers only after this promise settles. */
+let metadataHold: Promise<void> | undefined;
 const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = String(input);
   sent.push({ url, headers: new Headers(init?.headers), body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : undefined });
-  if (url === "/api/relay/link/metadata") return metadataAnswer ? metadataAnswer() : json(200, { gateways: rows });
+  if (url === "/api/relay/link/metadata") {
+    const signal = init?.signal;
+    const aborted = new Promise<never>((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
+    await Promise.race([metadataHold, aborted]);
+    return metadataAnswer ? metadataAnswer() : json(200, { gateways: rows });
+  }
   if (url === "/api/relay/link/start") return startAnswer.clone();
   if (url.startsWith("/api/relay/link/status/")) return (statuses.length > 1 ? statuses.shift()! : statuses[0]).clone();
   if (url === "/api/relay/link/cancel") return cancelAnswer.clone();
@@ -82,6 +89,7 @@ beforeEach(() => {
   cancelAnswer = json(200, { status: "cancelled", name: "work", remote: REMOTE });
   disconnectAnswers = [json(200, { name: "work", revoked: "remote" })];
   metadataAnswer = undefined;
+  metadataHold = undefined;
   openedPages = [];
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockClear();
@@ -278,6 +286,44 @@ describe("RemoteGateways", () => {
     expect(screen.getByText(/Removed work from this computer/)).toBeTruthy();
   });
 
+  it("reads again after a second disconnect completes during the first refresh", async () => {
+    let completeManual = () => {};
+    let releaseSnapshot = () => {};
+    let reads = 0;
+    rows = [browserRow(), manualRow];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/relay/link/disconnect") {
+        const { name } = JSON.parse(String(init?.body)) as { name: string };
+        if (name === "manual") await new Promise<void>((resolve) => { completeManual = resolve; });
+        rows = rows.filter((row) => row.name !== name);
+        return json(200, { name, revoked: "skipped" });
+      }
+      if (String(input) === "/api/relay/link/metadata") {
+        const snapshot = json(200, { gateways: rows });
+        if (++reads === 2) await new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+        return snapshot;
+      }
+      return fetchMock(input, init);
+    }));
+
+    const screen = mount();
+    await vi.advanceTimersByTimeAsync(1);
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect manual" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect work" }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reads).toBe(2);
+    completeManual();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.getByText("Disconnected manual.")).toBeTruthy();
+    expect(reads).toBe(2);
+    releaseSnapshot();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(screen.queryByRole("button", { name: "Disconnect manual" })).toBeNull();
+    expect(screen.getByText("No gateway is linked.")).toBeTruthy();
+    expect(reads).toBe(3);
+  });
+
   it("reads the saved links again after a reload, with no attempt in memory", async () => {
     rows = [browserRow()];
     const screen = mount();
@@ -291,5 +337,247 @@ describe("RemoteGateways", () => {
     const screen = mount();
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.getByText("Linked gateways are off for this gateway.")).toBeTruthy();
+  });
+
+  describe("after a link", () => {
+    const metadataReads = () => requestsTo("/api/relay/link/metadata").length;
+    const linkAtOnce = async (screen: ReturnType<typeof mount>) => {
+      fireEvent.input(screen.getByRole("textbox", { name: /Remote gateway address/ }), { target: { value: REMOTE } });
+      fireEvent.click(screen.getByRole("button", { name: "Link gateway" }));
+      await vi.advanceTimersByTimeAsync(1);
+    };
+
+    it("reads connecting as Device connecting and offline as Device not connected", async () => {
+      rows = [browserRow({ name: "a", connection: "connecting" }), browserRow({ name: "b", connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(screen.getAllByText("Device connecting…")).toHaveLength(1);
+      expect(screen.getAllByText("Device not connected")).toHaveLength(1);
+    });
+
+    it("shows offline, then connecting, then connected, and stops reading when connected", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      rows = [browserRow({ connection: "offline" })];
+      await linkAtOnce(screen);
+      expect(screen.getByText("Device connecting…")).toBeTruthy();
+      expect(screen.queryByText("Device not connected")).toBeNull();
+      rows = [browserRow({ connection: "connecting" })];
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connecting…")).toBeTruthy();
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(metadataReads()).toBe(reads);
+    });
+
+    it("stops on replaced and on unauthorized", async () => {
+      for (const connection of ["replaced", "unauthorized"] as const) {
+        startAnswer = json(200, { status: "linked", name: "work" });
+        rows = [browserRow({ connection: "offline" })];
+        const screen = mount();
+        await vi.advanceTimersByTimeAsync(1);
+        await linkAtOnce(screen);
+        rows = [browserRow({ connection })];
+        await vi.advanceTimersByTimeAsync(2000);
+        const reads = metadataReads();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(metadataReads()).toBe(reads);
+        dispose?.();
+        dispose = undefined;
+        sent = [];
+      }
+    });
+
+    it("gives up after 30 reads while the row stays offline, and a new link starts a new cycle", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      await linkAtOnce(screen);
+      const before = metadataReads();
+      await vi.advanceTimersByTimeAsync(2000 * 40);
+      expect(metadataReads() - before).toBe(30);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(metadataReads() - before).toBe(30);
+      await linkAtOnce(screen);
+      const restarted = metadataReads();
+      await vi.advanceTimersByTimeAsync(2000 * 3);
+      expect(metadataReads()).toBeGreaterThan(restarted + 1);
+    });
+
+    it("starts a cycle on page load when a row is connecting", async () => {
+      rows = [browserRow({ connection: "connecting" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(screen.getByText("Device connecting…")).toBeTruthy();
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+    });
+
+    it("reads offline as Device not connected again when the cycle gives up", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      await linkAtOnce(screen);
+      expect(screen.getByText("Device connecting…")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(2000 * 40);
+      expect(screen.getByText("Device not connected")).toBeTruthy();
+    });
+
+    it("starts no cycle on page load when no row is connecting", async () => {
+      rows = [browserRow({ connection: "offline" })];
+      mount();
+      await vi.advanceTimersByTimeAsync(1);
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(metadataReads()).toBe(reads);
+    });
+
+    it("stops reading when the page closes", async () => {
+      rows = [browserRow({ connection: "connecting" })];
+      mount();
+      await vi.advanceTimersByTimeAsync(1);
+      dispose?.();
+      dispose = undefined;
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(metadataReads()).toBe(reads);
+    });
+
+    /** Holds the next metadata reads until the returned function runs. */
+    const holdReads = () => {
+      let release = () => {};
+      metadataHold = new Promise<void>((resolve) => { release = resolve; });
+      return () => { metadataHold = undefined; release(); };
+    };
+    /** Links through the sign-in path: the status route answers `linked` on the first poll. */
+    const linkAfterApproval = async (screen: ReturnType<typeof mount>) => {
+      startAnswer = json(201, pendingStart);
+      statuses = [json(200, { status: "linked", name: "work", remote: REMOTE })];
+      fireEvent.input(screen.getByRole("textbox", { name: /Remote gateway address/ }), { target: { value: REMOTE } });
+      fireEvent.click(screen.getByRole("button", { name: "Link gateway" }));
+      await vi.advanceTimersByTimeAsync(1600);
+    };
+
+    it("reads no more after the page closes during the read that follows an immediate link", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      const release = holdReads();
+      await linkAtOnce(screen);
+      dispose?.();
+      dispose = undefined;
+      release();
+      await vi.advanceTimersByTimeAsync(1);
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(metadataReads()).toBe(reads);
+    });
+
+    it("reads no more after the page closes during the read that follows an approved link", async () => {
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      const release = holdReads();
+      await linkAfterApproval(screen);
+      dispose?.();
+      dispose = undefined;
+      release();
+      await vi.advanceTimersByTimeAsync(1);
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(metadataReads()).toBe(reads);
+    });
+
+    it("still reads again when the first read after an immediate link fails", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      metadataAnswer = () => { metadataAnswer = undefined; return apiError(500, "failed", "The read failed."); };
+      await linkAtOnce(screen);
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+    });
+
+    it("still reads again when the first read after an approved link fails", async () => {
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      metadataAnswer = () => { metadataAnswer = undefined; return apiError(500, "failed", "The read failed."); };
+      await linkAfterApproval(screen);
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+    });
+
+    it("starts no second read when a link finishes while a timer read is pending", async () => {
+      rows = [browserRow({ connection: "connecting" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      const release = holdReads();
+      await vi.advanceTimersByTimeAsync(2000);
+      const reads = metadataReads();
+      startAnswer = json(200, { status: "linked", name: "work" });
+      await linkAtOnce(screen);
+      expect(metadataReads()).toBe(reads);
+      rows = [browserRow({ connection: "connected" })];
+      release();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+    });
+
+    it("ends a metadata read that never answers, keeps one read in flight, and recovers on the next read", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      holdReads();
+      const before = metadataReads();
+      await linkAtOnce(screen);
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(metadataReads() - before).toBe(1);
+      expect((screen.getByRole("button", { name: "Link gateway" }) as HTMLButtonElement).disabled).toBe(true);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect((screen.getByRole("button", { name: "Link gateway" }) as HTMLButtonElement).disabled).toBe(false);
+      metadataHold = undefined;
+      rows = [browserRow({ connection: "connected" })];
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(screen.getByText("Device connected")).toBeTruthy();
+      expect(screen.queryByText("Loading linked gateways…")).toBeNull();
+    });
+
+    it("starts no second read when a link finishes while the first page read is pending", async () => {
+      startAnswer = json(200, { status: "linked", name: "work" });
+      rows = [browserRow({ connection: "offline" })];
+      holdReads();
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(metadataReads()).toBe(1);
+      await linkAtOnce(screen);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(metadataReads()).toBe(1);
+    });
+
+    it("stops reading when the user disconnects", async () => {
+      rows = [browserRow({ connection: "connecting" })];
+      const screen = mount();
+      await vi.advanceTimersByTimeAsync(1);
+      fireEvent.click(screen.getByRole("button", { name: "Disconnect work" }));
+      rows = [];
+      await vi.advanceTimersByTimeAsync(1);
+      const reads = metadataReads();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(metadataReads()).toBe(reads);
+    });
   });
 });

@@ -1,0 +1,11 @@
+{
+  "id": "desktop-fixture",
+  "name": "Desktop Fixture",
+  "description": "Checks the packaged catalog.",
+  "tagline": "Check the desktop catalog",
+  "category": "developer",
+  "version": "1.0.0",
+  "minYoplai": "0.0.0",
+  "entry": "index.js",
+  "icon": null
+}

@@ -1,7 +1,14 @@
+import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
+import { createInstructionWriter } from "../desktop/agent-instructions.js";
+import { createAgentRoutes } from "../desktop/agent-create.js";
+import { createModelAccess } from "../desktop/model-access.js";
+import { desktopSetupGuard } from "../desktop/guard.js";
+import { createDesktopSetupRoutes } from "../desktop/setup.js";
 import { serve } from "@hono/node-server";
 import path from "node:path";
 import { Hono } from "hono";
 import { startAppsListener } from "../mcp-apps/views.js";
+import { startUiListener } from "./ui-listener.js";
 import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
@@ -16,7 +23,7 @@ import {
 } from "../agents/container.js";
 import { loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
-import { getExtensionRuntime } from "../extensions/registry.js";
+import { getCurrentInnerApi, getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
@@ -84,7 +91,8 @@ const globalCors = cors({
 // The dashboard viewer and the browser link routes answer CORS themselves: a narrower grant than the global list.
 app.use("*", (c, next) => {
   const pathname = new URL(c.req.url).pathname;
-  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) ? next() : globalCors(c, next);
+  if (pathname === "/api/agents" && c.req.method === "POST") return next();
+  return ownsDashboardViewPath(pathname) || ownsLinkPath(pathname) || pathname === "/api/desktop-setup" || pathname === "/api/model-access" || pathname.startsWith("/api/model-access/") ? next() : globalCors(c, next);
 });
 app.use("*", accessLogger());
 app.route("/internal", internalTools);
@@ -125,6 +133,17 @@ app.route(
 app.use("*", dashboardViewHttp());
 // The link namespace answers before the extension gate. It owns every spelling of its path and refuses what no route owns.
 app.use("*", relayLinkApi());
+const setupGuard = desktopSetupGuard(
+  () => currentExtensionRuntime().isEnabled("multiUser"),
+  () => loadConfig().ui?.port ?? 3000
+);
+app.use("/api/desktop-setup/*", setupGuard);
+app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
+app.use("/api/model-access/*", setupGuard);
+const modelAccess = createModelAccess(CONFIG_DIR);
+app.route("/api/model-access", modelAccess.routes);
+app.on("POST", "/api/agents", setupGuard);
+app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
@@ -144,7 +163,7 @@ app.use("/api/*", async (c, next) => {
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
     // These core routes are also available without multi-user.
-    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota")) continue;
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || ownsExtensionCatalogPath(path))) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
@@ -286,14 +305,14 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  return api.fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
 });
 
 app.all("/hooks/*", async (c) => {
   if (!currentExtensionRuntime().isEnabled("webhooks")) {
     return c.json({ error: "extension_disabled", extension: "webhooks" }, 404);
   }
-  return api.fetch(c.req.raw);
+  return (getCurrentInnerApi() ?? api).fetch(c.req.raw);
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
@@ -374,9 +393,9 @@ export function startServer(
     resolveGatewayBindHost(config.gateway?.bind);
   configureRelay(
     resolvedHost,
-    runtime.isEnabled("multiUser"),
+    () => runtime.isEnabled("multiUser"),
     config.ui?.tailscale?.mode === "serve",
-    resolveBindHost(config.ui?.bind)
+    readEnv("UI_HOST") ?? resolveBindHost(config.ui?.bind)
   );
   const nodeBin = path.dirname(process.execPath);
   if (nodeBin && !process.env.PATH?.split(path.delimiter).includes(nodeBin)) {
@@ -384,7 +403,8 @@ export function startServer(
   }
 
   console.log(`Starting gateway server on ${resolvedHost}:${resolvedPort}`);
-  process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
+  // Port 0 (tests) means "any free port". It is not a valid env port, and loadConfig refuses it.
+  if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
   const server = serve({
     fetch: app.fetch,
@@ -400,8 +420,40 @@ export function startServer(
   else server.once("listening", recordListener);
   server.once("close", () => setGatewayListener(undefined));
 
-  const stopApps = startAppsListener(config, resolvedHost);
+  // The packaged app has no Vite. With a built UI directory, a second loopback listener serves it on the UI port.
+  const webDist = readEnv("WEB_DIST");
+  // Dev keeps running without Apps views. The packaged app exits, so the desktop shows its error page with Restart.
+  const stopApps = startAppsListener(
+    config,
+    resolvedHost,
+    webDist
+      ? (error) => {
+          logError(`MCP Apps listener failed on port ${config.apps?.port ?? 4001}`, error);
+          process.exit(1);
+        }
+      : undefined
+  );
   server.once("close", stopApps);
+
+  if (webDist) {
+    const uiPort = config.ui?.port ?? 3000;
+    const uiServer = startUiListener({
+      webDist,
+      host: "127.0.0.1",
+      port: uiPort,
+      gatewayHost: ["0.0.0.0", "::"].includes(resolvedHost) ? "127.0.0.1" : resolvedHost,
+      gatewayPort: resolvedPort,
+      onError: (error) => {
+        logError(`UI listener failed on 127.0.0.1:${uiPort}`, error);
+        process.exit(1);
+      },
+    });
+    console.log(`Serving web UI from ${webDist} on 127.0.0.1:${uiPort}`);
+    server.once("close", () => {
+      uiServer.close();
+      uiServer.closeAllConnections();
+    });
+  }
 
   // Loaded by the first upgrade of a multi-user socket, so the sync check below finds it for every socket with a context.
   let loadedMultiUserModule: MultiUserMiddlewareModule | undefined;

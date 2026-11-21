@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { OAuthConnectCard } from "./OAuthConnectCard";
@@ -18,6 +19,8 @@ function Card(props: { agentId: string; provider: string; label: string; gateway
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 let dispose: (() => void) | undefined;
+beforeEach(() => setCapabilitiesForTests({ multiUser: true }));
+afterEach(resetCapabilitiesForTests);
 afterEach(() => {
   dispose?.();
   document.body.replaceChildren();

@@ -89,15 +89,36 @@ export async function disconnectMcpConnection(agentId: string, server: string, g
 
 export type SlackPairing = { workspaceId: string; slackUserId: string; pairedAt: number };
 
-/** The message of a failed pairing call. A fixed text per case, never the body of a remote answer. */
-async function pairingFailure(response: Response, fallback: string, gateway: GatewayName | undefined): Promise<Error> {
+/** A failed pairing call. `status` and `code` come from the answer, and the message is a fixed text. */
+export class PairingApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string | undefined) {
+    super(message);
+    this.name = "PairingApiError";
+  }
+}
+
+/**
+ * True when a list read says that the gateway cannot hold Slack pairings at all:
+ * the Slack extension is absent, Slack is not running, or the gateway has no multi-user sign-in.
+ * Any other failure, also another 404, is a real error.
+ */
+export function isSlackPairingUnavailable(error: unknown): boolean {
+  if (!(error instanceof PairingApiError)) return false;
+  return (error.status === 404 && error.code === "extension_disabled")
+    || (error.status === 503 && error.code === "slack_unavailable")
+    || (error.status === 409 && error.code === "multi_user_required");
+}
+
+/** The error of a failed pairing call. A fixed text per case, never the body of a remote answer. */
+async function pairingFailure(response: Response, fallback: string, gateway: GatewayName | undefined): Promise<PairingApiError> {
   const body = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
   const code = typeof body?.error === "string" ? body.error : undefined;
-  if (code === "multi_user_required") return new Error(gateway === undefined ? "This gateway has no multi-user sign-in, so it cannot hold Slack pairings." : "The remote gateway has no multi-user sign-in, so it cannot hold Slack pairings.");
-  if (code === "gateway_offline") return new Error("The remote gateway is offline.");
-  if (code === "slack_unavailable") return new Error("Slack is not available on that gateway.");
-  if (gateway !== undefined && (response.status === 401 || response.status === 403)) return new Error("The remote gateway refused this action.");
-  return new Error(fallback);
+  const fail = (message: string) => new PairingApiError(message, response.status, code);
+  if (code === "multi_user_required") return fail(gateway === undefined ? "This gateway has no multi-user sign-in, so it cannot hold Slack pairings." : "The remote gateway has no multi-user sign-in, so it cannot hold Slack pairings.");
+  if (code === "gateway_offline") return fail("The remote gateway is offline.");
+  if (code === "slack_unavailable") return fail("Slack is not available on that gateway.");
+  if (gateway !== undefined && (response.status === 401 || response.status === 403)) return fail("The remote gateway refused this action.");
+  return fail(fallback);
 }
 
 export async function fetchSlackPairings(gateway?: GatewayName): Promise<SlackPairing[]> {
@@ -124,17 +145,38 @@ export type SurfaceLink = {
   linkedAt: number;
 };
 
-export async function fetchSurfaceLinks(): Promise<SurfaceLink[]> {
-  const response = await fetch(`${API_BASE}/surface-links`, { signal: AbortSignal.timeout(8_000) });
-  if (!response.ok) throw new Error("Failed to load linked accounts");
+/**
+ * True when a linked gateway cannot hold Threadit and Mattermost links: the extension is off, the gateway has no
+ * multi-user sign-in, or it has no surface-links route (a plain 404 with no error code).
+ */
+export function isSurfaceLinkUnavailable(error: unknown): boolean {
+  if (!(error instanceof PairingApiError)) return false;
+  return (error.status === 404 && (error.code === "extension_disabled" || error.code === undefined))
+    || (error.status === 409 && error.code === "multi_user_required");
+}
+
+/** The error of a failed surface-link call. A fixed text per case, never the body of a remote answer. */
+async function surfaceLinkFailure(response: Response, fallback: string, gateway: GatewayName | undefined): Promise<PairingApiError> {
+  const body = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
+  const code = typeof body?.error === "string" ? body.error : undefined;
+  const fail = (message: string) => new PairingApiError(message, response.status, code);
+  if (gateway === undefined) return fail(fallback);
+  if (code === "gateway_offline") return fail("The remote gateway is offline.");
+  if (response.status === 401 || response.status === 403) return fail("The remote gateway refused this action.");
+  return fail(fallback);
+}
+
+export async function fetchSurfaceLinks(gateway?: GatewayName): Promise<SurfaceLink[]> {
+  const response = await fetch(gatewayApiPath(gateway, `${API_BASE}/surface-links`), { signal: AbortSignal.timeout(8_000) });
+  if (!response.ok) throw await surfaceLinkFailure(response, "Failed to load linked accounts", gateway);
   const data = (await response.json()) as { links: SurfaceLink[] };
   return data.links;
 }
 
-export async function unlinkSurfaceAccount(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/surface-links/${encodeURIComponent(id)}`, {
+export async function unlinkSurfaceAccount(id: string, gateway?: GatewayName): Promise<void> {
+  const response = await fetch(gatewayApiPath(gateway, `${API_BASE}/surface-links/${encodeURIComponent(id)}`), {
     method: "DELETE",
     signal: AbortSignal.timeout(8_000),
   });
-  if (!response.ok) throw new Error("Failed to unlink account");
+  if (!response.ok) throw await surfaceLinkFailure(response, "Failed to unlink account", gateway);
 }

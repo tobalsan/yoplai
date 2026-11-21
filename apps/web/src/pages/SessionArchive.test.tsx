@@ -35,6 +35,8 @@ vi.mock("../lib/toast", () => ({
 }));
 
 import { SessionArchive } from "./SessionArchive";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 let root: HTMLDivElement;
 let dispose: () => void;
@@ -90,6 +92,15 @@ describe("SessionArchive", () => {
     expect(root.textContent).toContain("Another archived");
     expect(root.textContent).toContain("alpha");
     expect(root.textContent).toContain("beta");
+  });
+
+  it("shows the default avatar for an archived chat whose agent has no avatar", async () => {
+    fetchAgentSessionsMock.mockResolvedValue({
+      items: [{ agentId: "alpha", sessionId: "s1", createdAt: Date.now(), lastActivity: Date.now(), messageCount: 1, firstUserMessage: "Archived chat", archived: Date.now(), isMain: false, pinned: null }],
+    });
+    dispose = render(() => <SessionArchive />, root);
+    await tick();
+    expect(defaultAvatarSources(root)).toContain(defaultAvatarUrl("alpha"));
   });
 
   it("shows empty state when no archived chats", async () => {

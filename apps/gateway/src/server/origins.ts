@@ -1,4 +1,4 @@
-import type { GatewayConfig } from "@yoplai/shared";
+import { readEnv, type GatewayConfig } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
 
 function toOrigin(value: string | undefined): string | undefined {
@@ -12,6 +12,11 @@ function toOrigin(value: string | undefined): string | undefined {
   }
 }
 
+function portFromEnv(name: string): number | undefined {
+  const port = Number.parseInt(readEnv(name) ?? "", 10);
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
+}
+
 /** CORS and the relay use the same configured browser origins. */
 export function allowedCorsOrigins(): string[] {
   let config: GatewayConfig | undefined;
@@ -21,8 +26,9 @@ export function allowedCorsOrigins(): string[] {
     config = undefined;
   }
 
-  const gatewayPort = config?.gateway?.port ?? config?.server?.port ?? 4000;
-  const uiPort = config?.ui?.port ?? 3000;
+  // The launcher sets the effective ports in the environment. They win over the config ports.
+  const gatewayPort = portFromEnv("GATEWAY_PORT") ?? config?.gateway?.port ?? config?.server?.port ?? 4000;
+  const uiPort = portFromEnv("UI_PORT") ?? config?.ui?.port ?? 3000;
 
   return [
     ...new Set(

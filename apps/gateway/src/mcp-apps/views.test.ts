@@ -677,3 +677,24 @@ describe("MCP Apps gateway views", () => {
   });
 
 });
+
+describe("MCP Apps listener bind failure", () => {
+  it("calls onBindError when the apps port is occupied", async () => {
+    const { startAppsListener } = await import("./views.js");
+    const blocker = net.createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    const port = (blocker.address() as AddressInfo).port;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let stop = () => {};
+    const failed = new Promise<Error>((resolve) => {
+      stop = startAppsListener({ version: 3, agents: [], sessions: { idleMinutes: 60 }, apps: { port } }, "127.0.0.1", resolve);
+    });
+    try {
+      expect(await failed).toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      stop();
+      warning.mockRestore();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+});

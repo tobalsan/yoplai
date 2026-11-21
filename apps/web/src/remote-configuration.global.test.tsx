@@ -17,7 +17,7 @@ const east = relayPrefix("east");
 const west = relayPrefix("west");
 
 const caps = (overrides: Record<string, unknown> = {}) => ({
-  version: 2, extensions: { scheduler: true }, agents: [], multiUser: true, forkedAgents: false,
+  version: 2, extensions: { scheduler: true, mcp: true }, agents: [], multiUser: true, forkedAgents: false,
   enableCronMonitoring: true, user: { id: "remote-root", name: "Root", role: "superadmin" }, ...overrides,
 });
 const top = (extensions: string[], candidates = ["exa"]) => ({
@@ -51,7 +51,7 @@ function mount(path: string, extra?: () => JSX.Element) {
 
 beforeEach(() => {
   localStorage.clear();
-  setCapabilitiesForTests({ extensions: { scheduler: true }, multiUser: false });
+  setCapabilitiesForTests({ extensions: { scheduler: true, mcp: true }, multiUser: false });
   gateways = createFakeGateways();
   gateways.on("GET", "/api/relay/gateways", { json: { gateways: [{ name: "east" }, { name: "west" }, { name: "quiet" }, { name: "offline" }] } });
   gateways.on("GET", `${east}/api/capabilities`, { json: caps() });
@@ -357,7 +357,7 @@ describe("MCP catalog administration", () => {
     gateways.on("GET", `${east}/api/capabilities`, () => answer);
     mount("/admin/mcp-servers?gateway=east");
     await vi.waitFor(() => expect(text()).toContain("Could not read your permissions on east."));
-    expect(button("Add server")?.disabled).toBe(true);
+    expect(button("Add server")).toBeUndefined();
     answer = { status: 200, json: caps({ user: { id: "root", role: "superadmin" } }) };
     button("Retry")!.click();
     await vi.waitFor(() => expect(button("Add server")?.disabled).toBe(false));
@@ -568,7 +568,7 @@ describe("alert dots of configured gateways", () => {
   });
 
   it("does not gate a remote read on the local scheduler flag", async () => {
-    setCapabilitiesForTests({ extensions: {}, multiUser: false });
+    setCapabilitiesForTests({ extensions: { mcp: true }, multiUser: false });
     mount("/alerts", () => <Alerts />);
     await vi.waitFor(() => expect(dot("quiet")).not.toBeNull());
     expect(gateways.log()).not.toContain("GET /api/schedule-alerts");

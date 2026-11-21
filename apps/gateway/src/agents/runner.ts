@@ -1,3 +1,4 @@
+import { findChatCommand } from "./chat-command.js";
 import * as viewContext from "../mcp-apps/view-context.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -259,6 +260,7 @@ export async function runAgent(
     userId: sessionOwnerId,
     requesterId: params.requesterId ?? params.userId,
     deviceTurnToken: params.deviceTurnToken,
+    turnId: params.turnId,
     source: params.source,
     slackDelivery: params.slackDelivery,
     trace: params.trace,
@@ -297,9 +299,8 @@ export async function runAgent(
   const workspaceDir = resolveWorkspaceDir(agent.workspace);
   const reviewers = await extensionRuntime?.getReplyReviewers(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
   const heldReply = reviewers.length ? new HeldReply(agent.id, sessionId, reviewers) : undefined;
-  const commands = await extensionRuntime?.getChatCommands(agent, actorConfig, workspaceDir, sessionId, params.userId, params) ?? [];
+  const command = await findChatCommand(extensionRuntime, agent, actorConfig, sessionId, params, message);
   checkLiveSessionOwner(sessionId);
-  const command = commands.find((command) => command.command === message.trim());
   if (command) {
     const text = await command.run({ agent, config: actorConfig, workspaceDir, sessionId, run: { ...params, sessionId } });
     emit({ type: "text", data: text });
@@ -630,7 +631,8 @@ export async function runAgent(
     aborted = result.aborted ?? false;
 
     heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
-    await lifecycle.flushTurns();
+    const answeredTurnId = !aborted && !abortController.signal.aborted && !silent && result.text?.trim() ? params.turnId : undefined;
+    await lifecycle.flushTurns(answeredTurnId);
     answerPersisted = true;
 
     const durationMs = Date.now() - started;
@@ -649,7 +651,8 @@ export async function runAgent(
     };
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
-    logRunFailure("[agent] run failed", err, { agentId: params.agentId, sessionId });
+    if (params.turnId) logWarn("[agent] desktop turn failed", { agentId: params.agentId, sessionId });
+    else logRunFailure("[agent] run failed", err, { agentId: params.agentId, sessionId });
     holdback.finishSegment();
     heldReply?.flushText(emit);
     heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
@@ -658,7 +661,7 @@ export async function runAgent(
       const text = runFailureMessage(kind, agent.language ?? "en");
       await lifecycle.writeFailureNotice({ kind, text });
       answerPersisted = true;
-      emit({ type: "error", message: errMessage, kind, userMessage: text });
+      emit({ type: "error", message: params.turnId ? text : errMessage, kind, userMessage: text });
       if (kind === "quota") {
         void notifyProviderQuota(agent, effectiveModel).catch((error) => {
           logError("[agent] quota notification failed", error, { agentId: params.agentId });
@@ -720,9 +723,9 @@ export async function runAgent(
               onEvent: onDeferredEvent,
             }) };
           } catch (error) {
-            logRunFailure("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
+            if (!pending.params?.turnId) logRunFailure("[agent] queued turn failed", error, { agentId: params.agentId, sessionId });
             outcome = { error };
-            if (!terminalEventSent) onDeferredEvent({ type: "error", message: error instanceof Error ? error.message : String(error) });
+            if (!terminalEventSent) onDeferredEvent({ type: "error", message: pending.params?.turnId ? runFailureMessage("generic", agent.language ?? "en") : error instanceof Error ? error.message : String(error) });
           }
           try {
             await pending.params?.onDeferredResult?.(outcome);

@@ -67,6 +67,33 @@ External extensions load from `extensionsPath`, or `$YOPLAI_HOME/extensions` by 
 
 Extensions can contribute routes, services, lifecycle hooks, capabilities, CLI commands, web routes, prompt text, tools, delivery sinks, and OAuth requirements. Tool bundles use `packages/shared/src/tool-extension.ts` and object-shaped Zod parameter schemas.
 
+### Catalog installs and manual installs
+
+Open **Admin → Extensions** to use the catalog. In multi-user mode, only a
+superadmin on the selected gateway can use it. Install, update, and removal do
+not require a restart.
+
+A valid `.install.json` in an extension folder marks a catalog install. The
+catalog never changes a folder without a valid record. It also never changes a
+symlink, even if its target has a valid record.
+
+Removal keeps the agent settings. A loaded extension that needs the target
+blocks removal. Agent use alone does not block removal.
+
+If the gateway crashes after moving the old version out but before moving the
+new version in, the extension folder may be missing. There is no automatic
+restore. With the gateway stopped, check the backup's `.install.json` under
+`<extensionsPath>/.trash/<id>-<uuid>` for the expected ID and version. If
+`<extensionsPath>/<id>` is absent, move the matching backup folder back to
+that path and restart the gateway. Do not overwrite an existing folder.
+
+Enable the extension on an agent after installation if the agent does not
+already use it. In multi-user mode, you need permission to manage the agent to
+enable the extension for the team.
+
+See [Configuration](configuration.md#extension-catalog) and the
+[catalog API](api.md#extension-catalog).
+
 ### Browser pages and tool frames
 
 `registerPageRoutes(app)` optionally registers Hono routes relative to `/x/<extensionId>`. The host checks that the extension is enabled on every request. In multi-user mode it supplies `c.get("multiUserAuthContext")`; unauthenticated page GETs redirect to `/login?returnTo=...`, while other methods return 401. Cookie-authenticated writes remain read-only during impersonation. Single-user gateways pass through without an account.

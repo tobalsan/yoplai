@@ -1,3 +1,4 @@
+import { setupRepairHref } from "../desktop-setup/repair";
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { RemoteAgentMark } from "../components/RemoteAgentMark";
 import { A, useNavigate } from "@solidjs/router";
@@ -15,6 +16,7 @@ import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-a
 import { showToast } from "../lib/toast";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { ScheduleAlertDot } from "../components/ScheduleAlertDot";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -29,7 +31,7 @@ function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
     : UNASSIGNED_MESSAGE;
 }
 
-export function AgentCatalog() {
+export function AgentCatalog(props: { hideHeading?: boolean }) {
   const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
   const [savingMain, setSavingMain] = createSignal<string | null>(null);
   const navigate = useNavigate();
@@ -107,7 +109,7 @@ export function AgentCatalog() {
 
   return (
     <div class="agent-catalog">
-      <h1 class="catalog-heading">Agents</h1>
+      <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}
@@ -125,6 +127,11 @@ export function AgentCatalog() {
 
       <Show when={agents.error}>
         <div class="error">Failed to load agents</div>
+      </Show>
+
+      <Show when={capabilities.desktopSetup && !capabilities.multiUser && agents()?.length === 0}>
+        <h2>Create your first agent</h2>
+        <button type="button" onClick={() => navigate(setupRepairHref("agent", "/agents"))}>Create agent</button>
       </Show>
 
       <Show when={agents()}>
@@ -180,7 +187,7 @@ export function AgentCatalog() {
                     <svg width="16" height="16" viewBox="0 0 24 24" fill={isMainCard(agent.id) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>
                   </button>
                 )}</Show>
-                <Show when={agent.avatar}>
+                <Show when={agent.avatar} fallback={<div class="catalog-avatar"><img src={defaultAvatarUrl(agent.id)} alt={agent.name} class="avatar-img" /></div>}>
                   {(avatar) => (
                     <div class="catalog-avatar">
                       {isEmoji(avatar()) ? (

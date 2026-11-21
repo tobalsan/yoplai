@@ -48,6 +48,7 @@ export type StreamCallbacks = {
     size: number;
   }) => void;
   onSessionReset?: (sessionId: string) => void;
+  onTurnExists?: () => void;
   onDeviceApprovalClosed?: () => void;
   /** `answer` sends the reply on the socket of this message. It returns false when the socket is closed. */
   onDeviceApprovalRequest?: (
@@ -60,6 +61,7 @@ export type StreamCallbacks = {
 };
 
 export type StreamMessageOptions = {
+  turnId?: string;
   projectId?: string;
   attachments?: FileAttachment[];
   thinkLevel?: ThinkLevel;
@@ -264,6 +266,7 @@ export function streamMessage(
       message,
     };
     if (options?.sessionId) payload.sessionId = options.sessionId;
+    if (options?.turnId !== undefined) payload.turnId = options.turnId;
     if (options?.projectId) payload.projectId = options.projectId;
     if (options?.attachments && options.attachments.length > 0) {
       payload.attachments = options.attachments;
@@ -277,9 +280,13 @@ export function streamMessage(
   ws.onmessage = (e) => {
     if (terminated) return;
     const event = JSON.parse(e.data) as WsStreamEvent;
-    if (event.type === "done" || event.type === "error") {
+    if (event.type === "done" || event.type === "error" || event.type === "turn_exists") {
       terminated = true;
       closeApprovals();
+    }
+    if (event.type === "turn_exists") {
+      callbacks?.onTurnExists?.();
+      return;
     }
     const approval = event as unknown as { type: string };
     if (approval.type === "device_approval_request") {

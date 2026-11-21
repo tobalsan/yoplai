@@ -1351,6 +1351,7 @@ const GatewayCommonFields = {
   extensions: ExtensionsConfigSchema,
   extensionEnvAllowlist: z.array(z.string()).optional(),
   extensionsPath: z.string().optional(),
+  extensionCatalog: z.object({ url: z.string().url().optional(), enabled: z.boolean().optional() }).optional(),
   branding: z
     .object({
       name: z.string().optional(),
@@ -1450,6 +1451,8 @@ export type RunAgentParams = {
   background?: boolean;
   /** A background run gets the device tools only when this is true. */
   requiresDevice?: boolean;
+  /** Turn ID from a guarded desktop send. */
+  turnId?: string;
   /** Secret of one chat turn from the local gateway. Only the device tools send it back. */
   deviceTurnToken?: string;
   trace?: AgentTraceContext;
@@ -1645,7 +1648,7 @@ export interface ExtensionContext {
   // Config
   getConfig(): GatewayConfig;
   getDataDir(): string;
-  reloadConfig(): void;
+  reloadConfig(): void | Promise<void>;
   notifyAgentListChanged?(): void;
 
   // Agent access
@@ -2067,6 +2070,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  turnId: z.string().uuid().optional(),
   deviceTurnToken: z.string().max(200).optional(),
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   message: z.string(),
@@ -2094,9 +2098,21 @@ const CapabilitiesUserSchema = z.object({
     .optional(),
 });
 
+export const DesktopSetupStateSchema = z.object({
+  version: z.literal(1).default(1),
+  wizardExited: z.boolean().default(false),
+  exitedAt: z.string().nullable().default(null),
+  skipped: z.array(z.string()).default([]),
+  firstChat: z.object({ agentId: z.string(), sessionId: z.string(), turnId: z.string() }).nullable().default(null),
+  completed: z.boolean().default(false),
+  completedAt: z.string().nullable().default(null),
+});
+export type DesktopSetupState = z.infer<typeof DesktopSetupStateSchema>;
+
 export const CapabilitiesResponseSchema = z.object({
   version: z.number(),
   apps: z.object({ available: z.boolean() }).optional(),
+  desktopSetup: z.boolean().optional(),
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),
@@ -2531,6 +2547,7 @@ export type WsSendMessage = {
   projectId?: string;
   type: "send";
   agentId: string;
+  turnId?: string;
   sessionId?: string; // explicit session ID (bypasses sessionKey resolution)
   sessionKey?: string; // logical key (resolved to sessionId with idle timeout)
   message: string;
@@ -2571,6 +2588,8 @@ export type WsHistoryUpdatedEvent = {
   agentId: string;
   sessionId: string;
 };
+
+export type WsTurnExistsEvent = { type: "turn_exists" };
 
 export type WsSessionResetEvent = {
   type: "session_reset";
@@ -2644,6 +2663,7 @@ export type WsServerMessage =
   | StreamEvent
   | WsHistoryUpdatedEvent
   | WsSessionResetEvent
+  | WsTurnExistsEvent
   | WsStatusEvent
   | WsFileChangedEvent
   | WsAgentChangedEvent

@@ -36,7 +36,7 @@ import {
   resolveStartupConfig,
 } from "../config/validate.js";
 import { startGatewayCommand } from "./gateway.js";
-import { getExtensionRuntime, loadExtensions } from "../extensions/registry.js";
+import { getExtensionRuntime, loadExtensions, stopCurrentExtensions } from "../extensions/registry.js";
 import { logError } from "../logging.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -425,6 +425,8 @@ export async function startWebUI(
   gatewayPort: number
 ): Promise<ChildProcess | null> {
   if (readEnv("SKIP_WEB")) return null;
+  // With a built UI directory, the gateway serves the UI itself on the UI port.
+  if (readEnv("WEB_DIST")) return null;
 
   const port = uiConfig.port ?? 3000;
   const useTailscaleServe = uiConfig.tailscale?.mode === "serve";
@@ -564,7 +566,10 @@ const gatewayCmd = program
       }
 
       // Handle shutdown
+      let shuttingDown = false;
       const shutdown = async () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
         console.log("\nShutting down...");
         const { stopDreamTimers } = await import("../dream/service.js");
         stopDreamTimers();
@@ -574,9 +579,7 @@ const gatewayCmd = program
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
           resetTailscaleServe();
         }
-        for (const extension of [...extensions].reverse()) {
-          await extension.stop();
-        }
+        await stopCurrentExtensions();
         process.exit(0);
       };
 
@@ -913,4 +916,5 @@ authCmd
     }
   });
 
-program.parse();
+// Electron as Node (the packaged app) makes commander skip the script path unless the source is named.
+program.parse(process.argv, { from: "node" });

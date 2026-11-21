@@ -56,6 +56,7 @@ export function ExtensionConfigForm(props: {
   entry: ExtensionCatalogEntry;
   /** Selected tab for OAuth extensions, which share the OAuth card's Just me / Whole team tabs. */
   scope?: "personal" | "team";
+  singleUser?: boolean;
   /** Called with the catalog returned by each successful save. */
   onSaved?: (extensions: ExtensionCatalogEntry[]) => void;
   registerConnectActions?: (actions: ConnectSettingsActions) => void;
@@ -102,7 +103,7 @@ export function ExtensionConfigForm(props: {
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [tabScope, setCredentialScope] = createSignal<"personal" | "team">("team");
-  const credentialScope = () => (props.personalOnly ? "personal" : props.scope ?? tabScope());
+  const credentialScope = () => (props.personalOnly ? "personal" : props.singleUser ? "team" : props.scope ?? tabScope());
   // OAuth extensions without credential fields have no tabs of their own; the OAuth card owns them.
   const oauthScoped = () => !!entry().oauth && entry().personalSecretFields === undefined;
   let scopeInitialized = false;
@@ -449,6 +450,7 @@ export function ExtensionConfigForm(props: {
                   <Show when={!props.personalOnly && ext().personalSecretFields !== undefined} fallback={props.personalOnly ? null : formBody()}>
                     <CredentialScopeTabs
                       value={credentialScope()}
+                      hidePersonal={props.singleUser}
                       teamLocked={!ext().canConfigureTeam}
                       status={scopeStatus()}
                       disabled={saving()}

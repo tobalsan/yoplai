@@ -8,6 +8,7 @@ import { deleteDashboard, fetchDashboards, setDashboardPinned, type DashboardRow
 import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { DashboardListRow } from "../components/DashboardListRow";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { AgentAvatarFill } from "../components/AgentAvatarFill";
 
 /**
  * Dashboards of the local gateway, or of one linked gateway that the page names
@@ -114,9 +115,7 @@ export function Dashboards() {
           <section class="dashboards-group">
             <h3>
               <span class="dashboards-group__avatar" aria-hidden="true">
-                <Show when={avatarOf(group.id)} fallback={group.name.slice(0, 1).toUpperCase()}>
-                  {(avatar) => <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}><img src={avatar()} alt="" /></Show>}
-                </Show>
+                <AgentAvatarFill avatar={avatarOf(group.id)} agentId={group.id} />
               </span>
               {group.name}
             </h3>

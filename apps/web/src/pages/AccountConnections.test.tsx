@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { Suspense, type JSX } from "solid-js";
+import { setCapabilitiesForTests, resetCapabilitiesForTests } from "../lib/capabilities";
+import { PairingApiError } from "../api/connections";
+import { within } from "@testing-library/dom";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 
 const { useSessionMock, fetchPairingsMock, unpairMock, fetchMock } = vi.hoisted(() => ({
@@ -49,6 +52,7 @@ afterEach(() => {
   dispose?.();
   root.remove();
   vi.unstubAllGlobals();
+  resetCapabilitiesForTests();
 });
 
 describe("AccountConnections", () => {
@@ -94,7 +98,7 @@ describe("AccountConnections", () => {
     fetchPairingsMock.mockResolvedValue([]);
     dispose = mountPage();
     await tick();
-    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).toContain("No pairings yet.");
     expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
   });
 
@@ -167,10 +171,11 @@ describe("AccountConnections", () => {
     root.querySelector<HTMLButtonElement>("button")!.click();
     await tick();
     expect(unpairMock).toHaveBeenCalledWith(pairing, undefined);
-    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).toContain("No pairings yet.");
+    expect(root.textContent).not.toContain("Loading linked accounts…");
     await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 10_000 });
     await tick();
-    expect(root.textContent).toContain("No Slack accounts are paired.");
+    expect(root.textContent).toContain("No pairings yet.");
     expect(root.textContent).not.toMatch(/Threadit|Mattermost|!pair/);
   }, 15_000);
 
@@ -223,10 +228,10 @@ describe("AccountConnections", () => {
     let reject!: (cause: Error) => void;
     fetchPairingsMock.mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
     dispose = mountPage();
-    expect(root.textContent).toContain("Loading Slack pairings");
+    expect(root.textContent).toContain("Loading");
     reject(new Error("service unavailable"));
     await tick();
-    expect(root.textContent).toContain("service unavailable");
+    expect(within(root).getByRole("alert").textContent).toBe("service unavailable");
   });
 
   it("clears prior identity data and ignores a late response after account changes", async () => {
@@ -244,5 +249,57 @@ describe("AccountConnections", () => {
     await tick();
     expect(root.textContent).toContain("U2");
     expect(root.textContent).not.toContain("U1");
+  });
+
+  it("shows the Slack section under its own heading", async () => {
+    setCapabilitiesForTests({ multiUser: true });
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockResolvedValue([]);
+    dispose = mountPage();
+    await tick();
+    expect(within(root).getByRole("heading", { level: 1, name: "Pairings" })).toBeTruthy();
+    expect(within(root).getByRole("heading", { level: 2, name: "Slack" })).toBeTruthy();
+    expect(root.textContent).toContain("No pairings yet.");
+  });
+
+  it("shows neutral text for a local single-user gateway", async () => {
+    setCapabilitiesForTests({ multiUser: false });
+    const [session] = createSignal({ data: null, isPending: false });
+    useSessionMock.mockReturnValue(session);
+    dispose = mountPage();
+    await tick();
+    expect(within(root).getByRole("status").textContent).toBe("No pairings on this gateway. It has no multi-user sign-in.");
+    expect(within(root).queryByRole("alert")).toBeNull();
+    expect(fetchPairingsMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [404, "extension_disabled"],
+    [503, "slack_unavailable"],
+    [409, "multi_user_required"],
+  ])("hides the Slack section and keeps the other channel sections for %i %s", async (status, code) => {
+    setCapabilitiesForTests({ multiUser: true });
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockRejectedValue(new PairingApiError("fixed text", status, code));
+    fetchMock.mockResolvedValueOnce(Response.json({ links: [{ id: "alice-link", surface: "threadit", scope: "https://board.example.test", externalId: "31", username: "river", linkedAt: 1704067200000 }] }));
+    dispose = mountPage();
+    await tick();
+    expect(within(root).queryByRole("heading", { level: 2, name: "Slack" })).toBeNull();
+    expect(within(root).queryByRole("alert")).toBeNull();
+    expect(within(root).getByRole("heading", { level: 2, name: "Threadit and Mattermost" })).toBeTruthy();
+    expect(within(root).queryByText("No pairings on this gateway.")).toBeNull();
+  });
+
+  it("keeps another 404 as an error", async () => {
+    setCapabilitiesForTests({ multiUser: true });
+    const [session] = createSignal({ data: { user: { id: "alice" } } });
+    useSessionMock.mockReturnValue(session);
+    fetchPairingsMock.mockRejectedValue(new PairingApiError("Failed to load Slack pairings", 404, "unknown_gateway"));
+    dispose = mountPage();
+    await tick();
+    expect(within(root).getByRole("alert").textContent).toBe("Failed to load Slack pairings");
+    expect(within(root).getByRole("heading", { level: 2, name: "Slack" })).toBeTruthy();
   });
 });

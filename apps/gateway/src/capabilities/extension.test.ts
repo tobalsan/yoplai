@@ -12,7 +12,7 @@ const loadCapabilityCatalog = vi.fn();
 const readMcpServerSources = vi.fn();
 const updateAgentExtensionConfig = vi.fn();
 const mergeMcpServerConfig = vi.fn();
-const reloadExtensions = vi.fn();
+const reconcileExternal = vi.fn();
 const logInfo = vi.fn();
 const getSessionHistory = vi.fn();
 let multiUserEnabled = false;
@@ -35,7 +35,8 @@ vi.mock("../config/validate.js", () => ({
 }));
 vi.mock("../extensions/registry.js", () => ({
   isExtensionLoaded: () => multiUserEnabled,
-  reloadExtensions,
+  reconcileExternal,
+  withExtensionMutation: (run: () => Promise<unknown>) => run(),
 }));
 vi.mock("../logging.js", () => ({ logInfo }));
 vi.mock("../agents/index.js", () => ({ getSessionHistory }));
@@ -341,7 +342,7 @@ describe("capability discovery tools", () => {
       "sheets",
       { enabled: true }
     );
-    expect(reloadExtensions).toHaveBeenCalledWith(config);
+    expect(reconcileExternal).toHaveBeenCalledWith(config);
     expect(logInfo).toHaveBeenCalledWith(
       "capability_enable",
       expect.objectContaining({
@@ -396,7 +397,7 @@ describe("capability discovery tools", () => {
       "mcp",
       { enabled: true }
     );
-    expect(reloadExtensions).toHaveBeenCalledWith(config);
+    expect(reconcileExternal).toHaveBeenCalledWith(config);
   });
 
   it("logs a capability_enable outcome for a refused enable too", async () => {
@@ -522,7 +523,7 @@ describe("multi-user capability self-enable", () => {
       getPoolAgentIds: () => poolAgentIds,
     } as MultiUserRuntime);
     updateAgentExtensionConfig.mockClear();
-    reloadExtensions.mockClear();
+    reconcileExternal.mockClear();
     loadCapabilityCatalog.mockResolvedValue([
       {
         id: "sheets",
@@ -568,8 +569,8 @@ describe("multi-user capability self-enable", () => {
     expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
       "/tmp/support", "sheets", { enabled: true }
     );
-    expect(reloadExtensions).toHaveBeenCalledTimes(1);
-    expect(reloadExtensions).toHaveBeenCalledWith(config);
+    expect(reconcileExternal).toHaveBeenCalledTimes(1);
+    expect(reconcileExternal).toHaveBeenCalledWith(config);
   });
 
   it("refuses a no-pool Private legacy fork for a non-member", async () => {
@@ -595,7 +596,7 @@ describe("multi-user capability self-enable", () => {
       reason: "You are not allowed to configure this agent.",
     });
     expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
-    expect(reloadExtensions).not.toHaveBeenCalled();
+    expect(reconcileExternal).not.toHaveBeenCalled();
   });
 
   it("keeps refusing a pooled Private fork for a non-member", async () => {
@@ -622,6 +623,6 @@ describe("multi-user capability self-enable", () => {
       reason: "You are not allowed to configure this agent.",
     });
     expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
-    expect(reloadExtensions).not.toHaveBeenCalled();
+    expect(reconcileExternal).not.toHaveBeenCalled();
   });
 });

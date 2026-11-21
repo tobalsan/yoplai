@@ -7,10 +7,12 @@ allowBuilds:
   'human-chat@git+https://github.com/agentropie/human-chat.git': true
   '@google/genai': true
   better-sqlite3: true
+  electron: true
   esbuild: true
   koffi: true
   protobufjs: true
   tesseract.js: true
+  electron-winstaller: false
 minimumReleaseAgeExclude:
   - '@earendil-works/pi-agent-core@0.80.6'
   - '@earendil-works/pi-ai@0.80.6'
@@ -22,3 +24,5 @@ overrides:
   # @better-auth/api-key only declares a caret peer range, which lets
   # pnpm hoist a newer minor whose internals no longer match.
   '@better-auth/core': 1.6.30
+patchedDependencies:
+  '@earendil-works/pi-coding-agent@1.5.2': patches/@earendil-works__pi-coding-agent@1.5.2.patch

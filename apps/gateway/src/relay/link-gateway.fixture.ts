@@ -6,6 +6,7 @@ import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 const home = process.env.FIXTURE_HOME ?? "";
 const port = Number(process.env.FIXTURE_PORT);
+const catalogUrl = process.env.FIXTURE_CATALOG_URL;
 const remote = process.env.FIXTURE_MODE === "remote";
 process.env.YOPLAI_HOME = path.join(home, ".yoplai");
 process.env.HOME = home;
@@ -13,9 +14,10 @@ process.env.HOME = home;
 await writeTestV3Config(process.env.YOPLAI_HOME, {
   agents: [{ id: "pom" }],
   ...(remote
-    ? { extensions: { multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "synthetic-link-session-secret-32chars!" } } }
+    ? { extensions: { sample: { enabled: true }, multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "synthetic-link-session-secret-32chars!" } } }
     : {}),
   extraConfig: {
+    ...(catalogUrl ? { extensionCatalog: { url: catalogUrl } } : {}),
     gateway: { port, host: "127.0.0.1" },
     server: { baseUrl: `http://127.0.0.1:${port}` },
     ui: { enabled: false, port: port + 1 },

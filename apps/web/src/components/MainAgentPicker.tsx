@@ -5,10 +5,11 @@ import { fetchAgentSessions } from "../api/chat";
 import { showToast } from "../lib/toast";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 function Avatar(props: { agent: Agent }) {
   return (
-    <Show when={props.agent.avatar} fallback={<span>{props.agent.name.slice(0, 1)}</span>}>
+    <Show when={props.agent.avatar} fallback={<img src={defaultAvatarUrl(props.agent.id)} alt="" />}>
       {(avatar) => /^\p{Emoji}/u.test(avatar()) && avatar().length <= 4
         ? <span>{avatar()}</span>
         : <img src={avatar()} alt="" />}

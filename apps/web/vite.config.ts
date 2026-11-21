@@ -7,14 +7,7 @@ import {
   resolveConfigPath,
 } from "../../packages/shared/src/config-path.js";
 import { resolveBindHost } from "../../packages/shared/src/network.js";
-import {
-  DASHBOARD_VIEW_NAMESPACE,
-  LINK_NAMESPACE,
-  REMOTE_LINK_NAMESPACE,
-  ownsDashboardViewPath,
-  ownsRedactedPath,
-  ownsRemoteLinkPath,
-} from "../../packages/shared/src/secret-paths.js";
+import { redactedTarget } from "../../packages/shared/src/secret-paths.js";
 
 type BindMode = "loopback" | "lan" | "tailnet";
 
@@ -117,7 +110,9 @@ const tailscaleServe = !isDevMode && uiConfig.tailscale?.mode === "serve";
 
 // When using tailscale serve, bind to localhost so tailscale can proxy to it
 // Otherwise, use the configured bind mode
-const host = tailscaleServe ? "127.0.0.1" : resolveHost(uiConfig.bind);
+// YOPLAI_UI_HOST (set by the desktop shell) overrides both.
+const host =
+  readEnv("UI_HOST") ?? (tailscaleServe ? "127.0.0.1" : resolveHost(uiConfig.bind));
 
 // Get MagicDNS hostname for allowed hosts when using tailscale serve
 const tailnetHostname = tailscaleServe ? getTailnetHostname() : null;
@@ -134,7 +129,10 @@ const hmrHostOverride = readEnv("HMR_HOST");
 
 // Resolve gateway target for proxy
 // In dev mode, use YOPLAI_GATEWAY_PORT from orchestrator
-const gatewayBindHost = gatewayConfig.host ?? resolveHost(gatewayConfig.bind);
+const gatewayBindHost =
+  readEnv("GATEWAY_HOST") ??
+  gatewayConfig.host ??
+  resolveHost(gatewayConfig.bind);
 // The proxy connects (not listens), so 0.0.0.0 isn't a valid destination on
 // macOS — rewrite to loopback. The gateway still listens on all interfaces.
 const gatewayHost =
@@ -148,7 +146,6 @@ const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 // attempt ID, and the remote link paths hold request IDs that a stray request can pair with a verifier or a code.
 // Vite's default proxy error log prints the request URL, so the handler below replaces it first. The path tests
 // are the ones that the gateway uses for its own log.
-const pathOf = (url: string | undefined) => (url ?? "").split("?")[0];
 
 // In dev mode, always use root path (no /yoplai prefix)
 const base = tailscaleServe ? "/yoplai" : "/";
@@ -176,19 +173,14 @@ export default defineConfig({
         // Vite registers its own error listener after this one, and it logs `req.url`.
         configure: (proxy) => {
           proxy.on("error", (_error, request) => {
-            const path = pathOf(request.url);
-            if (ownsDashboardViewPath(path)) {
-              request.url = `${DASHBOARD_VIEW_NAMESPACE}/[redacted]`;
-            } else if (ownsRedactedPath(path, LINK_NAMESPACE)) {
-              request.url = `${LINK_NAMESPACE}/[redacted]`;
-            } else if (ownsRemoteLinkPath(path)) {
-              request.url = `${REMOTE_LINK_NAMESPACE}/[redacted]`;
-            }
+            const target = redactedTarget(request.url);
+            if (target) request.url = target;
           });
         },
       },
       "/ws": {
         target: gatewayTarget,
+        changeOrigin: true,
         ws: true,
         xfwd: true,
       },

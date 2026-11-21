@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, getByRole, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
+import { ToolbarOnlyShell } from "./ChatView.test-shell";
 import { TurnNotifier } from "./TurnNotifier";
 import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
@@ -12,6 +13,8 @@ import type { FullHistoryMessage } from "../api/types";
 import type { McpAppFile } from "@yoplai/shared/types";
 import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -213,7 +216,7 @@ const mountedViews = new Set<() => void>();
 function renderView() {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const stop = render(() => <ChatView />, container);
+  const stop = render(() => <ChatView shell={ToolbarOnlyShell} />, container);
   const dispose = () => { mountedViews.delete(dispose); stop(); };
   mountedViews.add(dispose);
   return { container, dispose };
@@ -232,7 +235,7 @@ describe("ChatView abort handling", () => {
     sessionStorage.clear();
     delegateEvents(["click", "input", "keydown"]);
     Element.prototype.scrollIntoView = vi.fn();
-    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     URL.createObjectURL = vi.fn(() => "blob:preview");
     URL.revokeObjectURL = vi.fn();
 
@@ -311,6 +314,11 @@ describe("ChatView abort handling", () => {
     resetCapabilitiesForTests();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("names the online status dot", async () => {
+    const { container } = renderView();
+    await waitFor(() => expect(getByRole(container, "img", { name: "Online" })).toBeTruthy());
   });
 
   it("starts fresh before opening a dashboard and keeps it through the first message and session resolution", async () => {
@@ -1030,7 +1038,7 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByText(container, "A remote agent wants to write a file on this device")).not.toBeNull());
       expect(queryByText(container, "/tmp/a.txt")).not.toBeNull();
       expect(queryByText(container, "<img src=x onerror=alert(1)>")).not.toBeNull();
-      expect(queryByRole(container, "img")).toBeNull();
+      expect(queryByRole(getByRole(container, "region", { name: "A remote agent wants to write a file on this device" }), "img")).toBeNull();
       dispose();
     });
 
@@ -1856,6 +1864,15 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("shows the default avatar of an agent with no avatar in both the header and the hero", async () => {
+    fetchAgentSuggestionsMock.mockResolvedValue([]);
+    const { container, dispose } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
+    // The header and the hero each show one image of the same agent.
+    await waitFor(() => expect(defaultAvatarSources(container)).toEqual([defaultAvatarUrl("agent-1"), defaultAvatarUrl("agent-1")]));
+    dispose();
+  });
+
   it("refreshes suggestions for a new session with the same agent", async () => {
     fetchAgentSuggestionsMock
       .mockResolvedValueOnce([{ title: "First", prompt: "First prompt" }])
@@ -2203,16 +2220,23 @@ describe("ChatView abort handling", () => {
     });
   });
 
-  it("shows context usage even before any model usage is available", async () => {
-    const { container, dispose } = renderView();
+  it("hides the context ring without usage data", async () => {
+    const { container } = renderView();
     await tick();
     await tick();
+    expect(queryByRole(container, "button", { name: /tokens, \d+%/ })).toBeNull();
+  });
 
-    expect(container.querySelector(".context-usage")?.textContent).toContain(
-      "0% context used"
-    );
-
-    dispose();
+  it.each(["simple", "full"])("shows measured zero context usage in %s view", async (view) => {
+    routeState.view = view;
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [],
+      activeContextUsage: { inputTokens: 0, model: "gpt-5.2" },
+      isStreaming: false,
+      activeTurn: null,
+    });
+    const { container } = renderView();
+    await waitFor(() => expect(getByRole(container, "button", { name: "0 / 128,000 tokens, 0%" })).toBeTruthy());
   });
 
   it("shows cached input tokens in full model metadata", async () => {
@@ -2539,7 +2563,7 @@ describe("ChatView abort handling", () => {
       activeContextUsage: { inputTokens: 0, model: "gpt-5" },
     });
     const { container, dispose } = renderView();
-    await waitFor(() => expect(container.textContent).toContain("0% context used"));
+    await waitFor(() => expect(getByRole(container, "button", { name: "0 / 200,000 tokens, 0%" })).toBeTruthy());
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
     textarea.value = "new turn";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
@@ -2803,12 +2827,7 @@ describe("ChatView abort handling", () => {
       expect.any(Object)
     );
     await waitFor(() =>
-      expect(container.querySelector(".context-usage")?.textContent).toContain(
-        "0% context used"
-      )
-    );
-    expect(container.querySelector(".context-usage")?.className).not.toContain(
-      "danger"
+      expect(queryByRole(container, "button", { name: /tokens, \d+%/ })).toBeNull()
     );
     expect(container.textContent).toContain("Context compacted.");
 
@@ -3018,7 +3037,7 @@ describe("ChatView abort handling", () => {
     });
 
     const { container, dispose } = renderView();
-    await waitFor(() => expect(container.textContent).toContain("~80% context used"));
+    await waitFor(() => expect(getByRole(container, "button", { name: "102,400 / 128,000 tokens, 80%" })).toBeTruthy());
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
     textarea.value = "Continue the conversation";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
@@ -3183,9 +3202,7 @@ describe("ChatView abort handling", () => {
     onDone?.();
     subscriptionCallbacks?.onHistoryUpdated?.();
     await waitFor(() =>
-      expect(container.querySelector(".context-usage")?.textContent).toContain(
-        "~80% context used"
-      )
+      expect(getByRole(container, "button", { name: "102,400 / 128,000 tokens, 80%" })).toBeTruthy()
     );
 
     dispose();

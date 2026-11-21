@@ -5,7 +5,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: [".agents/**", "**/dist/**", "**/node_modules/**"],
+    ignores: [".agents/**", "**/dist/**", "**/node_modules/**", "apps/desktop/build/**", "apps/desktop/release/**"],
   },
   {
     files: ["**/*.mjs"],

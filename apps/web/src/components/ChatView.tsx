@@ -1,7 +1,13 @@
+import { stripBase } from "../lib/path";
+import { createFirstChat } from "../desktop-setup/first-chat";
+import { setupRepairHref } from "../desktop-setup/repair";
+import { useOptionalSetup } from "../desktop-setup/SetupGate";
 import type { McpAppViewReference } from "@yoplai/shared/types";
 import { decodeRouteParam } from "../lib/path";
 import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
+import { ChatToolbarOverflow } from "./chat/ChatToolbarOverflow";
+import { ContextUsageRing } from "./chat/ContextUsageRing";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
 import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
@@ -25,6 +31,7 @@ import {
   untrack,
 } from "solid-js";
 
+import type { Component, JSX } from "solid-js";
 import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { ScheduleAlertsBanner } from "./ScheduleAlertsBanner";
@@ -56,11 +63,13 @@ import { impersonationStatus } from "./ImpersonationBanner";
 import { SuggestionCards } from "./SuggestionCards";
 import { showToast } from "../lib/toast";
 import { ChatSettingsMenu } from "./ChatSettingsMenu";
+import { Button } from "./ui/Button";
 import { fetchPoolActions } from "../api/teams";
 import {
   notificationSoundEnabled,
   toggleNotificationSound,
 } from "../lib/chat-notifications";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -108,7 +117,7 @@ type DropZone = "history" | "composer" | "attach";
 
 export { ThinkingLine } from "./chat/ChatBlocks";
 
-export function ChatView() {
+export function ChatView(props: { children?: JSX.Element; shell: Component<{ toolbar: JSX.Element; children: JSX.Element }> }) {
   const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
   const handleCodeCopy = (event: MouseEvent) => {
@@ -318,9 +327,21 @@ export function ChatView() {
   const {
     simpleMessages, fullMessages, streamingBlocks, streamingText, streamingFiles,
     activeTools, isStreaming, loading, stopping, pendingQueuedMessages,
-    contextUsageDisplay, isContextUsageDanger, contextWarning, thinkingLevel,
+    contextUsage, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
+  const setup = useOptionalSetup();
+  const firstChat = createFirstChat({
+    agentId: () => params.agentId, sessionId: explicitSessionId, chat: session,
+    ready: () => !!agent() && session.historyLoaded()?.scope === currentSession() && !loading(),
+  });
+  const missingModel = () => {
+    const current = agent();
+    const models = setup?.models();
+    return current && !current.gateway && current.model && models && !models.some((model) =>
+      model.provider === current.model?.provider && model.model === current.model.model);
+  };
+  const repairModel = () => setupRepairHref("model", stripBase(location.pathname) + location.search);
   const [panelStorageReady, setPanelStorageReady] = createSignal(false);
   const initialPanelScope = currentSession();
   const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession, {
@@ -763,20 +784,8 @@ export function ChatView() {
     prefillSuggestion(message);
   });
 
-  return (
-    <DashboardAnnotationsContext.Provider value={annotations}>
-    <div
-      ref={chatViewRef}
-      class="chat-view"
-      onClick={handleCodeCopy}
-      classList={{
-        "drop-active": isFileDragActive(),
-        "hero-mode": heroPhase() !== "off",
-        "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
-      }}
-    >
-      <div class="chat-main">
-      <header class="header">
+  const toolbar = () => (
+      <div class="chat-toolbar">
         <A
           href={projectId() ? `/p/${projectId()}` : "/agents"}
           class="back-btn"
@@ -796,20 +805,28 @@ export function ChatView() {
           </svg>
         </A>
         <div class="agent-info">
-          <Show when={agent()?.avatar}>
-            {(avatar) => (
-              <div class="agent-avatar">
-                {isEmoji(avatar()) ? (
-                  <span class="avatar-emoji">{avatar()}</span>
-                ) : (
-                  <img src={avatar()} alt={agent()?.name} class="avatar-img" />
-                )}
-              </div>
-            )}
-          </Show>
+          <div class="agent-avatar">
+            <Show
+              when={agent()?.avatar}
+              fallback={<img src={defaultAvatarUrl(params.agentId)} alt="" class="avatar-img" />}
+            >
+              {(avatar) => isEmoji(avatar()) ? (
+                <span class="avatar-emoji">{avatar()}</span>
+              ) : (
+                <img src={avatar()} alt={agent()?.name} class="avatar-img" />
+              )}
+            </Show>
+          </div>
           <div class="agent-info-text">
             <div class="agent-title-row">
               <div class="agent-name">{agent()?.name ?? "Loading..."}<RemoteAgentMark gateway={agent()?.gateway} /></div>
+              <span
+                class="status-dot"
+                classList={{ active: isStreaming() }}
+                role="img"
+                aria-label={isStreaming() ? "Thinking" : "Online"}
+                title={isStreaming() ? "Thinking" : "Online"}
+              />
               <Show when={project()}>
                 {(proj) => (
                   <A href={`/p/${projectId()}`} class="chat-project-chip">
@@ -819,18 +836,9 @@ export function ChatView() {
                 )}
               </Show>
             </div>
-            <div class="agent-status">
-              <span class="status-dot" classList={{ active: isStreaming() }} />
-              <span class="status-text">
-                {isStreaming() ? "thinking" : "online"}
-              </span>
-              <Show when={agent()?.description}>
-                <span class="agent-description-sep">&middot;</span>
-                <span class="agent-description-inline">
-                  {agent()!.description}
-                </span>
-              </Show>
-            </div>
+            <Show when={agent()?.description}>
+              <span class="agent-description-inline">{agent()!.description}</span>
+            </Show>
           </div>
           <button
             type="button"
@@ -845,65 +853,71 @@ export function ChatView() {
             <i class={notificationSoundEnabled() ? "fa-solid fa-bell" : "fa-solid fa-bell-slash"} aria-hidden="true" />
           </button>
         </div>
-        <Show when={isExtensionEnabled("projects")}>
-          <A
-            class="taskboard-btn"
-            href="/projects"
-            aria-label="Open taskboard"
-            title="Tasks"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-            </svg>
-          </A>
-        </Show>
-        <Show when={isOAuth() && canUseFullView()}>
-          <select
-            class="think-dropdown"
-            value={thinkingLevel() ?? ""}
-            onChange={(e) => {
-              const val = e.currentTarget.value;
-              session.selectThinking(val ? (val as ThinkLevel) : null);
-            }}
-          >
-            <option value="">Default</option>
-            <option value="off">Off</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">XHigh</option>
-          </select>
-        </Show>
-        <Show when={canUseFullView()}>
-          <div class="view-toggle">
-            <button
-              class="toggle-btn"
-              classList={{ active: viewMode() === "simple" }}
-              onClick={() => handleViewChange("simple")}
-            >
-              Simple
-            </button>
-            <button
-              class="toggle-btn"
-              classList={{ active: viewMode() === "full" }}
-              onClick={() => handleViewChange("full")}
-            >
-              Full
-            </button>
-          </div>
-        </Show>
-        <Show when={agent()?.gateway}>
-          {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
+        <Show when={isExtensionEnabled("projects") || canUseFullView() || agent()?.gateway}>
+          <ChatToolbarOverflow>
+            <Show when={isExtensionEnabled("projects")}>
+              <A
+                class="taskboard-btn"
+                href="/projects"
+                aria-label="Open taskboard"
+                title="Tasks"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M9 11l3 3L22 4" />
+                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+                </svg>
+                <span class="chat-overflow-label">Open taskboard</span>
+              </A>
+            </Show>
+            <Show when={isOAuth() && canUseFullView()}>
+              <select
+                class="think-dropdown"
+                aria-label="Thinking level"
+                value={thinkingLevel() ?? ""}
+                onChange={(e) => {
+                  const val = e.currentTarget.value;
+                  session.selectThinking(val ? (val as ThinkLevel) : null);
+                }}
+              >
+                <option value="">Default</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">XHigh</option>
+              </select>
+            </Show>
+            <Show when={canUseFullView()}>
+              <div class="view-toggle">
+                <button
+                  class="toggle-btn"
+                  classList={{ active: viewMode() === "simple" }}
+                  onClick={() => handleViewChange("simple")}
+                >
+                  Simple
+                </button>
+                <button
+                  class="toggle-btn"
+                  classList={{ active: viewMode() === "full" }}
+                  onClick={() => handleViewChange("full")}
+                >
+                  Full
+                </button>
+              </div>
+            </Show>
+            <Show when={agent()?.gateway}>
+              {(gateway) => <DeviceSettingsControl agentId={params.agentId} gateway={gateway()} chat={session.deviceChatName()} refreshKey={session.deviceApprovals().length} />}
+            </Show>
+          </ChatToolbarOverflow>
         </Show>
         <button
           class="new-chat-btn"
@@ -926,8 +940,29 @@ export function ChatView() {
           <span class="new-chat-label">New chat</span>
         </button>
         <ChatSettingsMenu agentId={params.agentId} settingsAgentId={settingsAgentId()} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
-      </header>
+      </div>
+  );
 
+  const body = () => (
+    <div
+      ref={chatViewRef}
+      class="chat-view"
+      onClick={handleCodeCopy}
+      classList={{
+        "drop-active": isFileDragActive(),
+        "hero-mode": heroPhase() !== "off",
+        "hero-sent": heroPhase() === "exiting" || heroPhase() === "off",
+      }}
+    >
+      <div class="chat-main">
+      <Show when={firstChat.failed() || missingModel()}>
+        <div class="desktop-chat-repair">
+          <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
+          <Show when={firstChat.failed()}><Button onClick={() => void firstChat.retry()}>Try again</Button></Show>
+          <Button onClick={() => navigate(repairModel())}>Fix model access</Button>
+        </div>
+      </Show>
+      <Show when={firstChat.readError()}><p role="status">Yoplai could not check the first turn. Yoplai will try again.</p></Show>
       <ArchivedSessionBanner
         isArchived={isSessionArchived()}
         onRestore={async () => { await session.restoreArchived(); }}
@@ -935,16 +970,14 @@ export function ChatView() {
 
       <ScheduleAlertsBanner agentId={params.agentId} gateway={chatGateway()} schedulesAgentId={settingsAgentId() ?? undefined} />
 
-      <div class="chat-body">
+      <div class="chat-body" role="region" aria-label="Chat transcript">
         <div class="hero-spacer hero-spacer-top" />
         <div class="hero hero-collapsible" classList={{ gone: heroGone() }}>
           <Show
             when={agent()?.avatar}
             fallback={
               <div class="hero-avatar">
-                <span class="avatar-emoji">
-                  {agent()?.name?.[0]?.toUpperCase() ?? "A"}
-                </span>
+                <img src={defaultAvatarUrl(params.agentId)} alt="" class="avatar-img" />
               </div>
             }
           >
@@ -1121,6 +1154,9 @@ export function ChatView() {
             onPaste={handlePaste}
             rows={1}
           />
+          <Show when={contextUsage()}>
+            {(usage) => <ContextUsageRing inputTokens={usage().inputTokens} maxTokens={usage().maxTokens} />}
+          </Show>
           <Show
             when={isStreaming()}
           fallback={
@@ -1196,19 +1232,6 @@ export function ChatView() {
         <div class="hero-spacer hero-spacer-bottom" />
       </div>
 
-      <Show when={contextUsageDisplay()}>
-        {(display) => (
-          <div
-            class="context-usage"
-            classList={{
-              unavailable: display().unavailable,
-              danger: isContextUsageDanger(),
-            }}
-          >
-            {display().text}
-          </div>
-        )}
-      </Show>
       <Show when={contextWarning()}>
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>
@@ -1221,6 +1244,12 @@ export function ChatView() {
 
       <style>{chatViewStyles}</style>
     </div>
+  );
+
+  const Shell = props.shell;
+  return (
+    <DashboardAnnotationsContext.Provider value={annotations}>
+      <Shell toolbar={toolbar()}>{body()}</Shell>
     </DashboardAnnotationsContext.Provider>
   );
 }

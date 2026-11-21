@@ -239,7 +239,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
     const authContext = getRequestAuthContext(c);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
-    const { forks, teams, membership, notifyAgentListChanged } = getRuntimeOrThrow();
+    const { forks, teams, membership, reloadConfig, notifyAgentListChanged } = getRuntimeOrThrow();
     if (parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
       return c.json({ error: "Team not found" }, 404);
     }
@@ -258,6 +258,7 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     try {
       const before = existing ? { assignment: existing.assignment } : {};
       const fork = forks.setTeams(poolId, assignment, authContext.user.id);
+      if (!existing) await reloadConfig?.();
       recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
       notifyAgentListChanged?.();
       return c.json({ fork });

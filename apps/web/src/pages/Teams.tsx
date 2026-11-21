@@ -33,6 +33,7 @@ import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { teamRemovalWarning } from "../lib/team-removal";
 import { useSession } from "../auth/client";
 import { hasStaffRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 // Curated palette + Font Awesome icons for the pickers. Both are optional; the
 // backend supplies grey / fa-users defaults when left unset.
@@ -666,7 +667,7 @@ function TeamDetail(props: {
                       return (
                       <li class="team-detail__row">
                         <span class="team-detail__avatar" aria-hidden="true">
-                          <Show when={agent()?.avatar} fallback={<i class="fa-solid fa-robot" />}>
+                          <Show when={agent()?.avatar} fallback={<img src={defaultAvatarUrl(fork.sourcePoolId)} alt="" />}>
                             {(avatar) => isEmoji(avatar()) ? <span>{avatar()}</span> : <img src={avatar()} alt="" />}
                           </Show>
                         </span>

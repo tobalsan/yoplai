@@ -57,10 +57,15 @@ The suggestions.yaml file is the owner-curated list of starting prompts shown in
 `,
 };
 
-const TEMPLATE_DIR = path.resolve(
+const REPO_TEMPLATE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../../docs/templates"
 );
+
+/** The packaged app ships the templates outside the repo and points here with YOPLAI_TEMPLATES_DIR. */
+function templateDir(): string {
+  return process.env.YOPLAI_TEMPLATES_DIR?.trim() || REPO_TEMPLATE_DIR;
+}
 
 function stripFrontMatter(content: string): string {
   if (!content.startsWith("---")) return content;
@@ -71,7 +76,7 @@ function stripFrontMatter(content: string): string {
 
 async function loadTemplate(name: CoreFileName): Promise<string> {
   try {
-    const content = await fs.readFile(path.join(TEMPLATE_DIR, name), "utf-8");
+    const content = await fs.readFile(path.join(templateDir(), name), "utf-8");
     return stripFrontMatter(content);
   } catch {
     return FALLBACK_TEMPLATES[name];

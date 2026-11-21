@@ -19,6 +19,7 @@ import { Modal } from "../components/ui/Modal";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Button } from "../components/ui/Button";
 import { renderMarkdown } from "../lib/markdown";
+import { AgentAvatarFill } from "../components/AgentAvatarFill";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -433,13 +434,7 @@ export function ChatProject() {
                       <li>
                         <A href={`/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`} class="project-chat-row">
                           <span class="project-chat-avatar">
-                            <Show when={session.avatar} fallback={session.agentId[0]?.toUpperCase()}>
-                              {(avatar) => (
-                                <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}>
-                                  <img src={avatar()} alt="" />
-                                </Show>
-                              )}
-                            </Show>
+                            <AgentAvatarFill avatar={session.avatar} agentId={session.agentId} />
                           </span>
                           <div class="project-chat-main">
                             <div class="project-chat-title">{session.title || session.firstUserMessage || "New chat"}</div>
@@ -687,13 +682,7 @@ export function ChatProject() {
                 }}
               >
                 <span class="agent-picker-avatar">
-                  <Show when={agent.avatar} fallback={agent.id[0]?.toUpperCase()}>
-                    {(avatar) => (
-                      <Show when={avatar().startsWith("/") || /^https?:\/\//i.test(avatar())} fallback={avatar()}>
-                        <img src={avatar()} alt="" />
-                      </Show>
-                    )}
-                  </Show>
+                  <AgentAvatarFill avatar={agent.avatar} agentId={agent.id} />
                 </span>
                 <div class="agent-picker-main">
                   <div class="agent-picker-name">{agent.name || agent.id}<RemoteAgentMark gateway={agent.gateway} /></div>

@@ -29,13 +29,17 @@ export default function AdminMcpServersPage() {
   // Local keeps its old behavior: the gateway refuses what the role may not do. A gateway is read-only
   // until its requester is known, and a remote multi-user gateway allows only its superadmin.
   const canWrite = () => gateway() === undefined || (requester().ready && !requester().unknown && (!requester().multiUser || requester().isSuperadmin));
+  // The catalog needs the mcp extension on the gateway. A failed capability read is not "not installed".
+  const capabilityKnown = () => choice.ready() && requester().ready && !requester().unknown;
+  const mcpOn = () => capabilityKnown() && requester().isExtensionEnabled("mcp");
+  const mcpOff = () => capabilityKnown() && !requester().isExtensionEnabled("mcp");
   const [result, { mutate, refetch }] = createResource(
-    createResourceKey(() => (choice.ready() ? { gateway: gateway() } : null)),
+    createResourceKey(() => (mcpOn() ? { gateway: gateway() } : null)),
     async (key): Promise<{ key: string; servers: McpCatalogServer[] }> => ({ key: gatewayKey(key.gateway), servers: await fetchMcpCatalog(key.gateway) })
   );
   // The catalog of another gateway is never current data. Server names repeat across gateways.
   const servers = createMemo<McpCatalogServer[] | undefined>(() => {
-    if (result.error || !choice.ready()) return undefined;
+    if (result.error || !choice.ready() || !mcpOn()) return undefined;
     // `latest` keeps the last data while a read runs, and it does not suspend the page.
     const value = result.latest;
     return value?.key === gatewayKey(gateway()) ? value.servers : undefined;
@@ -168,18 +172,23 @@ export default function AdminMcpServersPage() {
     >
       <GatewaySelect value={choice.chosen()} names={choice.names()} onChange={choice.choose} />
       <Show when={missing()}>{(selection) => <p class="mcps-error" role="alert">{missingGatewayText(selection())}</p>}</Show>
-      <Show when={gateway() !== undefined && requester().ready && requester().unknown}>
-        <RequesterFailure requester={requester} class="mcps-error">Could not read your permissions on {gateway()}. The controls stay off.</RequesterFailure>
+      <Show when={choice.ready() && requester().ready && requester().unknown}>
+        <RequesterFailure requester={requester} class="mcps-error">Could not read your permissions on {gateway() ?? "this gateway"}. The controls stay off.</RequesterFailure>
       </Show>
       <Show when={gateway() !== undefined && requester().ready && !requester().unknown && requester().multiUser && !requester().isSuperadmin}>
         <p class="mcps-empty" role="status">Only the superadmin of {gateway()} can change this catalog.</p>
       </Show>
+      <Show when={mcpOff()}>
+        <p class="mcps-empty" role="status">The MCP extension is not installed on this gateway.</p>
+      </Show>
+      <Show when={mcpOn()}>
       <form class="mcps-add" onSubmit={add}>
         <input type="url" required aria-label="Server URL" placeholder="https://mcp.example.com/mcp" value={url()} onInput={(event) => setUrl(event.currentTarget.value)} />
         <input type="text" maxLength={100} aria-label="Name (optional)" placeholder="Display name, e.g. Atlassian" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
         <input type="text" maxLength={500} aria-label="Description (optional)" placeholder="What this server gives agents access to" value={description()} onInput={(event) => setDescription(event.currentTarget.value)} />
         <button type="submit" disabled={writeOff() || !choice.ready()}>Add server</button>
       </form>
+      </Show>
       <Show when={error()}>{(text) => <p class="mcps-error" role="alert">{text()}</p>}</Show>
       <Show when={listUnknown()}>
         <p class="mcps-error" role="alert">The server list could not be read after the error, and the change may have happened. Read the list before you change it again. <button type="button" disabled={busy()} onClick={() => void retryRead()}>Read list</button></p>

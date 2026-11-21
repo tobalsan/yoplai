@@ -1,3 +1,4 @@
+import { releaseCatalogChanged } from "../api/release-catalog";
 import { decodeRouteParam } from "../lib/path";
 import {
   createComputed,
@@ -49,6 +50,7 @@ import { DashboardAccessDialog } from "../components/DashboardAccessDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { teamRemovalWarning } from "../lib/team-removal";
 import { usePrivateItemsVisibility, visibleDashboards } from "../lib/private-items";
+import { defaultAvatarUrl } from "../lib/default-avatar";
 
 const DUPLICATE_MCP_MESSAGE = "This MCP server has already been added.";
 
@@ -336,9 +338,18 @@ export function EditAgent() {
     }),
     (key) => fetchAgentExtensions(key.id, key.gateway)
   );
+  const refreshInstalled = (event: Event) => {
+    if (event instanceof CustomEvent && (event.detail ?? undefined) === gateway()) void refetchExtensions();
+  };
+  window.addEventListener(releaseCatalogChanged, refreshInstalled);
+  onCleanup(() => window.removeEventListener(releaseCatalogChanged, refreshInstalled));
   const extensionCatalog = () => extensions.error ? [] : extensions() ?? [];
+  // Without the mcp extension on the gateway, the page reads no MCP servers and shows no MCP control.
+  const mcpAvailable = () => requester().isExtensionEnabled("mcp");
+  // A known single-user gateway has no personal connections.
+  const singleUser = () => requester().ready && !requester().unknown && !requester().multiUser;
   const [mcpServers, { refetch: refetchMcpServers }] = createResource(
-    agentKey,
+    createResourceKey(() => (mcpAvailable() ? agentKey() : null)),
     async (key) => ({ agentId: key.id, gateway: key.gateway, list: await fetchMcpServersFast(key.id, undefined, key.gateway) })
   );
   const mcpStatus = createMemo(() => {
@@ -671,7 +682,7 @@ export function EditAgent() {
         <Show when={agent()}>
           {(current) => (
             <div class="edit-agent-header">
-              <Show when={current().avatar}>
+              <Show when={current().avatar} fallback={<div class="edit-agent-avatar"><img src={defaultAvatarUrl(params.agentId)} alt={current().name} class="avatar-img" /></div>}>
                 {(avatar) => (
                   <div class="edit-agent-avatar">
                     {isEmoji(avatar()) ? (
@@ -803,10 +814,13 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "extensions"}>
+          <Show when={singleUser() || isSuperadmin()}>
+            <A href={gateway() === undefined ? "/admin/extensions" : `/admin/extensions?gateway=${encodeURIComponent(gateway()!)}`}>Browse the catalog</A>
+          </Show>
           <section class="edit-agent-extensions">
             <div class="edit-agent-ext-head">
               <h2 class="edit-agent-section-title">Extensions</h2>
-              <Show when={canConfigureMcpTeam()}>
+              <Show when={mcpAvailable() && canConfigureMcpTeam()}>
                 <button type="button" class="mcp-ext-add-button" disabled={!dashboardAgentId()} title={!dashboardAgentId() ? "An agent fork is required first" : undefined} onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
               </Show>
             </div>
@@ -821,17 +835,19 @@ export function EditAgent() {
             <Show when={mcpAddedToast()}>
               {(toast) => <ToastNotification message={toast().message} variant={toast().variant} onClose={() => setMcpAddedToast(undefined)} />}
             </Show>
-            <Show when={addOpen() && canConfigureMcpTeam()}>
+            <Show when={addOpen() && mcpAvailable() && canConfigureMcpTeam()}>
               <div class="mcp-ext-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !mcpBusy()) setAddOpen(false); }}>
                 <div role="dialog" aria-modal="true" aria-labelledby="mcp-add-title" class="mcp-ext-dialog">
                   <form onSubmit={(event) => void addCustomExtension(event)}>
                     <h2 id="mcp-add-title">Add custom extension</h2>
                     <label>MCP server URL<input type="url" required placeholder="https://example.com/mcp" value={mcpUrl()} onInput={(event) => setMcpUrl(event.currentTarget.value)} /></label>
-                    <fieldset>
-                      <legend>Connection</legend>
-                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!requester().user} onChange={() => setMcpScope("personal")} /> Just me</label>
-                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} onChange={() => setMcpScope("team")} /> Whole team</label>
-                    </fieldset>
+                    <Show when={!singleUser()}>
+                      <fieldset>
+                        <legend>Connection</legend>
+                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!requester().user} onChange={() => setMcpScope("personal")} /> Just me</label>
+                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} onChange={() => setMcpScope("team")} /> Whole team</label>
+                      </fieldset>
+                    </Show>
                     <Show when={mcpError()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
                     <Show when={mcpListUnknown()}>
                       <p role="alert" class="mcp-ext-error">The server list could not be read after the error, and the server may exist. Read the list before you add again. <button type="button" disabled={mcpBusy()} onClick={() => void retryListRead()}>Read list</button></p>

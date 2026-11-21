@@ -1,0 +1,51 @@
+:root {
+  --paper: #000;
+  --loading: #ccc;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --paper: #fff;
+    --loading: #333;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+canvas {
+  width: 100vw;
+  height: 100vh;
+}
+
+#loading {
+  position: fixed;
+  bottom: 8%;
+  left: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--loading);
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #loading { animation: none; }
+}
+
+@keyframes pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+#drag-strip {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 40px;
+  -webkit-app-region: drag;
+}

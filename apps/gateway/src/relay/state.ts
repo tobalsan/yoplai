@@ -3,7 +3,8 @@ import { getAgent } from "../config/index.js";
 import { removeGatewaySuffix } from "./agent-id.js";
 import { createFileRemoteGatewayStore, type RemoteGateway } from "./store.js";
 
-let enabled = false;
+let listenerAllowsRelay = false;
+let isMultiUser = () => false;
 /** The address that the gateway listener really bound. The link callback needs `127.0.0.1` on this listener. */
 let listener: { address: string; port: number } | undefined;
 let fileStore: ReturnType<typeof createFileRemoteGatewayStore> | undefined;
@@ -65,11 +66,12 @@ export function resolveRemoteAgent(
  */
 export function configureRelay(
   host: string,
-  multiUser: boolean,
+  multiUser: boolean | (() => boolean),
   tailscaleServe = false,
   uiHost = "127.0.0.1"
 ): void {
-  enabled = false;
+  listenerAllowsRelay = false;
+  isMultiUser = typeof multiUser === "function" ? multiUser : () => multiUser;
   if (tailscaleServe) {
     console.warn(
       "[relay] disabled: Tailscale serve exposes the gateway to the tailnet."
@@ -82,23 +84,20 @@ export function configureRelay(
     );
     return;
   }
-  if (!isLoopbackHost(host) && !multiUser) {
-    console.warn(
-      `[relay] disabled: the gateway listens on ${host}, which is not a loopback address, and multi-user mode is off.`
-    );
-    return;
-  }
-  if (multiUser) {
+  if (isMultiUser()) {
     console.warn(
       "[relay] disabled: linked remote gateways do not support multi-user mode yet."
     );
-    return;
+  } else if (!isLoopbackHost(host)) {
+    console.warn(
+      `[relay] disabled: the gateway listens on ${host}, which is not a loopback address, and multi-user mode is off.`
+    );
   }
-  enabled = true;
+  listenerAllowsRelay = isLoopbackHost(host);
 }
 
 export function isRelayEnabled(): boolean {
-  return enabled;
+  return listenerAllowsRelay && !isMultiUser();
 }
 
 /** Records the bound address of the gateway listener, or forgets it with `undefined`. */
@@ -116,7 +115,7 @@ export function getGatewayListener(): { address: string; port: number } | undefi
  * bound to `127.0.0.2` or `::1` still serves saved links, but it cannot receive the browser callback.
  */
 export function getLinkCallbackPort(): number | undefined {
-  return enabled && listener?.address === "127.0.0.1" ? listener.port : undefined;
+  return isRelayEnabled() && listener?.address === "127.0.0.1" ? listener.port : undefined;
 }
 
 export function getRemoteGatewayStore() {
@@ -126,5 +125,5 @@ export function getRemoteGatewayStore() {
 
 /** The linked gateways, or an empty list while the relay is disabled. */
 export function getLinkedGateways(): RemoteGateway[] {
-  return enabled ? getRemoteGatewayStore().list() : [];
+  return isRelayEnabled() ? getRemoteGatewayStore().list() : [];
 }

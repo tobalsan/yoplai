@@ -172,11 +172,9 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
   );
   setLoadedConfig(config);
 
-  const canvasContext = bindExtensionContext(createExtensionContext(config), "canvas");
   const canvas = extensions.find((extension) => extension.id === "canvas");
-  if (canvas) {
-    await canvas.start(canvasContext);
-  }
+  const canvasContext = canvas && bindExtensionContext(createExtensionContext(config), canvas);
+  if (canvas && canvasContext) await canvas.start(canvasContext);
 
   // 2. Resolve agent (infra error if not found)
   const agent = getAgent(opts.agentId);
@@ -186,7 +184,7 @@ export async function runEval(opts: RunEvalOptions): Promise<RunEvalOutcome> {
 
   // Eval fixtures are explicit owned registrations; gateway legacy discovery
   // does not run in this isolated runtime.
-  if (canvas) {
+  if (canvasContext) {
     const registry = getDashboardRegistry(path.join(canvasContext.getDataDir(), "canvas", "registry.json"));
     for (const slug of await listDashboardSlugs(agent)) {
       if (await registry.find(agent.id, slug)) continue;

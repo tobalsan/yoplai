@@ -6,7 +6,7 @@ import type {
   WsClientMessage,
   WsServerMessage,
 } from "@yoplai/shared";
-import { getAgent, isAgentActive } from "../config/index.js";
+import { CONFIG_DIR, getAgent, isAgentActive, loadConfig } from "../config/index.js";
 import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
 import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
@@ -183,9 +183,7 @@ export class WsBroker {
     ws.on("message", (raw) => {
       // Each client action checks the credential again, so a revoked key stops at the next message.
       if (!this.socketActive(ws)) return;
-      const text = raw.toString();
-      if (bridge.handle(text)) return;
-      void this.handleMessage(ws, text, authAdapter);
+      void this.handleMessage(ws, raw.toString(), authAdapter, bridge, request);
     });
 
     ws.on("close", () => {
@@ -202,7 +200,9 @@ export class WsBroker {
   private async handleMessage(
     ws: WebSocket,
     raw: string,
-    authAdapter: WsBrokerAuthAdapter
+    authAdapter: WsBrokerAuthAdapter,
+    bridge: RelayWsBridge,
+    request: WsRequest | undefined
   ): Promise<void> {
     let msg: WsClientMessage;
     try {
@@ -212,6 +212,12 @@ export class WsBroker {
       return;
     }
 
+    if (!msg || typeof msg !== "object") {
+      this.send(ws, { type: "error", message: "Invalid message" });
+      return;
+    }
+    const tagged = msg.type === "send" && msg.turnId !== undefined;
+    if (!tagged && bridge.handle(raw)) return;
     const authContext = this.authContexts.get(ws) ?? null;
 
     if (msg.type === "subscribe") {
@@ -237,7 +243,7 @@ export class WsBroker {
     }
 
     if (msg.type === "send") {
-      await this.handleSend(ws, msg, authContext, authAdapter);
+      await this.handleSend(ws, msg, authContext, authAdapter, request);
       return;
     }
 
@@ -312,7 +318,8 @@ export class WsBroker {
     ws: WebSocket,
     msg: Extract<WsClientMessage, { type: "send" }>,
     authContext: RequestAuthContext | null,
-    authAdapter: WsBrokerAuthAdapter
+    authAdapter: WsBrokerAuthAdapter,
+    request?: WsRequest
   ): Promise<void> {
     if (authContext?.impersonator) {
       this.send(ws, {
@@ -323,18 +330,30 @@ export class WsBroker {
       return;
     }
 
-    const agent = getAgent(msg.agentId);
-    if (!agent || !isAgentActive(msg.agentId)) {
-      this.send(ws, { type: "error", message: "Agent not found" });
-      return;
-    }
-    if (!(await authAdapter.canAccessAgent(authContext, msg.agentId))) {
-      this.send(ws, { type: "error", message: "Forbidden" });
-      return;
-    }
-
+    const tagged = msg.turnId !== undefined;
     let terminalEventSent = false;
+    let finish: (() => void) | undefined;
+    let queued = false;
+    const failed = "Yoplai could not complete the turn.";
     try {
+      const allowTurnId = tagged && request !== undefined && (await import("../desktop/guard.js")).desktopSocketAllowed(
+        request, authAdapter.isMultiUserEnabled(), () => loadConfig().ui?.port ?? 3000
+      );
+      if (tagged && !allowTurnId) {
+        this.send(ws, { type: "error", code: "invalid_turn", message: "Only desktop chat accepts a turn ID." });
+        return;
+      }
+
+      const agent = getAgent(msg.agentId);
+      if (!agent || !isAgentActive(msg.agentId)) {
+        this.send(ws, { type: "error", message: "Agent not found" });
+        return;
+      }
+      if (!(await authAdapter.canAccessAgent(authContext, msg.agentId))) {
+        this.send(ws, { type: "error", message: "Forbidden" });
+        return;
+      }
+
       const normalized = await normalizeRunRequest({
         agent,
         input: msg,
@@ -342,13 +361,17 @@ export class WsBroker {
         extensionRuntime: authAdapter.getExtensionRuntime(),
         source: "web",
         onEvent: (event) => {
-          if (event.type === "error" || event.type === "done") terminalEventSent = true;
-          this.send(ws, event);
+          if (event.type === "error" || (event.type === "done" && (!tagged || !event.meta?.queued))) {
+            terminalEventSent = true;
+            finish?.();
+          }
+          this.send(ws, tagged && event.type === "error" ? { ...event, message: event.userMessage ?? failed } : event);
         },
         defaultSessionId: "default",
+        allowTurnId,
       });
       if (normalized.type === "validation_error") {
-        this.send(ws, { type: "error", message: normalized.message });
+        this.send(ws, { type: "error", ...(tagged ? { code: "invalid_turn", userMessage: normalized.message } : {}), message: normalized.message });
         return;
       }
       if (normalized.type === "immediate") {
@@ -356,13 +379,26 @@ export class WsBroker {
         return;
       }
 
-      await runAgent(normalized.params);
+      const { turnId, sessionId } = normalized.params;
+      if (turnId && sessionId) {
+        const { claimDesktopTurn } = await import("../desktop/turns.js");
+        finish = await claimDesktopTurn(CONFIG_DIR, agent.id, sessionId, turnId);
+        if (!finish) {
+          this.send(ws, { type: "turn_exists" });
+          return;
+        }
+        normalized.params.onDeferredResult = finish;
+      }
+      const result = await runAgent(normalized.params);
+      queued = result?.meta.queued === true;
     } catch (err) {
       if (terminalEventSent) return;
       this.send(ws, {
         type: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: tagged ? failed : err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      if (!queued) finish?.();
     }
   }
 

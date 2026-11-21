@@ -6,6 +6,8 @@ Self-hosted gateway for running AI agents through a web UI, CLI, messaging chann
 
 Yoplai keeps configuration, conversations, and project data on your machine. Start with one agent locally, then add channels, automation, authentication, or container isolation as needed.
 
+See the [desktop guide](apps/desktop/README.md) to run Yoplai in a desktop window or build the macOS app.
+
 ## What you get
 
 - Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
@@ -169,7 +171,7 @@ Agent-specific tool extensions also require an entry in `agent.yaml`. See [Confi
 
 In multi-user mode, add your own extension API token (and, if needed, your own email/subdomain or other settings) on the **Just me** tab of the extension configuration form. Admins of a linked team (and superadmins) can manage **Whole team** credentials; everyone with chat access can edit extensions without secrets or OAuth; existing team tokens remain the fallback. Personal tokens require `oauth.encryptionKey` and stay encrypted on the gateway. See [personal extension tokens](docs/extensions.md#personal-extension-api-tokens).
 
-Use an agent's **My connections** tab to inspect and disconnect your personal connections and see team availability. **Account settings** lets you remove Slack pairings and unlink existing Threadit or Mattermost accounts on the local gateway; the next message from an unlinked account uses the unpaired flow. Disconnecting affects only your credentials and the next request uses team credentials when available.
+Use an agent's **My connections** tab to inspect and disconnect your personal connections and see team availability. **Pairings** (in the account menu) lets you remove Slack pairings and unlink Threadit or Mattermost accounts. The local Threadit and Mattermost section appears only when an account is linked; the next message from an unlinked account uses the unpaired flow. Disconnecting affects only your credentials and the next request uses team credentials when available.
 
 Connecting an OAuth extension from settings takes you to the provider in the same tab and returns to the page with a connection result. Pending extension settings are saved before leaving. Chat's **Connect tools** prompt keeps its popup so the conversation stays open.
 

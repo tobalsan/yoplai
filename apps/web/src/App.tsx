@@ -40,6 +40,7 @@ import {
   capabilitiesReady,
   capabilities,
   loadCapabilities,
+  reloadCapabilities,
 } from "./lib/capabilities";
 import {
   toggleSidebarCollapsed,
@@ -54,9 +55,13 @@ import {
 import { documentTitle } from "./lib/document-title";
 import { stripBase } from "./lib/path";
 import { ToastHost } from "./lib/toast";
+import { releaseCatalogChanged } from "./api/release-catalog";
+import { isDesktopWindow } from "./lib/desktop-window";
+import { SetupGate } from "./desktop-setup/SetupGate";
 import { useScheduleAlerts } from "./lib/schedule-alerts";
 
 const LazyAuthGuard = lazy(() => import("./auth/AuthGuard"));
+const LazyDesktopSetup = lazy(() => import("./desktop-setup/Wizard"));
 const LazyLoginPage = lazy(() => import("./pages/Login"));
 const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
@@ -66,6 +71,7 @@ const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
 
 function Layout(props: { children?: JSX.Element }) {
   const location = useLocation();
+  const desktopWindow = isDesktopWindow();
   const isLoginPage = createMemo(() =>
     stripBase(location.pathname).startsWith("/login")
   );
@@ -91,6 +97,13 @@ function Layout(props: { children?: JSX.Element }) {
 
   onMount(() => {
     void loadCapabilities().catch(() => undefined);
+    // A local write carries no gateway name, which a CustomEvent holds as null. It changes the extensions
+    // the gateway loaded, so the app reads the capabilities again.
+    const refreshCapabilities = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail === null) void reloadCapabilities().catch(() => undefined);
+    };
+    window.addEventListener(releaseCatalogChanged, refreshCapabilities);
+    onCleanup(() => window.removeEventListener(releaseCatalogChanged, refreshCapabilities));
   });
 
   createEffect(() => {
@@ -129,9 +142,10 @@ function Layout(props: { children?: JSX.Element }) {
   return (
     <>
       <Show when={capabilitiesReady()} fallback={<AppBootSplash />}>
-        <div class="app" classList={{ "zen-mode": zenMode() }}>
+        <div class="app" classList={{ "zen-mode": zenMode(), "desktop-window": desktopWindow,
+          "desktop-wizard": desktopWindow && stripBase(location.pathname) === "/setup" }}>
           <ImpersonationBanner />
-          {props.children}
+          <SetupGate>{props.children}</SetupGate>
           <OnboardingTour />
           <ConnectToolsPrompt />
           <SessionSearch />
@@ -147,6 +161,29 @@ function Layout(props: { children?: JSX.Element }) {
           width: 100%;
         }
 
+        .desktop-window {
+          --desktop-buttons-width: 88px;
+        }
+        /* Electron reads only a literal app-region value, not var(). */
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window *,
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window::before,
+        body:is(.driver-active, :has([role="dialog"], [role="alertdialog"], dialog[open], .chat-side-panel-overlay, .session-menu)) .desktop-window *::before {
+          -webkit-app-region: no-drag !important;
+        }
+        .desktop-window:not(.desktop-wizard, :has(.left-nav-shell))::before {
+          content: "";
+          flex: 0 0 8px;
+          margin-inline-start: var(--desktop-buttons-width);
+          -webkit-app-region: drag;
+        }
+        .desktop-window :is(button, a, input, select, textarea, label, [role="menu"], [role="button"], [contenteditable]) {
+          -webkit-app-region: no-drag;
+        }
+        .agents-toolbar-title {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 600;
+        }
         .app.zen-mode {
           background: var(--bg-base);
         }
@@ -185,19 +222,17 @@ function HomeRoute() {
 
 function AgentsRouteShell() {
   return (
-    <LeftNavShell>
-      <AgentCatalog />
+    <LeftNavShell toolbar={<h1 class="agents-toolbar-title">Agents</h1>}>
+      <AgentCatalog hideHeading />
     </LeftNavShell>
   );
 }
 
 function TeamsRouteShell() {
   return (
-    <LeftNavShell>
-      <Show when={capabilities.forkedAgents} fallback={<AgentCatalog />}>
-        <Teams />
-      </Show>
-    </LeftNavShell>
+    <Show when={capabilities.forkedAgents} fallback={<AgentsRouteShell />}>
+      <LeftNavShell><Teams /></LeftNavShell>
+    </Show>
   );
 }
 
@@ -224,11 +259,7 @@ function McpServerDetailsRouteShell() {
   );
 }
 function ChatRouteShell() {
-  return (
-    <LeftNavShell>
-      <ChatView />
-    </LeftNavShell>
-  );
+  return <ChatView shell={LeftNavShell} />;
 }
 
 function LoginRoute() {
@@ -273,6 +304,7 @@ export default function App() {
   const base = import.meta.env.BASE_URL;
   return (
     <Router root={Layout} base={base}>
+      <Route path="/setup" component={() => <Suspense><LazyDesktopSetup /></Suspense>} />
       <Route path="/login" component={LoginRoute} />
       <Route
         path="/"

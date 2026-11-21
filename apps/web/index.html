@@ -12,14 +12,36 @@
     <link rel="manifest" href="/api/manifest.webmanifest" />
     <title>Yoplai</title>
     <script>
-      var t = localStorage.getItem('yoplai-theme') || localStorage.getItem('aihub-theme');
-      if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      // The Yoplai window is the one with the theme bridge of the main-window preload, not any Electron host.
+      var desktop = !!window.yoplaiDesktopTheme;
+      if (desktop) {
+        document.documentElement.setAttribute('data-yoplai-desktop', '');
+        var firstDesktopScreen = true;
+        try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
+        if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
+      }
+      var t;
+      try { t = localStorage.getItem('yoplai-theme') ?? localStorage.getItem('aihub-theme'); } catch {}
+      if (desktop) {
+        var choice = t === 'light' || t === 'dark' ? t : 'system';
+        var saved = window.yoplaiDesktopTheme.load(choice);
+        if (saved === 'light' || saved === 'dark' || saved === 'system') {
+          if (saved !== choice) {
+            try { localStorage.setItem('yoplai-theme', saved); } catch {}
+          }
+          document.documentElement.dataset.desktopThemeChoice = saved;
+          t = saved;
+        }
+      }
+      if (t !== 'light' && t !== 'dark') {
+        t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
       document.documentElement.setAttribute('data-theme', t);
       document.cookie = 'yoplai-theme=' + t + '; Path=/; SameSite=Lax; Max-Age=31536000';
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
@@ -102,6 +124,14 @@
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
         background: var(--bg-base);
         color: var(--text-primary);
+      }
+      html[data-yoplai-desktop][data-desktop-first-screen], html[data-yoplai-desktop][data-desktop-first-screen] body {
+        --desktop-first-screen: #000;
+        background: #000;
+      }
+      html[data-yoplai-desktop][data-desktop-first-screen][data-theme="light"], html[data-yoplai-desktop][data-desktop-first-screen][data-theme="light"] body {
+        --desktop-first-screen: #fff;
+        background: #fff;
       }
       #root {
         height: 100%;

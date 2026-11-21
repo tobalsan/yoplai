@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Route, Router } from "@solidjs/router";
 import { SessionSearch, openSessionSearch } from "./SessionSearch";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 
 let container: HTMLDivElement;
 let dispose: (() => void) | undefined;
@@ -116,6 +118,20 @@ describe("session search", () => {
     expect(
       Array.from(option.querySelectorAll("mark"), (mark) => mark.textContent)
     ).toEqual(["PgBouncer", "pgbouncer", "pools"]);
+  });
+
+  it("shows the default avatar for a result whose agent has no avatar", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(
+      Response.json({
+        items: [{ agentId: "sage", sessionId: "chat-1", title: "Notes", firstUserMessage: "", lastActivity: Date.now(), match: "title" }],
+      })
+    );
+    mount();
+    key("k");
+    typeQuery("Notes");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("sage"));
   });
 
   it("aborts immediately on input and only the latest request can change results or loading", async () => {

@@ -12,7 +12,8 @@ import {
   isExtensionLoaded,
   loadExtensions,
   notifyConfigReload,
-  reloadExtensions,
+  reconcileExternal,
+  withExtensionMutation,
   setExtensionActivator,
   topoSort,
 } from "./registry.js";
@@ -36,10 +37,10 @@ describe("extension registry", () => {
       const first = config("unknown-pair-alpha", "unknown-pair-one");
       await loadExtensions(first);
       await loadExtensions(first);
-      await reloadExtensions(first);
+      await withExtensionMutation(() => reconcileExternal(first));
       expect(warn).toHaveBeenCalledTimes(1);
-      await reloadExtensions(config("unknown-pair-beta", "unknown-pair-one"));
-      await reloadExtensions(config("unknown-pair-alpha", "unknown-pair-two"));
+      await withExtensionMutation(() => reconcileExternal(config("unknown-pair-beta", "unknown-pair-one")));
+      await withExtensionMutation(() => reconcileExternal(config("unknown-pair-alpha", "unknown-pair-two")));
       expect(warn.mock.calls.map((call) => {
         expect(call).toHaveLength(1);
         expect(String(call[0]).split("\n")).toHaveLength(1);
@@ -79,7 +80,7 @@ describe("extension registry", () => {
       stop: async () => undefined,
       capabilities: () => [],
     };
-    await notifyConfigReload([
+    await expect(notifyConfigReload([
       {
         ...base,
         id: "thrower",
@@ -94,7 +95,7 @@ describe("extension registry", () => {
           laterRan = true;
         },
       },
-    ]);
+    ])).rejects.toBeNull();
     expect(laterRan).toBe(true);
   });
 
@@ -628,7 +629,7 @@ describe("extension registry", () => {
     }
   });
 
-  describe("reloadExtensions OAuth providers", () => {
+  describe("reconcileExternal OAuth providers", () => {
     afterEach(async () => {
       resetOAuthProviders();
       await loadExtensions(GatewayConfigSchema.parse({ version: 2, agents: [], extensions: {} }));
@@ -698,7 +699,7 @@ describe("extension registry", () => {
         setExtensionActivator(async () => {
           providerDuringActivation = getOAuthProvider("reload-test-provider");
         });
-        await reloadExtensions(config);
+        await withExtensionMutation(() => reconcileExternal(config));
         expect(providerDuringActivation).toMatchObject({ id: "reload-test-provider" });
       });
     });
@@ -716,7 +717,7 @@ describe("extension registry", () => {
         setExtensionActivator(async () => {
           activated = true;
         });
-        await expect(reloadExtensions(config)).rejects.toThrow(/conflicting descriptor/);
+        await expect(withExtensionMutation(() => reconcileExternal(config))).rejects.toThrow(/conflicting descriptor/);
         expect(activated).toBe(false);
         expect(isExtensionLoaded("oauthsample")).toBe(false);
       });

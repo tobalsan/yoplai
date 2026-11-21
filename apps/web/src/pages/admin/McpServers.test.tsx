@@ -1,23 +1,25 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn() }));
+const m = vi.hoisted(() => ({ refreshMcpCatalogIcon: vi.fn(), fetchMcpCatalog: vi.fn(), addMcpCatalogServer: vi.fn(), updateMcpCatalogServer: vi.fn(), removeMcpCatalogServer: vi.fn(), sessionPending: false, gatewayParam: undefined as string | undefined }));
 vi.mock("../../api/mcp-servers", async () => ({ ...m, iconRefreshOutcome: (await vi.importActual<typeof import("../../api/mcp-servers")>("../../api/mcp-servers")).iconRefreshOutcome, refreshMcpServerIcon: vi.fn(), ICON_REFRESH_UNCERTAIN: "uncertain", mcpDisplayName: (name: string, title?: string) => title || name }));
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useLocation: () => ({ pathname: "/admin/mcp-servers", search: "" }),
-  useSearchParams: () => [{}, vi.fn()],
+  useSearchParams: () => [m.gatewayParam === undefined ? {} : { gateway: m.gatewayParam }, vi.fn()],
 }));
-vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: false, data: null }) }));
+vi.mock("../../auth/client", () => ({ useSession: () => () => ({ isPending: m.sessionPending, data: null }) }));
 vi.mock("../../api/gateway", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../api/gateway")>()), fetchGatewayList: vi.fn().mockResolvedValue({ state: "unavailable" }) }));
 
 const { default: AdminMcpServersPage } = await import("./McpServers");
+const { loadCapabilities, resetCapabilitiesForTests, setCapabilitiesForTests } = await import("../../lib/capabilities");
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 describe("AdminMcpServersPage", () => {
   let dispose: () => void;
-  afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.clearAllMocks(); });
+  beforeEach(() => setCapabilitiesForTests({ extensions: { mcp: true } }));
+  afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.clearAllMocks(); m.sessionPending = false; m.gatewayParam = undefined; vi.unstubAllGlobals(); resetCapabilitiesForTests(); });
 
   async function mount() {
     m.fetchMcpCatalog.mockResolvedValue([{ name: "linear", url: "https://mcp.linear.app/mcp", displayName: "Linear", description: "Issues" }]);
@@ -29,6 +31,33 @@ describe("AdminMcpServersPage", () => {
   }
   const click = (container: HTMLElement, label: string) => Array.from(container.querySelectorAll("button")).find((b) => b.textContent === label)!.click();
   const type = (input: HTMLInputElement, value: string) => { input.value = value; input.dispatchEvent(new Event("input", { bubbles: true })); };
+
+  it("hides cached rows once MCP is not installed, so they send no write", async () => {
+    const container = await mount();
+    expect(container.querySelector('[data-server="linear"]')).not.toBeNull();
+    setCapabilitiesForTests({ extensions: { mcp: false } });
+    await flush();
+    expect(container.querySelector('[data-server="linear"]')).toBeNull();
+    expect(Array.from(container.querySelectorAll("button")).some((b) => b.textContent === "Remove")).toBe(false);
+  });
+
+  it("hides cached rows when a later capability read fails", async () => {
+    const container = await mount();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 500 })));
+    await loadCapabilities().catch(() => undefined);
+    await flush();
+    expect(container.textContent).toContain("Retry");
+    expect(container.querySelector('[data-server="linear"]')).toBeNull();
+  });
+
+  it("shows no local Retry beside a missing named gateway", async () => {
+    m.gatewayParam = "missing";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 500 })));
+    await loadCapabilities().catch(() => undefined);
+    const container = await mount();
+    expect(container.textContent).toContain("Linked gateways are not available on this gateway.");
+    expect(Array.from(container.querySelectorAll("button")).some((b) => b.textContent === "Retry")).toBe(false);
+  });
 
   it("lists, adds, edits and removes catalog servers", async () => {
     const container = await mount();
@@ -130,5 +159,21 @@ describe("AdminMcpServersPage", () => {
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Superadmin access required");
+  });
+
+  it("shows neutral text and no form or catalog read when the mcp extension is off", async () => {
+    setCapabilitiesForTests({ extensions: {} });
+    const container = await mount();
+    expect(m.fetchMcpCatalog).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("The MCP extension is not installed on this gateway.");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Server URL"]')).toBeNull();
+  });
+
+  it("shows no form and reads no catalog while the capabilities are not known", async () => {
+    m.sessionPending = true;
+    const container = await mount();
+    expect(m.fetchMcpCatalog).not.toHaveBeenCalled();
+    expect(container.querySelector('[aria-label="Server URL"]')).toBeNull();
   });
 });

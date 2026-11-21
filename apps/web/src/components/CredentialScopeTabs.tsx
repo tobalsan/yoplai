@@ -70,6 +70,7 @@ export function CredentialScopeTabs(props: {
   onChange: (scope: CredentialScope) => void;
   /** Personal credentials need a signed-in user. */
   personalDisabled?: boolean;
+  hidePersonal?: boolean;
   /** Team credentials are visible but managed by an admin. */
   teamLocked?: boolean;
   /** Pill shown at the right of each tab; omit a scope while it is unknown. */
@@ -78,7 +79,7 @@ export function CredentialScopeTabs(props: {
   children: JSX.Element;
 }) {
   const enabled = (scope: CredentialScope) =>
-    !props.disabled && !(scope === "personal" && props.personalDisabled);
+    !props.disabled && !(scope === "personal" && (props.personalDisabled || props.hidePersonal));
 
   const select = (scope: CredentialScope) => {
     if (scope !== props.value && enabled(scope)) props.onChange(scope);
@@ -99,7 +100,7 @@ export function CredentialScopeTabs(props: {
     <div class="cred-tabs" data-active={props.value}>
       <style>{CREDENTIAL_SCOPE_TABS_STYLES}</style>
       <div class="cred-tabs-list" data-tour="cred-tabs" role="tablist" aria-label="Credentials for" onKeyDown={onKeyDown}>
-        <For each={TABS}>
+        <For each={props.hidePersonal ? TABS.filter((tab) => tab.scope === "team") : TABS}>
           {(tab) => (
             <button
               type="button"

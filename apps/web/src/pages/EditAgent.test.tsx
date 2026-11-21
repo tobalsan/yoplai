@@ -142,6 +142,8 @@ function fork(partial: Partial<AgentFork> & { sourcePoolId: string }): AgentFork
 }
 
 import { EditAgent } from "./EditAgent";
+import { defaultAvatarUrl } from "../lib/default-avatar";
+import { defaultAvatarSources } from "../lib/default-avatar.fixture";
 import {
   resetCapabilitiesForTests,
   setCapabilitiesForTests,
@@ -190,7 +192,7 @@ function openTab(label: string) {
 beforeEach(() => {
   localStorage.clear();
   assign = vi.fn();
-  setCapabilitiesForTests({ forkedAgents: true });
+  setCapabilitiesForTests({ forkedAgents: true, extensions: { mcp: true } });
   fetchPoolMock.mockReset();
   fetchAgentsMock.mockReset().mockResolvedValue([]);
   fetchAgentDashboardsMock.mockReset().mockResolvedValue([]);
@@ -228,7 +230,7 @@ afterEach(() => {
 
 describe("EditAgent", () => {
   it("loads the settings page of a remote agent from its relay id", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "pom@ams", name: "Pom (remote)", gateway: "ams" })]);
     await mountEdit("pom@ams");
@@ -236,8 +238,16 @@ describe("EditAgent", () => {
     expect(container.textContent).not.toContain("Agent not found.");
   });
 
+  it("shows the default avatar of an agent that has no avatar", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
+    setSession("superadmin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "pom@ams", name: "Pom (remote)", gateway: "ams" })]);
+    await mountEdit("pom@ams");
+    expect(defaultAvatarSources(container)).toEqual([defaultAvatarUrl("pom@ams")]);
+  });
+
   it("opens Scheduled jobs from the credential banner's Schedules link", async () => {
-    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true, scheduler: true } });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchSchedulesMock.mockResolvedValue([{ id: "digest", agentId: "scribe", name: "Morning digest", schedule: {}, payload: {} }]);
@@ -252,7 +262,7 @@ describe("EditAgent", () => {
 
   it("keeps privacy filtering responsive through pending, failed and recovered job polls", async () => {
     vi.useFakeTimers();
-    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true }, enableCronMonitoring: true });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true, scheduler: true }, enableCronMonitoring: true });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     const jobs = [
@@ -287,7 +297,7 @@ describe("EditAgent", () => {
     vi.useRealTimers();
   });
   it.each([false, true])("keeps the toggle usable across tabs when storage writes fail (reads blocked: %s)", async (blockReads) => {
-    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true, scheduler: true } });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchSchedulesMock.mockResolvedValue([{
@@ -309,7 +319,7 @@ describe("EditAgent", () => {
     container.querySelector<HTMLButtonElement>('[aria-label="Show other users’ private items"]')!.click();
   });
   it.each(["superadmin", "admin", "user", null])("keeps default empty states and limits the toggle to superadmins: %s", async (role) => {
-    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true, scheduler: true } });
     setSession(role);
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentDashboardsMock.mockResolvedValue([{
@@ -339,7 +349,7 @@ describe("EditAgent", () => {
     }
   });
   it("shares the private-items toggle across tabs and remembers it on remount", async () => {
-    setCapabilitiesForTests({ forkedAgents: false, extensions: { scheduler: true } });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true, scheduler: true } });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentDashboardsMock.mockResolvedValue([{
@@ -386,7 +396,7 @@ describe("EditAgent", () => {
     expect(container.querySelector(".edit-agent-dashboards")?.textContent).toContain("No dashboards yet.");
   });
   it("hides foreign private dashboards before grouping, without naming a hidden parent", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("superadmin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     const row = { agentId: "scribe", agentName: "Scribe", publishedAt: null, updatedAt: null, mode: "read" as const, ownerName: "Bob", isOwner: false, legacy: false, shared: false, params: [], linksTo: [] };
@@ -488,7 +498,7 @@ describe("EditAgent", () => {
   });
 
   it("lists top dashboards once and parameter pages once with their top-page parents", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     const dashboard = (slug: string, params: string[], linksTo: string[]) => ({
@@ -520,7 +530,7 @@ describe("EditAgent", () => {
   });
 
   it("shows parameter pages when no dashboard can be opened without arguments", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentDashboardsMock.mockResolvedValue([{
@@ -538,7 +548,7 @@ describe("EditAgent", () => {
   });
 
   it("loads scheduled jobs for the accessible fork agent", async () => {
-    setCapabilitiesForTests({ forkedAgents: true, extensions: { scheduler: true } });
+    setCapabilitiesForTests({ forkedAgents: true, extensions: { mcp: true, scheduler: true } });
     setSession("user");
     fetchPoolMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchPoolActionsMock.mockResolvedValue([{
@@ -555,7 +565,7 @@ describe("EditAgent", () => {
   });
 
   it("shows an empty dashboard state for an accessible agent", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     await mountEdit("scribe");
@@ -566,7 +576,7 @@ describe("EditAgent", () => {
   });
 
   it("keeps tabs usable during a pending dashboard request and renders dashboards when it resolves", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     let resolveDashboards!: (dashboards: AgentDashboard[]) => void;
@@ -598,7 +608,7 @@ describe("EditAgent", () => {
   });
 
   it("shows a dashboard load error", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentDashboardsMock.mockRejectedValue(new Error("network"));
@@ -892,7 +902,7 @@ describe("EditAgent", () => {
     { role: "user", enabled: true }, { role: "user", enabled: false },
     { role: "admin", enabled: true }, { role: "admin", enabled: false },
   ])("hides system extensions and MCP servers for $role, enabled=$enabled", async ({ role, enabled }) => {
-    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true, extensions: { mcp: true } });
     setSession(role);
     seedSystemItems(enabled);
     await mountEdit("scribe");
@@ -904,7 +914,7 @@ describe("EditAgent", () => {
   });
 
   it("shows system items with badges to a superadmin", async () => {
-    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true, extensions: { mcp: true } });
     setSession("superadmin");
     seedSystemItems();
     await mountEdit("scribe");
@@ -916,7 +926,7 @@ describe("EditAgent", () => {
   });
 
   it("shows the empty state when a user's only items are system items", async () => {
-    setCapabilitiesForTests({ forkedAgents: false, multiUser: true });
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: true, extensions: { mcp: true } });
     setSession("user");
     seedSystemItems();
     fetchAgentExtensionsMock.mockResolvedValue([{ id: "webhooks", displayName: "Webhooks", enabled: true, tier: "toggle-only", requiredSecrets: [] }]);
@@ -930,7 +940,7 @@ describe("EditAgent", () => {
   });
 
   it.each(["user", "superadmin"])("ignores system flags in single-user mode for role %s", async (role) => {
-    setCapabilitiesForTests({ forkedAgents: false, multiUser: false });
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: false, extensions: { mcp: true } });
     setSession(role);
     seedSystemItems();
     await mountEdit("scribe");
@@ -942,7 +952,7 @@ describe("EditAgent", () => {
   });
 
   it("sorts Top extensions and Top MCP servers first, then by name", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     const base = {
@@ -1061,7 +1071,7 @@ describe("EditAgent", () => {
   });
 
   it("shows one card per existing MCP server beside regular extensions, with an icon fallback", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([
@@ -1085,7 +1095,7 @@ describe("EditAgent", () => {
   });
 
   it("shows a loading state until both extensions and MCP servers load, then the ordered list", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([
@@ -1110,7 +1120,7 @@ describe("EditAgent", () => {
   });
 
   it("shows extensions without MCP cards when the MCP fetch fails", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([
@@ -1124,7 +1134,7 @@ describe("EditAgent", () => {
   });
 
   it("refreshes MCP servers on focus without suspending the page", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([]);
@@ -1146,7 +1156,7 @@ describe("EditAgent", () => {
   });
 
   it("keeps regular extensions visible when MCP loading fails and can retry", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchAgentExtensionsMock.mockResolvedValue([
@@ -1166,7 +1176,7 @@ describe("EditAgent", () => {
   });
 
   it("falls back to the MCP icon when a server icon fails to load", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [
@@ -1181,7 +1191,7 @@ describe("EditAgent", () => {
   });
 
   it("redirects after the add request completes and keeps a canceled server disconnected", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     const pending = Promise.withResolvers<{ server: unknown; authorizationUrl: string }>();
@@ -1210,9 +1220,36 @@ describe("EditAgent", () => {
     expect(container.querySelector('[aria-label="Set up docs"]')).not.toBeNull();
   });
 
+  describe("without the mcp extension", () => {
+    it("reads no MCP servers and shows no MCP error or Add custom extension", async () => {
+      setCapabilitiesForTests({ forkedAgents: false, extensions: {} });
+      setSession("user");
+      fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+      fetchAgentExtensionsMock.mockResolvedValue([
+        { id: "notion", displayName: "Notion", description: "Notes", enabled: false, tier: "auto-form", requiredSecrets: [] },
+      ]);
+      fetchMcpServersMock.mockRejectedValue(new Error("not found"));
+      await mountEdit("scribe");
+      expect(fetchMcpServersMock).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("Notion");
+      expect(container.textContent).not.toContain("Failed to load MCP servers");
+      expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Add custom extension")).toBe(false);
+    });
+  });
+
+  it("offers no Just me choice when adding a custom extension on a single-user gateway", async () => {
+    setCapabilitiesForTests({ forkedAgents: false, multiUser: false, extensions: { mcp: true } });
+    setSession("user");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [] });
+    await mountEdit("scribe");
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Add custom extension")!.click();
+    expect(container.textContent).not.toContain("Just me");
+  });
+
   describe("adding a custom extension", () => {
     async function submitAdd(url: string, scope?: "team", arrange?: () => void) {
-      setCapabilitiesForTests({ forkedAgents: false });
+      setCapabilitiesForTests({ forkedAgents: false, multiUser: true, extensions: { mcp: true } });
       setSession("user");
       fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
       addMcpServerMock.mockResolvedValue({ server: { name: "docs" } });
@@ -1267,7 +1304,7 @@ describe("EditAgent", () => {
   });
 
   it("marks an OAuth MCP server set up when only the team connection exists", async () => {
-    setCapabilitiesForTests({ forkedAgents: false });
+    setCapabilitiesForTests({ forkedAgents: false, extensions: { mcp: true } });
     setSession("user");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: true, servers: [

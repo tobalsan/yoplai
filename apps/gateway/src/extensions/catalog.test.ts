@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, stat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -116,6 +116,38 @@ describe("buildExtensionCatalog", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("discovers catalog versions and skips work folders", async () => {
+    await writeExternalExtension(root, "catalogExt");
+    await writeExternalExtension(root, ".staging");
+    const record = {
+      id: "catalogExt", version: "1.0.0", sha256: "a".repeat(64),
+      url: "https://example.com/bundle.tgz", release: "v1", installedAt: new Date().toISOString(),
+      installedBy: "local",
+    };
+    const recordPath = path.join(root, record.id, ".install.json");
+    await writeFile(recordPath, JSON.stringify(record));
+    const first = await discoverExternalExtensions(root);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ managed: "catalog", install: record, key: record.sha256 });
+    const indexPath = path.join(root, record.id, "index.js");
+    const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { discoverExternalExtensions } from ${JSON.stringify(new URL("../../../../packages/shared/src/extensions/discovery.ts", import.meta.url).href)};
+      import { readFile, writeFile } from "node:fs/promises";
+      const [root, indexPath, recordPath] = process.argv.slice(1);
+      const [first] = await discoverExternalExtensions(root);
+      await writeFile(indexPath, (await readFile(indexPath, "utf8")).replace("Ext catalogExt", "New catalogExt"));
+      await writeFile(recordPath, JSON.stringify({ ...first.install, sha256: "b".repeat(64) }));
+      const [next] = await discoverExternalExtensions(root);
+      console.log(next.extension.displayName);
+    `, root, indexPath, recordPath], { encoding: "utf8" });
+    expect(output.trim()).toBe("New catalogExt");
+    await writeFile(recordPath, "{}");
+    const index = await stat(indexPath);
+    expect((await discoverExternalExtensions(root))[0]).toMatchObject({
+      managed: "manual", key: `${index.mtimeMs}-${index.size}`,
+    });
   });
 
   it("shows scopes from merged root settings and agent overrides", async () => {
