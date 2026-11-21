@@ -30,6 +30,7 @@ async function start() {
 describe("Threadit reply delivery", () => {
   afterEach(async () => {
     await threaditExtension.stop();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -78,6 +79,9 @@ describe("Threadit reply delivery", () => {
   });
 
   it("times out a hanging board request and still delivers a later reply", async () => {
+    // Keep Node's real abort signal with a shorter deadline for the first request.
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    vi.spyOn(AbortSignal, "timeout").mockImplementationOnce(() => timeout(5));
     let hang = true;
     vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => hang
       ? new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("network timeout")), { once: true }))
@@ -88,5 +92,5 @@ describe("Threadit reply delivery", () => {
     await first;
     hang = false;
     await expect(sinks.get("threadit")!({ agent, destination: { channel: "12:34" }, text: "Later reply" })).resolves.toBeUndefined();
-  }, 35_000);
+  });
 });

@@ -14,8 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  ci:
-    name: ci
+  static:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,10 +35,60 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    outputs:
+      shard_1: ${{ matrix.shard == 1 && steps.tests.outcome == 'success' && 'success' || '' }}
+      shard_2: ${{ matrix.shard == 2 && steps.tests.outcome == 'success' && 'success' || '' }}
+      shard_3: ${{ matrix.shard == 3 && steps.tests.outcome == 'success' && 'success' || '' }}
+      shard_4: ${{ matrix.shard == 4 && steps.tests.outcome == 'success' && 'success' || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      # The model-routing E2E tests invoke the built gateway CLI.
+      - name: Build
+        run: pnpm build
       - name: Test
+        id: tests
         env:
           GIT_AUTHOR_NAME: CI Fixture
           GIT_AUTHOR_EMAIL: ci@example.test
           GIT_COMMITTER_NAME: CI Fixture
           GIT_COMMITTER_EMAIL: ci@example.test
-        run: pnpm test
+        run: pnpm test --shard=${{ matrix.shard }}/4
+
+  ci:
+    name: ci
+    needs: [static, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check job results
+        env:
+          STATIC_RESULT: ${{ needs.static.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          SHARD_RESULTS: >-
+            ${{ needs.test.outputs.shard_1 }}
+            ${{ needs.test.outputs.shard_2 }}
+            ${{ needs.test.outputs.shard_3 }}
+            ${{ needs.test.outputs.shard_4 }}
+        run: |
+          test "$STATIC_RESULT" = success &&
+          test "$TEST_RESULT" = success &&
+          test "$SHARD_RESULTS" = 'success success success success'
