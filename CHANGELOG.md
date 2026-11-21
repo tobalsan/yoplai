@@ -9,6 +9,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- Gateway-wide image generation from a ChatGPT subscription or a configured image model. Agents can save images to conversation files and share previews in chat.
+
 ### Fixed
 
 - Account connections only shows the Threadit and Mattermost section when a local account link exists.

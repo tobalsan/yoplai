@@ -124,17 +124,23 @@ const deadLoginLoggedAt = new Map<string, number>();
  * JSON carrying tokens, which the generic sanitizer does not catch when the
  * key is quoted, so quoted credential fields are redacted here as well.
  */
-export function describeRefreshError(error: unknown): string {
+export function describeRefreshError(error: unknown, knownSecret?: string): string {
   const parts: string[] = [];
   let current: unknown = error;
   while (current !== undefined && current !== null && parts.length < 5) {
     parts.push(current instanceof Error ? current.message : String(current));
     current = current instanceof Error ? current.cause : undefined;
   }
-  return sanitizeSensitiveText(parts.join(": "))
+  const text = parts.join(": ");
+  return sanitizeSensitiveText(knownSecret ? text.replaceAll(knownSecret, "[REDACTED]") : text)
     .replace(
-      /("[A-Za-z_-]*(?:token|secret|password|credential|api[-_]?key)[A-Za-z_-]*"\s*:\s*)"[^"]*"/gi,
+      /("(?:access|refresh|authorization|[A-Za-z0-9_-]*(?:token|secret|password|credential|api[-_]?key|signature)[A-Za-z0-9_-]*)"\s*:\s*)"(?:\\[\s\S]|[^"\\])*(?:"|\\?$)/gi,
       '$1"[REDACTED]"'
+    )
+    // SDK errors can embed escaped or truncated JSON inside a message string.
+    .replace(
+      /(\\+"(?:access|refresh|authorization|[A-Za-z0-9_-]*(?:token|secret|password|credential|api[-_]?key|signature)[A-Za-z0-9_-]*)\\+"\s*:\s*)[\s\S]*/i,
+      "$1[REDACTED]"
     )
     .slice(0, 1000);
 }

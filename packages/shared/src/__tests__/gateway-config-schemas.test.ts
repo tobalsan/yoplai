@@ -29,6 +29,17 @@ const commonSettings = {
 };
 
 describe("gateway root and resolved config schemas", () => {
+  it("accepts gateway-wide image generation using OAuth or an explicit image model", () => {
+    for (const schema of [GatewayRootConfigSchema, GatewayConfigSchema]) {
+      expect(schema.parse({ agents: [] }).imageGeneration).toBeUndefined();
+      expect(schema.parse({ agents: [], imageGeneration: { provider: "openai-codex" } }).imageGeneration)
+        .toEqual({ provider: "openai-codex", enabled: true });
+      const imageGeneration = { provider: "openrouter", model: "vendor/image-model", enabled: false };
+      expect(schema.parse({ agents: [], imageGeneration }).imageGeneration).toEqual(imageGeneration);
+      expect(schema.safeParse({ agents: [], imageGeneration: { provider: "openrouter" } }).success).toBe(false);
+    }
+  });
+
   it("keeps quota polling opt-in in both root and resolved configs", () => {
     for (const schema of [GatewayRootConfigSchema, GatewayConfigSchema]) {
       expect(schema.parse({ agents: [] }).modelQuota?.enabled ?? false).toBe(false);

@@ -1,3 +1,4 @@
+import { GatewayConfigSchema } from "@yoplai/shared";
 import { describe, expect, it, vi } from "vitest";
 import { ContainerToolBridge } from "./tool-bridge.js";
 
@@ -65,6 +66,19 @@ describe("container tool bridge", () => {
       expect.objectContaining({ extensionId: "gateway", name: "agent_update_instructions" }),
       expect.objectContaining({ extensionId: "gateway", name: "shared_update_system_file" }),
     ]);
+  });
+
+  it("offers generate_image only when enabled, including for models with vision", async () => {
+    const bridge = new ContainerToolBridge();
+    const params = { agent: { id: "cloud" } } as never;
+    const config = GatewayConfigSchema.parse({ agents: [] });
+    const imageGeneration = { provider: "openai-codex", enabled: true };
+    const descriptor = expect.objectContaining({ extensionId: "gateway", name: "generate_image" });
+
+    await expect(bridge.buildTools(params, { ...config, imageGeneration }, false)).resolves.toContainEqual(descriptor);
+    await expect(bridge.buildTools(params, { ...config, imageGeneration }, true)).resolves.toContainEqual(descriptor);
+    await expect(bridge.buildTools(params, { ...config, imageGeneration: { ...imageGeneration, enabled: false } }, true)).resolves.not.toContainEqual(descriptor);
+    await expect(bridge.buildTools(params, config, true)).resolves.not.toContainEqual(descriptor);
   });
 
   it("only exposes describe_image when the resolved agent model lacks vision", async () => {

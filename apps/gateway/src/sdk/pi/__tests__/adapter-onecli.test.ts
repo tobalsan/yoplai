@@ -12,6 +12,7 @@ import {
 } from "../../../config/index.js";
 
 const mockCreateAgentSession = vi.fn();
+const mockGenerateImages = vi.fn();
 const mockGetEnvApiKey = vi.fn(() => "env-api-key");
 const mockEnsureWorkspaceFiles = vi.fn(async () => undefined);
 const mockLoadWorkspaceFiles = vi.fn(async () => []);
@@ -66,6 +67,11 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   ModelRuntime: {
     create: vi.fn(async () => ({
       getModel: vi.fn(() => ({ provider: "anthropic" })),
+      getModelOfType: (type: string, provider: string, model: string) =>
+        type === "image" && provider === "openrouter" && model === "fixture/image"
+          ? { provider, id: model, type }
+          : undefined,
+      generateImages: mockGenerateImages,
       getAuth: vi.fn(async () => ({ auth: { apiKey: "runtime-key" } })),
       setRuntimeApiKey: vi.fn(async () => undefined),
     })),
@@ -173,6 +179,61 @@ describe("pi adapter onecli env wiring", () => {
         expect.objectContaining({ name: "project_notes_append", execute: expect.any(Function) }),
       ]),
     }));
+  });
+
+  it("registers generate_image only when enabled and saves the model output in conversation files", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-pi-generate-image-"));
+    tempDirs.push(home);
+    process.env.YOPLAI_HOME = home;
+    const agent = makeAgent();
+    const params = makeRunParams(agent);
+    const setting = { provider: "openrouter", model: "fixture/image" };
+    mockGenerateImages.mockResolvedValue({
+      stopReason: "stop",
+      output: [{ type: "image", mimeType: "image/webp", data: "UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAAA=" }],
+    });
+    let generateImage: ToolDefinition | undefined;
+    let result: string | undefined;
+    mockCreateAgentSession.mockImplementation(async (options) => {
+      generateImage = (options.customTools as ToolDefinition[]).find((tool) => tool.name === "generate_image");
+      return {
+        session: {
+          messages: [{ role: "assistant", content: "done" }],
+          agent: { state: { messages: [] } },
+          setActiveToolsByName: vi.fn(),
+          subscribe: vi.fn(() => vi.fn()),
+          prompt: async () => {
+            if (!generateImage) return;
+            const output = await generateImage.execute(
+              "generate-preview",
+              { prompt: "A lighthouse at dusk" },
+              params.abortSignal,
+              undefined,
+              {} as Parameters<ToolDefinition["execute"]>[4],
+            );
+            const content = output.content[0];
+            if (content?.type === "text") result = content.text;
+          },
+          abort: vi.fn(), dispose: vi.fn(),
+        },
+      };
+    });
+
+    const { piAdapter } = await import("../adapter.js");
+    setLoadedConfig({ agents: [agent], imageGeneration: { ...setting, enabled: false } } as GatewayConfig);
+    await piAdapter.run(params);
+    expect(generateImage).toBeUndefined();
+
+    setLoadedConfig({ agents: [agent], imageGeneration: { ...setting, enabled: true } } as GatewayConfig);
+    await piAdapter.run(params);
+    const { hostPath } = getConversationFiles(agent.id, params.sessionId);
+    const [filename] = fs.readdirSync(hostPath);
+    expect(filename).toMatch(/^generated-image-.+\.webp$/);
+    expect(fs.readFileSync(path.join(hostPath, filename)).toString("hex")).toBe(
+      "5249464612000000574542505650384c060000002f0000000000",
+    );
+    expect(result).toContain(path.join(hostPath, filename));
+    expect(result).toContain("Call send_file");
   });
 
   it("describes sub-folder support and sends a nested conversation file", async () => {

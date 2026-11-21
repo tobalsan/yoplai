@@ -1336,6 +1336,17 @@ const GatewayCommonFields = {
       enabled: z.boolean().default(true),
     })
     .optional(),
+  imageGeneration: z
+    .object({
+      provider: z.string().min(1),
+      model: z.string().min(1).optional(),
+      enabled: z.boolean().default(true),
+    })
+    .refine(({ provider, model }) => provider === "openai-codex" || model !== undefined, {
+      path: ["model"],
+      message: "An image model is required for providers other than openai-codex",
+    })
+    .optional(),
   oauth: OAuthConfigSchema.optional(),
   extensions: ExtensionsConfigSchema,
   extensionEnvAllowlist: z.array(z.string()).optional(),

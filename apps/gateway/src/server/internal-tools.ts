@@ -11,6 +11,8 @@ import {
 } from "../sdk/container/tokens.js";
 import { extractText } from "../media/extract.js";
 import { describeImage } from "../media/describe.js";
+import { generateImage } from "../media/generate.js";
+import { executeGenerateImage } from "../media/generate-tool.js";
 import { executeExtensionAgentTool } from "../extensions/tools.js";
 import { getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
@@ -56,6 +58,7 @@ type InternalToolsDeps = {
   executeExtensionTool: typeof executeExtensionAgentTool;
   extractText: typeof extractText;
   describeImage: typeof describeImage;
+  generateImage: typeof generateImage;
   resolveOAuthToken: (
     provider: string,
     allowedProviders: readonly string[]
@@ -69,6 +72,7 @@ const defaultDeps: InternalToolsDeps = {
   executeExtensionTool: executeExtensionAgentTool,
   extractText,
   describeImage,
+  generateImage,
   resolveOAuthToken,
 };
 
@@ -348,6 +352,8 @@ export function createInternalTools(
         ? extractDocument(deps, parsed.data.args, context, signal)
         : parsed.data.tool === "describe_image"
           ? describeContainerImage(deps, parsed.data.args, context, deps.getConfig(), signal)
+        : parsed.data.tool === "generate_image"
+        ? executeGenerateImage(parsed.data.args, deps.getConfig(), context.conversationFiles, signal, deps.generateImage)
         : dispatchInternalTool(
           deps,
           parsed.data.tool,
