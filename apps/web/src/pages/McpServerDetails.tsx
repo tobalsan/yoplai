@@ -311,14 +311,14 @@ export function McpServerDetails() {
                   <p class="ext-details-desc">{current().url ?? "Local MCP server"}</p>
                 </div>
                 <div class="mcp-details-remove">
-                  <Show when={!current().shared && current().type === "http"}>
+                  <Show when={canConfigureTeam() && !current().shared && current().type === "http"}>
                     <div class="mcp-icon-refresh">
                       <button type="button" class="oauth-btn" disabled={refreshingIcon()} onClick={() => void refreshIcon()}>{refreshingIcon() ? "Refreshing…" : "Refresh icon"}</button>
                       <Show when={iconMessage()}>{(text) => <p role="status">{text()}</p>}</Show>
                       <Show when={iconError()}>{(text) => <p class="ext-details-error" role="alert">{text()}</p>}</Show>
                     </div>
                   </Show>
-                  <Show when={current().shared}>
+                  <Show when={canConfigureTeam() && current().shared}>
                     <button type="button" class="oauth-btn" classList={{ "oauth-btn-primary": !current().enabled }} disabled={busy()} onClick={() => void setEnabled(!current().enabled)}>{current().enabled ? "Disable" : "Enable"}</button>
                   </Show>
                   <Show when={canConfigureTeam() && !current().shared}>
@@ -346,7 +346,7 @@ export function McpServerDetails() {
               </Show>
               <Show when={error()}>{(message) => <div class="oauth-error" role="alert">{message()}</div>}</Show>
               <Show when={current().shared && !current().enabled}>
-                <p class="oauth-shared-note">Shared by your admins. Enable it to use its tools in this agent.</p>
+                <p class="oauth-shared-note">Shared by your admins.{canConfigureTeam() ? " Enable it to use its tools in this agent." : ""}</p>
               </Show>
               <Show when={!current().shared || current().enabled}>
               <Show when={current().auth !== "oauth"}>

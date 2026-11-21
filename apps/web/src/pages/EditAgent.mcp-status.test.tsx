@@ -56,6 +56,7 @@ it("waits for all fast inputs, paints final Top/name order, then checks active c
   await tick(); await tick();
   const cards = getAllByRole(document.body, "listitem");
   expect(cards.map((card) => within(card).getAllByRole("link")[0]?.textContent)).toEqual(["Zuluhttps://zulu.test/mcp", "Alphahttps://alpha.test/mcp", "Betahttps://beta.test/mcp", "NotesNotes"]);
+  expect(queryByRole(document.body, "button", { name: "Add custom extension" })).toBeNull();
   expect(paintedAtStatusStart).toEqual([true, true]);
   expect(within(cards[0]!).getByRole("status").textContent).toBe("Checking…");
   expect(within(cards[1]!).getByRole("status").textContent).toBe("Checking…");

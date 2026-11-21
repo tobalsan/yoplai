@@ -133,13 +133,13 @@ describe("McpServerDetails", () => {
     expect(button("Refresh icon")).toBeUndefined();
   });
 
-  it("hides Remove server from non-admins", async () => {
+  it("hides Remove and Refresh icon from callers without agent management", async () => {
     fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: false, servers: [
       { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state: "connected", personalState: "connected", teamState: "connected", readOnly: false },
     ] });
     await mount();
     expect(button("Remove server")).toBeUndefined();
-    expect(button("Refresh icon")).toBeTruthy();
+    expect(button("Refresh icon")).toBeUndefined();
   });
 
   it("shows Remove server to admins and surfaces a remove failure", async () => {
@@ -209,12 +209,21 @@ describe("McpServerDetails", () => {
     await tick();
     expect(setSharedMcpServerMock).toHaveBeenCalledWith("scribe", "docs", true, undefined);
   });
+
+  it.each([false, true])("hides the shared server toggle from non-managers when enabled is %s", async (enabled) => {
+    fetchMcpServersMock.mockResolvedValue({ canConfigureTeam: false, servers: [
+      { name: "docs", type: "http", url: "https://docs.test/mcp", auth: "none", state: "connected", readOnly: true, shared: true, enabled },
+    ] });
+    await mount();
+    expect(container.querySelector("h1")?.textContent).toBe("Docs");
+    expect(button(enabled ? "Disable" : "Enable")).toBeUndefined();
+  });
 });
 
 
 it("refreshes a user HTTP icon immediately while live status still contains the old icon", async () => {
   const server = { name: "docs", type: "http", url: "https://docs.test/mcp", iconUrl: "https://old.test/icon.png", auth: "oauth", state: "connected", readOnly: false };
-  fetchMcpServersMock.mockResolvedValue({ servers: [server], canConfigureTeam: false });
+  fetchMcpServersMock.mockResolvedValue({ servers: [server], canConfigureTeam: true });
   const refresh = Promise.withResolvers<{ status: string; server: object }>();
   refreshMcpServerIconMock.mockReturnValue(refresh.promise);
   await mount();

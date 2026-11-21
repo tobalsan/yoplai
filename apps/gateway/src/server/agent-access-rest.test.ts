@@ -182,6 +182,7 @@ describe("REST per-agent access gating (multi-user)", () => {
 
     const { api } = await import("./api.core.js");
     api.get("/mcp/oauth/identity", (c: Context) => c.json({ auth: c.get("multiUserAuthContext") ?? null }));
+    api.get("/mcp/management", (c: Context) => c.json({ canManage: c.get("mcpCanManageAgent") }));
     const serverMod = await import("./index.js");
     server = serverMod.startServer(0, "127.0.0.1");
     await new Promise<void>((resolve) => {
@@ -244,6 +245,26 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { api } = await import("./api.core.js");
     const directResponse = await api.request("/mcp/oauth/identity", { headers: { [HEADER]: spoofed } });
     expect(await directResponse.json()).toEqual({ auth: null });
+  });
+
+  it("passes the agent management decision to inner MCP routes", async () => {
+    const endpoint = `http://127.0.0.1:${port}/api/mcp/management`;
+    for (const [user, role, canManage] of [
+      ["alice", "user", false],
+      ["red-admin", "admin", true],
+      ["root", "superadmin", true],
+    ] as const) {
+      const response = await fetch(`${endpoint}?agent=allowed-agent&mcpCanManageAgent=true`, {
+        headers: { ...authHeader(user, role), "mcpCanManageAgent": "true" },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ canManage });
+    }
+    const denied = await fetch(`${endpoint}?agent=blocked-agent`, {
+      headers: authHeader("red-admin", "admin"),
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: "forbidden" });
   });
 
   it("guards MCP OAuth agent query routes while allowing callbacks", async () => {

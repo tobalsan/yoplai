@@ -220,10 +220,10 @@ export function buildVolumeMounts(
 
   addMount(mounts, workspace, "/workspace", !sandbox?.workspaceWritable);
 
-  // A writable workspace must not let the agent rewrite its own operator
-  // instructions or sandbox/tool config (agent.yaml is hot-reloaded).
+  // Keep existing operator instructions and agent/MCP config read-only
+  // within a writable workspace.
   if (sandbox?.workspaceWritable) {
-    for (const name of ["AGENTS.md", "agent.yaml"]) {
+    for (const name of ["AGENTS.md", "agent.yaml", "mcp.json"]) {
       const filePath = path.join(workspace, name);
       if (fs.existsSync(filePath)) {
         addMount(mounts, filePath, `/workspace/${name}`, true);

@@ -345,6 +345,7 @@ export function EditAgent() {
     const loaded = !mcpServers.error && ["ready", "refreshing"].includes(mcpServers.state) ? mcpServers.latest : undefined;
     return loaded?.agentId === dashboardAgentId() && loaded?.gateway === gateway() ? loaded?.list : undefined;
   });
+  const canConfigureMcpTeam = () => mcpStatus()?.canConfigureTeam !== false;
   const [liveServers, setLiveServers] = createSignal<Record<string, { server?: McpServer; checking: boolean; failed: boolean }>>({});
   let generation = 0;
   const requests = new Map<string, number>();
@@ -805,7 +806,9 @@ export function EditAgent() {
           <section class="edit-agent-extensions">
             <div class="edit-agent-ext-head">
               <h2 class="edit-agent-section-title">Extensions</h2>
-              <button type="button" class="mcp-ext-add-button" disabled={!dashboardAgentId()} title={!dashboardAgentId() ? "An agent fork is required first" : undefined} onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
+              <Show when={canConfigureMcpTeam()}>
+                <button type="button" class="mcp-ext-add-button" disabled={!dashboardAgentId()} title={!dashboardAgentId() ? "An agent fork is required first" : undefined} onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
+              </Show>
             </div>
             <Show when={!addOpen() ? mcpError() : undefined}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
             <Show when={mcpServers.error}>
@@ -818,20 +821,17 @@ export function EditAgent() {
             <Show when={mcpAddedToast()}>
               {(toast) => <ToastNotification message={toast().message} variant={toast().variant} onClose={() => setMcpAddedToast(undefined)} />}
             </Show>
-            <Show when={addOpen()}>
+            <Show when={addOpen() && canConfigureMcpTeam()}>
               <div class="mcp-ext-dialog-backdrop" onClick={(event) => { if (event.target === event.currentTarget && !mcpBusy()) setAddOpen(false); }}>
                 <div role="dialog" aria-modal="true" aria-labelledby="mcp-add-title" class="mcp-ext-dialog">
                   <form onSubmit={(event) => void addCustomExtension(event)}>
                     <h2 id="mcp-add-title">Add custom extension</h2>
                     <label>MCP server URL<input type="url" required placeholder="https://example.com/mcp" value={mcpUrl()} onInput={(event) => setMcpUrl(event.currentTarget.value)} /></label>
-                    {/* Non-admins can only connect for themselves, so no choice is shown. */}
-                    <Show when={mcpStatus()?.canConfigureTeam !== false}>
-                      <fieldset>
-                        <legend>Connection</legend>
-                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!requester().user} onChange={() => setMcpScope("personal")} /> Just me</label>
-                        <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} onChange={() => setMcpScope("team")} /> Whole team</label>
-                      </fieldset>
-                    </Show>
+                    <fieldset>
+                      <legend>Connection</legend>
+                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "personal"} disabled={!requester().user} onChange={() => setMcpScope("personal")} /> Just me</label>
+                      <label><input type="radio" name="mcp-scope" checked={mcpScope() === "team"} onChange={() => setMcpScope("team")} /> Whole team</label>
+                    </fieldset>
                     <Show when={mcpError()}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
                     <Show when={mcpListUnknown()}>
                       <p role="alert" class="mcp-ext-error">The server list could not be read after the error, and the server may exist. Read the list before you add again. <button type="button" disabled={mcpBusy()} onClick={() => void retryListRead()}>Read list</button></p>
