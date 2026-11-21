@@ -77,10 +77,38 @@ function activeCompactionContext(messages: FullHistoryMessage[]): FullHistoryMes
 function buildSummaryPrompt(messages: FullHistoryMessage[]): string {
   return `Summarize the conversation below so another run of the same agent can continue without the older raw context.
 
-Preserve:
-- user goals, decisions, constraints, and preferences
-- important facts, names, IDs, file paths, commands, and unresolved tasks
-- any commitments the assistant made
+Use exactly these eight Markdown \`##\` headings in this order. Replace the instruction under each heading with the relevant content.
+
+## Goal
+State the user's latest goal, why it matters, and which earlier goals their corrections superseded.
+
+## Current state
+In one or two lines, say where the last run stopped and what it is waiting on, if anything (run ID, user reply, or job).
+
+## Next steps
+Number the actions and branch on pending outcomes (e.g. on GO → 2, on NO-GO → 3).
+
+## Decisions
+List settled decisions the next run should keep, one per line with its reason.
+
+## Open asks to the user
+List questions already asked that the user has yet to answer.
+
+## Done
+Record completed end states only.
+
+## Pointers
+Keep the paths, run IDs, issue or thread IDs, and commits needed to continue.
+
+## Preferences learned this session
+Keep only preferences newly learned in this session.
+
+Rules:
+- Do not repeat instructions from the system prompt or agent files. The next run receives them again.
+- Collapse resolved history to one line (e.g. "3 review rounds, all findings fixed in v4").
+- Prefer file names over file:line references. If a line reference matters, include the commit it refers to.
+- If the last turn was cut midway, fold its result into Current state and Next steps. Do not append a separate block that contradicts them.
+- Write "(none)" for each empty section and keep its heading.
 
 Do not mention that this is a summary unless it is necessary.
 

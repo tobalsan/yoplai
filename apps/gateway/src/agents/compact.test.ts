@@ -89,6 +89,34 @@ describe("compactAgentSession single-flight coordination", () => {
     );
   });
 
+  it("requests the ordered resume template with the conversation transcript", async () => {
+    const { compactAgentSession } = await import("./compact.js");
+    runAgent.mockResolvedValueOnce({ payloads: [{ text: "summary" }] });
+
+    await compactAgentSession({ agentId: "alpha", sessionId: "s1", sessionKey: "main" });
+
+    const prompt: string = runAgent.mock.calls[0][0].message;
+    const lines = prompt.split("\n");
+    const headings = [
+      "## Goal",
+      "## Current state",
+      "## Next steps",
+      "## Decisions",
+      "## Open asks to the user",
+      "## Done",
+      "## Pointers",
+      "## Preferences learned this session",
+    ];
+    let previousIndex = -1;
+    for (const heading of headings) {
+      const index = lines.indexOf(heading);
+      expect(index, heading).toBeGreaterThan(previousIndex);
+      previousIndex = index;
+    }
+    expect(prompt).toContain("(none)");
+    expect(prompt).toContain("Conversation:\nUSER: hello\n\nASSISTANT: hi there");
+  });
+
   it("coalesces concurrent requests for the same identity into one rewrite and one seed", async () => {
     const { compactAgentSession } = await import("./compact.js");
 
