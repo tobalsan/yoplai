@@ -9,7 +9,7 @@ import type {
 import { getAgent, isAgentActive } from "../config/index.js";
 import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
-import { getSessionCurrentTurn, isStreaming } from "../agents/index.js";
+import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
@@ -266,24 +266,26 @@ export class WsBroker {
       this.send(ws, { type: "error", message: "Forbidden" });
       return;
     }
+    const userId = authContext?.session.userId;
+    const entry = msg.sessionId
+      ? null
+      : await getSessionEntry(msg.agentId, msg.sessionKey, userId);
     if (this.subscribeGenerations.get(ws) !== generation) return;
+    const sessionId = msg.sessionId ?? entry?.sessionId;
+    const session = sessionId ? getSession(msg.agentId, sessionId) : undefined;
+    if (session?.isStreaming && isLiveSessionHiddenFrom(session.storageOwnerId, userId)) {
+      this.send(ws, { type: "error", message: "Session not found" });
+      return;
+    }
 
     this.subscriptions.set(ws, {
       agentId: msg.agentId,
       sessionKey: msg.sessionKey,
       sessionId: msg.sessionId,
     });
-    const entry = msg.sessionId
-      ? null
-      : await getSessionEntry(
-          msg.agentId,
-          msg.sessionKey,
-          authContext?.session.userId
-        );
-    const sessionId = msg.sessionId ?? entry?.sessionId;
-    if (!sessionId || !isStreaming(msg.agentId, sessionId)) return;
 
-    const turn = getSessionCurrentTurn(msg.agentId, sessionId);
+    if (!sessionId || !session?.isStreaming) return;
+    const turn = session.currentTurn;
     if (!turn) return;
     this.send(ws, {
       type: "active_turn",
@@ -416,13 +418,17 @@ export class WsBroker {
   private async broadcastStreamEvent(
     event: AgentStreamEvent
   ): Promise<void> {
+    // Keep the owner at emission time when a session key lookup delays delivery.
+    const ownerId = getSession(event.agentId, event.sessionId)?.storageOwnerId;
     for (const [ws, sub] of this.subscriptions) {
       if (sub.agentId !== event.agentId) continue;
+      const userId = this.authContexts.get(ws)?.session.userId;
+      if (isLiveSessionHiddenFrom(ownerId, userId)) continue;
 
       const sessionId = sub.sessionId ?? (await getSessionEntry(
         sub.agentId,
         sub.sessionKey,
-        this.authContexts.get(ws)?.session.userId
+        userId
       ))?.sessionId;
       if (sessionId !== event.sessionId) continue;
 
@@ -440,10 +446,13 @@ export class WsBroker {
     event: AgentStatusChangeEvent,
     authAdapter: WsBrokerAuthAdapter
   ): Promise<void> {
-    const statusMessage = {
+    const agentStatus = {
       type: "status" as const,
       agentId: event.agentId,
       status: event.status,
+    };
+    const sessionStatus = {
+      ...agentStatus,
       sessionId: event.sessionId,
       sessionStatus: event.sessionStatus,
       ...(event.completion ? { completion: event.completion } : {}),
@@ -458,7 +467,9 @@ export class WsBroker {
       }))
     );
     for (const { ws, allowed } of access) {
-      if (allowed) this.send(ws, statusMessage);
+      if (!allowed) continue;
+      const userId = this.authContexts.get(ws)?.session.userId;
+      this.send(ws, isLiveSessionHiddenFrom(event.ownerId, userId) ? agentStatus : sessionStatus);
     }
   }
 

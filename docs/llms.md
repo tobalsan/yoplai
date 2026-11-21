@@ -456,6 +456,8 @@ In multi-user mode, a superadmin marks an agent workspace skill as System with `
 
 Use schemas in `packages/shared` and broker code in `apps/gateway/src/server/ws-broker.ts` as protocol source of truth; do not duplicate event unions in feature code.
 
+On a multi-user gateway, owned live turns and session-level status are scoped to the history owner. Other users with agent access receive agent-wide status. Web sends, stops, and subscriptions to another user's streaming session return `Session not found`.
+
 ### Sandbox/container flow
 
 The image includes pinned `playwright-cli` and Chromium. Pi Bash inherits `YOPLAI_GATEWAY_URL`, `YOPLAI_AGENT_TOKEN`, and `YOPLAI_DASHBOARD_URL_PREFIX`; browser state/output defaults to `/tmp/playwright`. Use the dashboard skill recipe, then `read` the PNG for an image content block.

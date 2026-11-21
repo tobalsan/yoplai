@@ -8,7 +8,6 @@ import {
   type WebCompletion,
 } from "@yoplai/shared";
 import {
-  abortSession,
   bufferPendingMessage,
   clearSessionHandle,
   enqueuePendingUserMessage,
@@ -71,6 +70,7 @@ type QueuePolicy = {
   message: string;
   sender?: RunAgentParams["sender"];
   params?: RunAgentParams;
+  checkAccess?: () => void;
 };
 
 type QueueDecision =
@@ -81,6 +81,8 @@ export class SessionRunLifecycle {
   private currentTurn: TurnBuffer | null = null;
   private completedTurns: TurnBuffer[] = [];
   private eagerUserFlushes: Promise<void>[] = [];
+  // A timed-out adapter can still finish after the live session has been reused.
+  private run?: { settled: Promise<void>; resolve: () => void };
   // Run-scoped: this lifecycle accepted the user message before the adapter
   // ran (see beginUserTurn). Survives turn_end events clearing currentTurn.
   private preAcceptedRun = false;
@@ -97,6 +99,18 @@ export class SessionRunLifecycle {
     return isStreaming(this.context.agentId, this.context.sessionId);
   }
 
+  private ownsLiveState(): boolean {
+    return !this.run || getSession(this.context.agentId, this.context.sessionId)?.settled === this.run.settled;
+  }
+
+  private publishTurn(turn: TurnBuffer | null): void {
+    if (this.ownsLiveState()) setSessionCurrentTurn(this.context.agentId, this.context.sessionId, turn);
+  }
+
+  clearRunHandle(): void {
+    if (this.ownsLiveState()) clearSessionHandle(this.context.agentId, this.context.sessionId);
+  }
+
   setTraceMetadata(metadata: Record<string, unknown>): void {
     const trace = this.context.trace;
     this.context.trace = {
@@ -108,6 +122,7 @@ export class SessionRunLifecycle {
   emit(event: StreamEvent) {
     const sanitizedEvent = sanitizeForStorage(event);
     this.context.onEvent?.(sanitizedEvent);
+    if (!this.ownsLiveState()) return;
     agentEventBus.emitStreamEvent({
       ...sanitizedEvent,
       agentId: this.context.agentId,
@@ -160,7 +175,15 @@ export class SessionRunLifecycle {
     adapter: SdkAdapter,
     capabilities: SdkCapabilities
   ): Promise<boolean> {
-    if (!this.isStreaming() || !getSession(this.context.agentId, this.context.sessionId)?.abortController) return false;
+    const { agentId, sessionId } = this.context;
+    const session = getSession(agentId, sessionId);
+    const controller = session?.abortController;
+    if (!session?.isStreaming || !controller) return false;
+    const settled = session.settled;
+    const stillStreaming = () => {
+      const current = getSession(agentId, sessionId);
+      return current === session && current.settled === settled && current.isStreaming;
+    };
 
     if (capabilities.interrupt && adapter.abort) {
       const handle = getSessionHandle(
@@ -171,10 +194,10 @@ export class SessionRunLifecycle {
         adapter.abort(handle);
       }
     }
-    abortSession(this.context.agentId, this.context.sessionId);
+    controller.abort();
 
-    const ended = await this.waitForStreamingEnd();
-    if (!ended) {
+    await this.waitForStreamingEnd(stillStreaming);
+    if (stillStreaming()) {
       this.forceClearActiveRun();
     }
     return true;
@@ -193,6 +216,12 @@ export class SessionRunLifecycle {
         !differentRequester &&
         !differentDeviceTurn
       ) {
+        const session = getSession(this.context.agentId, this.context.sessionId);
+        const ownerId = session?.storageOwnerId;
+        const stillOwned = () => {
+          policy.checkAccess?.();
+          return getSession(this.context.agentId, this.context.sessionId)?.storageOwnerId === ownerId;
+        };
         enqueuePendingUserMessage(
           this.context.agentId,
           this.context.sessionId,
@@ -200,6 +229,7 @@ export class SessionRunLifecycle {
           Date.now()
         );
         const existingHandle = await this.waitForSessionHandle();
+        if (!stillOwned()) return { handled: false };
         if (existingHandle) {
           try {
             await policy.adapter.queueMessage(
@@ -214,6 +244,7 @@ export class SessionRunLifecycle {
             // writing it into a runtime nothing is polling.
             if (!isRunSettledError(error)) throw error;
           }
+          if (!stillOwned()) return { handled: false };
         }
       }
 
@@ -247,15 +278,19 @@ export class SessionRunLifecycle {
       this.context.sessionId,
       true,
       abortController,
-      this.context.background
+      this.context.background,
+      { ownerId: this.context.userId ?? null }
     );
     const session = getSession(this.context.agentId, this.context.sessionId);
     if (session) {
       session.requesterId = this.context.requesterId;
       session.deviceTurnToken = this.context.deviceTurnToken;
-      session.storageOwnerId = this.context.userId ?? null;
       session.bufferedTurns = this.completedTurns;
-      session.settled = new Promise<void>((resolve) => { session.resolveSettled = resolve; });
+      let resolve!: () => void;
+      const settled = new Promise<void>((done) => { resolve = done; });
+      this.run = { settled, resolve };
+      session.settled = settled;
+      session.resolveSettled = resolve;
     }
     return abortController;
   }
@@ -265,6 +300,7 @@ export class SessionRunLifecycle {
     adapter: SdkAdapter,
     capabilities: SdkCapabilities
   ) {
+    if (!this.ownsLiveState()) return;
     setSessionHandle(this.context.agentId, this.context.sessionId, handle);
     if (capabilities.queueWhileStreaming && adapter.queueMessage) {
       const buffered = popPendingMessages(
@@ -291,14 +327,16 @@ export class SessionRunLifecycle {
 
   acceptHistoryEvent(event: HistoryEvent): void {
     const sanitizedEvent = sanitizeForStorage(event);
-    agentEventBus.emitHistoryEvent({
-      ...sanitizedEvent,
-      agentId: this.context.agentId,
-      sessionId: this.context.sessionId,
-      sessionKey: this.context.sessionKey,
-      source: this.context.source,
-      trace: this.context.trace,
-    } as AgentHistoryEvent);
+    if (this.ownsLiveState()) {
+      agentEventBus.emitHistoryEvent({
+        ...sanitizedEvent,
+        agentId: this.context.agentId,
+        sessionId: this.context.sessionId,
+        sessionKey: this.context.sessionKey,
+        source: this.context.source,
+        trace: this.context.trace,
+      } as AgentHistoryEvent);
+    }
 
     if (sanitizedEvent.type === "user") {
       this.startTurnWithUser(sanitizedEvent);
@@ -334,9 +372,10 @@ export class SessionRunLifecycle {
         this.context.userId
       );
       this.currentTurn = null;
-      setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
+      this.publishTurn(null);
     }
 
+    if (!this.ownsLiveState()) return;
     const pendingUsers = popAllPendingUserMessages(
       this.context.agentId,
       this.context.sessionId
@@ -375,9 +414,13 @@ export class SessionRunLifecycle {
   }
 
   finishRun(completion?: WebCompletion) {
+    if (!this.ownsLiveState()) {
+      this.run?.resolve();
+      return;
+    }
     clearSessionHandle(this.context.agentId, this.context.sessionId);
     setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
-    setSessionStreaming(this.context.agentId, this.context.sessionId, false, undefined, false, completion);
+    setSessionStreaming(this.context.agentId, this.context.sessionId, false, undefined, false, { completion });
     const session = getSession(this.context.agentId, this.context.sessionId);
     if (session) session.bufferedTurns = undefined;
     session?.resolveSettled?.();
@@ -385,7 +428,7 @@ export class SessionRunLifecycle {
   }
 
   drainPendingMessages(): PendingMessage[] {
-    return popPendingMessages(this.context.agentId, this.context.sessionId);
+    return this.ownsLiveState() ? popPendingMessages(this.context.agentId, this.context.sessionId) : [];
   }
 
   /**
@@ -408,22 +451,15 @@ export class SessionRunLifecycle {
     });
     if (this.currentTurn) {
       // A turn is already streaming: keep queue semantics as today.
-      enqueuePendingUserMessage(
-        this.context.agentId,
-        this.context.sessionId,
-        sanitized.text,
-        sanitized.timestamp
-      );
+      if (this.ownsLiveState()) {
+        enqueuePendingUserMessage(this.context.agentId, this.context.sessionId, sanitized.text, sanitized.timestamp);
+      }
       return;
     }
     const buffer = createTurnBuffer();
     bufferHistoryEvent(buffer, sanitized);
     this.currentTurn = buffer;
-    setSessionCurrentTurn(
-      this.context.agentId,
-      this.context.sessionId,
-      buffer
-    );
+    this.publishTurn(buffer);
     this.preAcceptedRun = true;
     this.initialEchoArmed = true;
     // Preserve legacy Pi-only sessions: backfill self-skips when canonical
@@ -460,9 +496,9 @@ export class SessionRunLifecycle {
     this.eagerUserFlushes = [];
     this.completedTurns.length = 0;
     this.currentTurn = null;
-    setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
+    this.publishTurn(null);
     // Follow-ups steered into this run are part of it.
-    popAllPendingUserMessages(this.context.agentId, this.context.sessionId);
+    if (this.ownsLiveState()) popAllPendingUserMessages(this.context.agentId, this.context.sessionId);
     await this.historyMark?.rollback();
   }
 
@@ -476,11 +512,7 @@ export class SessionRunLifecycle {
     bufferHistoryEvent(buffer, event);
     if (!this.currentTurn) {
       this.currentTurn = buffer;
-      setSessionCurrentTurn(
-        this.context.agentId,
-        this.context.sessionId,
-        buffer
-      );
+      this.publishTurn(buffer);
       this.eagerUserFlushes.push(
         flushUserMessage(
           this.context.agentId,
@@ -489,7 +521,7 @@ export class SessionRunLifecycle {
           this.context.userId
         )
       );
-    } else {
+    } else if (this.ownsLiveState()) {
       enqueuePendingUserMessage(
         this.context.agentId,
         this.context.sessionId,
@@ -501,10 +533,9 @@ export class SessionRunLifecycle {
 
   private ensureCurrentTurn(): TurnBuffer {
     if (!this.currentTurn) {
-      const pendingUser = shiftPendingUserMessage(
-        this.context.agentId,
-        this.context.sessionId
-      );
+      const pendingUser = this.ownsLiveState()
+        ? shiftPendingUserMessage(this.context.agentId, this.context.sessionId)
+        : undefined;
       this.currentTurn = createTurnBuffer();
       if (pendingUser) {
         bufferHistoryEvent(this.currentTurn, {
@@ -521,11 +552,7 @@ export class SessionRunLifecycle {
           )
         );
       }
-      setSessionCurrentTurn(
-        this.context.agentId,
-        this.context.sessionId,
-        this.currentTurn
-      );
+      this.publishTurn(this.currentTurn);
     }
     return this.currentTurn;
   }
@@ -534,7 +561,7 @@ export class SessionRunLifecycle {
     if (this.currentTurn) {
       this.completedTurns.push(this.currentTurn);
       this.currentTurn = null;
-      setSessionCurrentTurn(this.context.agentId, this.context.sessionId, null);
+      this.publishTurn(null);
     }
   }
 
@@ -556,12 +583,10 @@ export class SessionRunLifecycle {
     return undefined;
   }
 
-  private async waitForStreamingEnd(): Promise<boolean> {
+  private async waitForStreamingEnd(stillStreaming: () => boolean): Promise<void> {
     const deadline = Date.now() + INTERRUPT_WAIT_MS;
-    while (Date.now() < deadline) {
-      if (!this.isStreaming()) return true;
+    while (Date.now() < deadline && stillStreaming()) {
       await new Promise((resolve) => setTimeout(resolve, INTERRUPT_POLL_MS));
     }
-    return false;
   }
 }

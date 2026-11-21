@@ -53,6 +53,10 @@ export function getSession(agentId: string, sessionId: string): AgentSession | u
   return sessions.get(`${agentId}:${sessionId}`);
 }
 
+export function isLiveSessionHiddenFrom(ownerId: string | null | undefined, userId: string | undefined): boolean {
+  return userId !== undefined && typeof ownerId === "string" && ownerId !== userId;
+}
+
 export function getOrCreateSession(agentId: string, sessionId: string): AgentSession {
   const key = `${agentId}:${sessionId}`;
   let session = sessions.get(key);
@@ -141,11 +145,23 @@ export function setSessionStreaming(
   streaming: boolean,
   abortController?: AbortController,
   background = false,
-  completion?: WebCompletion
+  { ownerId, completion }: { ownerId?: string | null; completion?: WebCompletion } = {}
 ) {
   const session = getOrCreateSession(agentId, sessionId);
   const wasSessionStreaming = session.isStreaming;
   session.isStreaming = streaming;
+  if (streaming && session.storageOwnerId !== ownerId) {
+    session.storageOwnerId = ownerId;
+    session.currentTurn = null;
+    // A forced stop can leave an old run's queue behind while it settles.
+    if (session.resolveSettled) {
+      const pending = popPendingMessages(agentId, sessionId);
+      session.pendingUserMessages = [];
+      for (const message of pending) {
+        message.params?.onEvent?.({ type: "done", meta: { durationMs: 0, aborted: true } });
+      }
+    }
+  }
   if (streaming && !wasSessionStreaming) session.streamStartedAt = Date.now();
   if (!streaming) session.streamStartedAt = undefined;
   session.background = streaming && background;
@@ -166,6 +182,7 @@ export function setSessionStreaming(
       status: isAgentStreaming ? "streaming" : "idle",
       sessionId,
       sessionStatus: streaming ? "streaming" : "idle",
+      ...(typeof session.storageOwnerId === "string" ? { ownerId: session.storageOwnerId } : {}),
       ...(completion ? { completion } : {}),
     });
   }
@@ -224,6 +241,7 @@ export function deleteSession(agentId: string, sessionId: string): boolean {
       status: isAgentStreaming ? "streaming" : "idle",
       sessionId,
       sessionStatus: "idle",
+      ...(typeof session.storageOwnerId === "string" ? { ownerId: session.storageOwnerId } : {}),
     });
   }
   return true;
