@@ -47,6 +47,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Multi-user gateways return 404 for Better Auth's admin endpoints. Yoplai admins retain access to the built-in user and team administration screens.
 - Threadit isolates agent sessions by top-level message so a failed turn cannot carry its saved history into other branches of the thread.
 - Gateway `send_file` finishes when a file in `/workspace/data` shrinks during delivery and cleans up incomplete copies on cancellation.
 - Extension catalogs mask channel credentials and display non-secret environment references by name. Agent extension blocks can use names from their workspace `.env` or `extensionEnvAllowlist` in `yoplai.json`.

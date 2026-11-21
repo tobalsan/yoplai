@@ -146,7 +146,7 @@ describe("multi-user auth", () => {
     db.close();
   });
 
-  it("grants set-role only to superadmin (admins cannot escalate roles)", async () => {
+  it("limits the Better Auth admin role to user reads", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-auth-"));
     tempDirs.push(tempDir);
 
@@ -201,8 +201,13 @@ describe("multi-user auth", () => {
     // superadmin via the built-in create-user endpoint.
     expect(roles.admin.authorize({ user: ["create"] }).success).toBe(false);
     expect(roles.superadmin.authorize({ user: ["create"] }).success).toBe(true);
-    // Admin retains other staff powers (ban) but not admin impersonation.
-    expect(roles.admin.authorize({ user: ["ban"] }).success).toBe(true);
+    expect(roles.admin.authorize({ user: ["list", "get"] }).success).toBe(true);
+    for (const action of ["ban", "delete", "set-password", "impersonate", "update"]) {
+      expect(roles.admin.authorize({ user: [action] }).success, action).toBe(false);
+    }
+    for (const action of ["list", "revoke", "delete"]) {
+      expect(roles.admin.authorize({ session: [action] }).success, action).toBe(false);
+    }
     expect(
       roles.admin.authorize({ user: ["impersonate-admins"] }).success
     ).toBe(false);

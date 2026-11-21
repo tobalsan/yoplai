@@ -89,6 +89,7 @@ export type { ConnectPromptState, ConnectPromptStore } from "./connect-prompt.js
 export { initializeMultiUserDatabase, getAuthDbPath } from "./db.js";
 export { createMultiUserAuth, getTrustedOrigins } from "./auth.js";
 export type { MultiUserAuth } from "./auth.js";
+export { rejectBetterAuthAdminRoute } from "./routes.js";
 export {
   createTeamStore,
   DEFAULT_TEAM_COLOR,

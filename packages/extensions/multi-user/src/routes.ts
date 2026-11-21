@@ -34,9 +34,25 @@ function getRuntimeOrThrow() {
   return runtime;
 }
 
+export function rejectBetterAuthAdminRoute(pathname: string, requireApiPrefix = false): Response | undefined {
+  // Decode ASCII path characters even when another segment has a malformed escape.
+  const normalized = pathname
+    .replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/$/, "")
+    .toLowerCase();
+  // The gateway strips /api when dispatching to the extension's routes.
+  const path = normalized.replace(/^\/api(?=\/)/, "");
+  if (requireApiPrefix && path === normalized) return;
+  if (path === "/auth/admin" || path.startsWith("/auth/admin/")) {
+    return Response.json({ error: "not_found" }, { status: 404 });
+  }
+}
+
 export function registerMultiUserRoutes(app: Hono): void {
-  // The link routes and the managed-key guards must come before the auth wildcard, which answers every `/auth/*` path.
+  // These routes and guards must run before forwarding to Better Auth.
   registerGatewayLinkRoutes(app);
+  app.use("*", async (c, next) => rejectBetterAuthAdminRoute(new URL(c.req.url).pathname) ?? next());
   app.on(["GET", "POST"], "/auth/*", (c) => {
     const { auth } = getRuntimeOrThrow();
     const url = new URL(c.req.url);
