@@ -155,8 +155,8 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
             }>{(source) => <button role="switch" aria-label={row.name} aria-checked={source().enabled} class="setup-switch" disabled={busy()}
                 onClick={() => void perform(() => toggle(row.id, !source().enabled))}><span /></button>}</Show>
           </div>
+          <Show when={external(row.id)?.message ?? (external(row.id)?.denied ? "Access denied" : undefined)}>{(message) => <p class="setup-row-note" role="alert">{message()}</p>}</Show>
           <Show when={row.id === "claude-code"}><p class="setup-row-note">macOS can ask for Keychain access.</p></Show>
-          <Show when={external(row.id)?.message ?? (external(row.id)?.denied ? "Access denied" : undefined)}>{(message) => <p class="setup-row-note">{message()}</p>}</Show>
           <Show when={attempt()}>{(active) => <div class="setup-row-detail">
             <p role="status">Finish the sign-in in your browser.</p>
             <Show when={active().state === "waiting-code"}>

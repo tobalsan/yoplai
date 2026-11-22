@@ -161,6 +161,26 @@ it.each(["linked", "pending", "unavailable"])("handles a %s server link", async 
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
 });
 
+it("shows an expired Claude Code alert above the Keychain note while Continue is disabled", async () => {
+  const message = "Your Claude Code login expired. Run `claude` in a terminal, then turn this source off and on again.";
+  overrides = (path) => {
+    if (path === "/api/model-access") return response({
+      owned: [], attempts: [], apiKeyProviders: [],
+      external: [{ source: "claude-code", detected: true, enabled: true, denied: false, message }],
+    });
+    if (path === "/api/model-access/models") return response({ models: [] });
+  };
+  boot("/setup");
+  await modelScreen();
+
+  const row = within(await findByRole(root, "region", { name: "Claude Code" }));
+  const alert = row.getByRole("alert");
+  const note = row.getByText("macOS can ask for Keychain access.");
+  expect(alert.textContent).toBe(message);
+  expect(alert.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect((await button("Continue") as HTMLButtonElement).disabled).toBe(true);
+});
+
 it("resumes sign-in after reload, submits a code, and cancels a waiting attempt", async () => {
   let state: string | undefined;
   let sentCode: unknown;
