@@ -41,6 +41,8 @@ import { ToastNotification, type ToastVariant } from "../components/ui/Toast";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { AgentConnectionsPanel } from "../components/AgentConnectionsPanel";
 import { McpExtensionCard, MCP_EXTENSION_STYLES } from "../components/McpExtensionCard";
+import { AgentConfigSidebar } from "../components/AgentConfigSidebar";
+import { capabilities } from "../lib/capabilities";
 import { addMcpServer, mcpDisplayName, fetchMcpServer, fetchMcpServersFast, type McpScope, type McpServer } from "../api/mcp-servers";
 import { onOAuthReturn } from "../lib/oauth-popup";
 import { readOAuthResult } from "../lib/oauth-return";
@@ -658,6 +660,7 @@ export function EditAgent() {
 
   return (
     <Show when={requester().ready}>
+      <div class="edit-agent-layout">
       <div class="edit-agent">
         <A href={backTo() ?? "/agents"} class="edit-agent-back" data-tour="back-to-agents">
           {backTo() ? "← Back to chat" : "← Back to agents"}
@@ -968,7 +971,26 @@ export function EditAgent() {
         </Show>
       </div>
 
+        <Show when={gateway() === undefined && agent() && capabilities.agentConfig}>
+          <AgentConfigSidebar agentId={params.agentId} />
+        </Show>
+      </div>
+
       <style>{MCP_EXTENSION_STYLES + `
+        .edit-agent-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 340px;
+          align-items: start;
+        }
+
+        .edit-agent-layout > .edit-agent {
+          min-width: 0;
+        }
+
+        @media (max-width: 900px) {
+          .edit-agent-layout { grid-template-columns: minmax(0, 1fr); }
+        }
+
         .edit-agent {
           padding: 24px;
         }

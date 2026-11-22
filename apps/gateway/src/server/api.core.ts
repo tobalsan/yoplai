@@ -22,6 +22,7 @@ import {
   resolveWorkspaceDir,
 } from "../config/index.js";
 import { isEnvRef } from "../config/secrets.js";
+import { agentConfigAccess } from "../agents/config-access.js";
 import { reloadAfterExtensionWrite as reloadAfterConfigWrite } from "../extensions/reload.js";
 import {
   getExtensionRuntime,
@@ -694,6 +695,12 @@ api.get("/capabilities", async (c) => {
     ...(isRelayEnabled() ? { relayLink: { available: getLinkCallbackPort() !== undefined } } : {}),
     forkedAgents: config.forkedAgents ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
+    agentConfig: agentConfigAccess({
+      config,
+      multiUser: isMultiUserEnabled,
+      local: isRelayEnabled(),
+      requester: authContext ? { role: authContext.user.role } : null,
+    }),
     dashboardEmbed: {
       version: DASHBOARD_EMBED_VERSION,
       assetVersion: DASHBOARD_EMBED_ASSET_VERSION,

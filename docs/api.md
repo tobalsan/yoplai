@@ -94,7 +94,16 @@ Agent creation takes `{ requestId, name, purpose?, avatar, model: { provider,
 model } }`. Use a UUID for `requestId`, an integer from 1 to 10 for `avatar`, and
 an eligible model from the model list. The response is `{ id, instructions }`,
 where `instructions` is `model` or `template` (`201` for creation, `200` when
-reusing a saved request ID).
+reusing a saved request ID). The route also accepts the request when the
+agent creation policy allows it, not only in desktop setup. It needs a JSON body
+and a same-origin browser request.
+
+| Method | Path | Notes |
+| ------ | ---- | ----- |
+| `GET` | `/api/agents/:id/config` | Editable profile. `model` and `instructions` show to editors and staff. `access: { create, edit }`. |
+| `PATCH` | `/api/agents/:id/config` | Any of `name`, `description`, `model`, `instructions`, `globalSkills`. `403 agent_config_disabled` when editing is off. |
+
+`GET /api/capabilities` reports `agentConfig: { create, edit }` for the requester.
 
 ## Extension catalog
 

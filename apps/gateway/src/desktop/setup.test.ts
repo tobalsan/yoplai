@@ -129,7 +129,7 @@ it("applies every refusal to every desktop route before it reads state", async (
     ["POST", "model-access/oauth/anthropic"], ["GET", "model-access/oauth/attempts/test"],
     ["POST", "model-access/oauth/attempts/test/answer"], ["POST", "model-access/oauth/attempts/test/cancel"],
     ["POST", "model-access/api-key"], ["POST", "model-access/external/pi"], ["DELETE", "model-access/openai"],
-    ["GET", "model-access/models"], ["POST", "model-access/models/check"], ["POST", "agents"],
+    ["POST", "model-access/models/check"],
   ];
   state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
   const variants: Array<{ headers?: Record<string, string>; peer?: string; flag?: string; relay?: [string, boolean, boolean, string] }> = [
@@ -212,4 +212,25 @@ it("hides the attempt handle and query when the packaged proxy cannot forward a 
   } finally {
     warn.mockRestore();
   }
+});
+
+it("opens the model list only to local requests when the agent creation policy allows it", async () => {
+  const { app } = await import("../server/index.js");
+  const state = await import("../relay/state.js");
+  state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
+  state.configureRelay("127.0.0.1", false);
+  vi.stubEnv("YOPLAI_DESKTOP", "0");
+  const get = (headers: Record<string, string>, peer = "127.0.0.1") => app.request("http://127.0.0.1:4000/api/model-access/models", {
+    headers: { host: "127.0.0.1:4000", ...headers },
+  }, { incoming: { socket: { remoteAddress: peer } } });
+  for (const refused of [
+    () => get({}, "192.0.2.4"),
+    () => get({ host: "localhost:3000" }),
+    () => get({ origin: "https://evil.example" }),
+    () => get({ "sec-fetch-site": "cross-site" }),
+    () => get({ "x-forwarded-for": "127.0.0.1, 192.0.2.4" }),
+  ]) {
+    expect((await refused()).status).toBe(403);
+  }
+  expect((await get({})).status).toBe(200);
 });

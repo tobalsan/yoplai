@@ -59,6 +59,7 @@ describe("/capabilities API", () => {
       desktopSetup: false,
       forkedAgents: false,
       enableCronMonitoring: false,
+      agentConfig: { create: false, edit: false },
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
     });
   });

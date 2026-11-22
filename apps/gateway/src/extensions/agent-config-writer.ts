@@ -240,6 +240,33 @@ export type WebhookPatch = {
   enabled?: boolean;
 };
 
+export type AgentProfilePatch = {
+  name?: string;
+  /** Empty string removes the description. */
+  description?: string;
+  model?: { provider: string; model: string };
+  globalSkills?: boolean;
+};
+
+/** Write name, description, model, and skill flags of agent.yaml. Other keys stay as they are. */
+export async function updateAgentProfile(
+  workspaceDir: string,
+  patch: AgentProfilePatch
+): Promise<Record<string, unknown>> {
+  return updateAgentConfig(workspaceDir, (doc) => {
+    if (patch.name !== undefined) doc.set("name", patch.name);
+    if (patch.description !== undefined) {
+      if (patch.description === "") doc.delete("description");
+      else doc.set("description", patch.description);
+    }
+    if (patch.model) {
+      doc.setIn(["model", "provider"], patch.model.provider);
+      doc.setIn(["model", "model"], patch.model.model);
+    }
+    if (patch.globalSkills !== undefined) doc.set("globalSkills", patch.globalSkills);
+  });
+}
+
 export async function updateAgentWebhook(
   workspaceDir: string,
   webhookName: string,

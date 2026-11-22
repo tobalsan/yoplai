@@ -18,6 +18,7 @@ import { SessionSearch } from "./components/SessionSearch";
 import { TurnNotifier } from "./components/TurnNotifier";
 import { LeftNavShell } from "./components/LeftNavShell";
 import { AgentCatalog } from "./pages/AgentCatalog";
+import { NewAgent } from "./pages/NewAgent";
 import { MainAgentHome } from "./pages/MainAgentHome";
 import { EditAgent } from "./pages/EditAgent";
 import { ScheduleRuns } from "./pages/ScheduleRuns";
@@ -340,6 +341,10 @@ export default function App() {
             <TeamsRouteShell />
           </GuardedRoute>
         )}
+      />
+      <Route
+        path="/agents/new"
+        component={() => <GuardedRoute><LeftNavShell><NewAgent /></LeftNavShell></GuardedRoute>}
       />
       <Route
         path="/agents/:agentId/edit"

@@ -10,6 +10,7 @@ import {
 } from "../api/teams";
 import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
+import { Button } from "../components/ui/Button";
 import { subscribeToRealtime } from "../api/realtime-client";
 import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-agent";
@@ -110,6 +111,9 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
   return (
     <div class="agent-catalog">
       <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
+      <Show when={capabilities.agentConfig?.create}>
+        <Button variant="primary" icon="fa-solid fa-plus" onClick={() => navigate("/agents/new")}>New agent</Button>
+      </Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}

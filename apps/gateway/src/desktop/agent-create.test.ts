@@ -157,7 +157,7 @@ it("starts empty and serves the new agent and avatar before the create returns",
   await expect(fs.readdir(path.join(home, "run"))).resolves.toEqual([]);
   vi.stubEnv("YOPLAI_DESKTOP", "0");
   expect((await request()).status).toBe(200);
-  expect((await create(body())).status).toBe(403);
+  expect((await create(body())).status).toBe(201);
 });
 
 it("uses the packaged avatar and accepts a write through the packaged UI proxy", async () => {

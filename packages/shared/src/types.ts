@@ -695,6 +695,8 @@ const MultiUserConfigBaseSchema = z.object({
   allowedDomains: z.array(z.string().min(1)).optional(),
   /** Approve new users on sign-up. Default true; false = pending admin approval. */
   autoApprove: z.boolean().optional(),
+  /** Who may create and edit agents in the UI. Default `disabled`. */
+  agentCreation: z.enum(["disabled", "admin", "anyone"]).optional(),
 });
 
 export const MultiUserEmailAndPasswordConfigSchema = z.object({
@@ -1360,6 +1362,8 @@ const GatewayCommonFields = {
     })
     .optional(),
   enableCronMonitoring: z.boolean().optional(),
+  /** Create and edit agents in the UI. Default: on for a local single-user gateway, off otherwise. */
+  agentCreation: z.boolean().optional(),
   canvas: z
     .object({
       enabled: z.boolean().optional().default(true),
@@ -2121,6 +2125,8 @@ export const CapabilitiesResponseSchema = z.object({
     .optional(),
   forkedAgents: z.boolean().optional().default(false),
   enableCronMonitoring: z.boolean().optional(),
+  /** Create and edit permissions of the requester. `edit` follows `create`. */
+  agentConfig: z.object({ create: z.boolean(), edit: z.boolean() }).optional(),
   /** The remote dashboard embed contract. A gateway without it cannot serve remote viewers. */
   dashboardEmbed: z
     .object({

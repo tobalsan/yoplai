@@ -25,6 +25,18 @@ Migrate old centralized agent records with:
 pnpm yoplai agents migrate
 ```
 
+## Agent creation and editing
+
+The UI creates and edits agents only when this policy allows it. Editing follows creation.
+
+| Gateway | Setting | Default |
+| ------- | ------- | ------- |
+| Single-user, local (loopback) | `agentCreation: true \| false` in `yoplai.json` | on |
+| Single-user, remote or headless | `agentCreation: true \| false` in `yoplai.json` | off |
+| Multi-user | `extensions.multiUser.agentCreation: "disabled" \| "admin" \| "anyone"` | `disabled` |
+
+`admin` allows staff only. `anyone` allows every signed-in user. Each edit still needs access to that agent.
+
 ## Agent configuration
 
 ```yaml

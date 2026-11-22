@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Create an agent from the Agents page with a name, purpose, avatar, and model. The new agent opens in a config sidebar where you change its name, purpose, model, instructions, and shared-skills setting.
+- Agent creation and editing are on for a local gateway by default. Set `agentCreation` in `yoplai.json` to turn them on or off on any gateway. On a multi-user gateway, set `extensions.multiUser.agentCreation` to `disabled` (default), `admin`, or `anyone`. Editing follows creation.
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.
 - External extension discovery ignores work folders and uses versioned imports.
 - The macOS release has a Developer ID signature and an Apple notarization ticket.

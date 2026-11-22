@@ -107,6 +107,7 @@ export function setCapabilitiesForTests(
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,
+    agentConfig: value.agentConfig,
     relayLink: value.relayLink ?? defaultCapabilities.relayLink,
     gatewayLink: value.gatewayLink,
     user: value.user,

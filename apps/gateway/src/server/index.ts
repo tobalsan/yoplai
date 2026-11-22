@@ -2,11 +2,11 @@ import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
 import { createModelAccess } from "../desktop/model-access.js";
-import { desktopSetupGuard } from "../desktop/guard.js";
+import { desktopSetupGuard, jsonBodyRefusal, localRequestAllowedFor } from "../desktop/guard.js";
 import { createDesktopSetupRoutes } from "../desktop/setup.js";
 import { serve } from "@hono/node-server";
 import path from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { startAppsListener } from "../mcp-apps/views.js";
 import { startUiListener } from "./ui-listener.js";
 import { logError } from "../logging.js";
@@ -35,7 +35,9 @@ import { dashboardViewHttp, ownsDashboardViewPath } from "../relay/dashboard-vie
 import { relayLinkApi } from "../relay/link-routes.js";
 import { ownsLinkPath } from "@yoplai/shared/secret-paths";
 import { startDeviceLinks } from "../relay/device-links.js";
-import { configureRelay, setGatewayListener } from "../relay/state.js";
+import { configureRelay, isRelayEnabled, setGatewayListener } from "../relay/state.js";
+import { agentConfigAccess, isStaffRole, NO_AGENT_CONFIG, type AgentConfigAccess } from "../agents/config-access.js";
+import { createAgentConfigRoutes } from "../agents/config-routes.js";
 import { SKILL_IMPORT_TOKEN_PREFIX } from "../skills/import-tokens.js";
 import { getAgent, CONFIG_DIR } from "../config/index.js";
 import { createDashboardAssetRoutes, createDashboardRoutes } from "../canvas/routes.js";
@@ -139,11 +141,31 @@ const setupGuard = desktopSetupGuard(
 );
 app.use("/api/desktop-setup/*", setupGuard);
 app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
-app.use("/api/model-access/*", setupGuard);
 const modelAccess = createModelAccess(CONFIG_DIR);
-app.route("/api/model-access", modelAccess.routes);
-app.on("POST", "/api/agents", setupGuard);
-app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
+
+// Desktop setup, or the agent creation policy for the create route and the model list.
+// The policy needs a request from this machine (single-user) or a same-origin browser request (multi-user).
+async function agentConfigRequester(c: Context): Promise<{ access: AgentConfigAccess; staff: boolean }> {
+  const config = loadConfig();
+  const multiUser = currentExtensionRuntime().isEnabled("multiUser");
+  const auth = multiUser ? (await loadMultiUserMiddlewareModule()).getRequestAuthContext(c) : null;
+  const trusted = multiUser ? sameOriginRequest(c) : localRequestAllowedFor(c, false, config.ui?.port ?? 3000);
+  const access = trusted ? agentConfigAccess({ config, multiUser, local: isRelayEnabled(), requester: auth ? { role: auth.user.role } : null }) : NO_AGENT_CONFIG;
+  return { access, staff: !multiUser || isStaffRole(auth?.user.role) };
+}
+function sameOriginRequest(c: Context): boolean {
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !allowedCorsOrigins().includes(origin)) return false;
+  const site = c.req.header("sec-fetch-site");
+  return site === undefined || site === "same-origin" || site === "none";
+}
+const agentCreateGuard: MiddlewareHandler = async (c, next) => {
+  if (!(await agentConfigRequester(c)).access.create) return setupGuard(c, next);
+  const refusal = await jsonBodyRefusal(c);
+  return refusal ?? next();
+};
+const modelListGuard: MiddlewareHandler = async (c, next) =>
+  c.req.method === "GET" && c.req.path === "/api/model-access/models" && (await agentConfigRequester(c)).access.create ? next() : setupGuard(c, next);
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
@@ -272,8 +294,15 @@ if (readEnv("DEV")) {
   );
 }
 
+// Authenticated, after the agent access check. The create route and the model list answer before the relay.
+app.use("/api/model-access/*", modelListGuard);
+app.route("/api/model-access", modelAccess.routes);
+app.on("POST", "/api/agents", agentCreateGuard);
+app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
+
 app.use("/api/*", relayDeviceApi());
 app.use("/api/*", relayHttp());
+app.route("/api/agents", createAgentConfigRoutes({ requester: agentConfigRequester, listModels: modelAccess.listModels }));
 
 app.all("/api/*", async (c) => {
   const url = new URL(c.req.url);
