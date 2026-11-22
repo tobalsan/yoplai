@@ -89,6 +89,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Upgrade Pi packages to 1.6.0 and carry forward the bundled Yoplai OAuth pages. Rebuild the sandbox image to include the patched SDK.
 - Agent settings show eligible global skills and let you manage workspace and personal skills per agent. Personal skills start off for every agent after upgrade. The old per-user `enabled` list is ignored.
 - Manage team access and Public or Private visibility directly on an agent. Existing agent access records continue to apply, and startup ignores the legacy agent pool key with a warning.
 - Reduce the macOS app and disk image sizes.

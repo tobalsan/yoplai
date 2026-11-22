@@ -106,7 +106,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@earendil-works/pi-codemode": "1.5.2",
+    "@earendil-works/pi-codemode": "1.6.0",
     "hono": "^4.11.4",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.25.1"
