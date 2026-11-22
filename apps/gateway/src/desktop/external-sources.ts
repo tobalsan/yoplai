@@ -81,6 +81,8 @@ type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
 const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude Code source";
 const CLAUDE_CODE_SIGNED_OUT = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
+const CLAUDE_CODE_EXPIRED = "Your Claude Code login expired. Run `claude` in a terminal, then turn this source off and on again.";
+const PI_EXPIRED = "Your Pi login expired. Run `pi` in a terminal to sign in again.";
 export const CLAUDE_LOGIN_UNAVAILABLE = "This Claude login cannot be used. Sign in with Claude here, or use an API key.";
 
 export function isAnthropicOAuthToken(value: unknown): value is string {
@@ -216,15 +218,24 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       : await fs.access(externalPath(source)).then(() => true, () => false);
     const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
-    const rows = providers.map(({ provider, type, supported, key, expires, message }) => {
-      const usable = available({ provider, type, supported, key, expires });
+    const credentials = providers.map((entry) => {
+      const usable = available(entry);
+      const expired = !usable && entry.supported && entry.type === "oauth" && Boolean(entry.key)
+        && Number.isFinite(entry.expires);
+      return { entry, usable, expired };
+    });
+    const fileExpiryMessage = !credentials.some(({ usable }) => usable) && credentials.some(({ expired }) => expired)
+      ? (source === "codex" ? CODEX_EXPIRED : source === "pi" ? PI_EXPIRED : undefined)
+      : undefined;
+    const rows = credentials.map(({ entry: { provider, type, supported, message }, usable, expired }) => {
       return {
         provider, type, available: usable,
-        ...(source === "claude-code" && !usable ? { message: CLAUDE_CODE_SIGNED_OUT }
+        ...(source === "claude-code" && !usable ? { message: expired ? CLAUDE_CODE_EXPIRED : CLAUDE_CODE_SIGNED_OUT }
+          : expired && fileExpiryMessage ? { message: fileExpiryMessage }
           : !supported ? { message: message ?? "Not supported yet" } : {}),
       };
     });
-    const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : undefined;
+    const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : fileExpiryMessage;
     return {
       source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
       ...(message ? { message } : {}),

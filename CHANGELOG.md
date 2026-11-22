@@ -36,6 +36,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
 - Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
 - Desktop setup checks and uses the current model endpoint, sends Claude subscription users to sign-in, and can use a valid Pi login when the Codex CLI login expired.
+- Desktop setup shows expired Claude Code, Codex CLI, and Pi CLI logins as red alerts with steps to sign in again.
 - Desktop model calls preserve retryable errors without exposing provider diagnostics, and setup request logs hide OAuth attempt handles and queries.
 - Clean sandbox runner image builds now include the workspace patches before installing dependencies.
 - Extension pages and form submissions work through the packaged desktop UI.

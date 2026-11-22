@@ -277,8 +277,9 @@ it.each([
 
 it.each([
   { accessToken: "", expiresAt: Number.MAX_SAFE_INTEGER },
-  { accessToken: "sk-ant-oat-fake", expiresAt: 1 },
+  { accessToken: "sk-ant-oat-fake", expiresAt: "invalid" },
   {},
+  undefined,
 ])("reports a signed-out Claude Code login", async (claudeAiOauth) => {
   const { createExternalSources } = await import("./external-sources.js");
   const sources = createExternalSources(home, { keychain: {
@@ -289,5 +290,65 @@ it.each([
   expect(await sources.enable("claude-code", true, true)).toMatchObject({
     detected: true, enabled: true, denied: false, message,
     providers: [{ provider: "anthropic", type: "oauth", available: false, message }],
+  });
+});
+
+it("reports an expired Claude Code login and clears the message after re-enabling with a fresh token", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  let expiresAt = 1;
+  const sources = createExternalSources(home, { keychain: {
+    exists: async () => true,
+    read: async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt } }),
+  } });
+  const message = "Your Claude Code login expired. Run `claude` in a terminal, then turn this source off and on again.";
+  expect(await sources.enable("claude-code", true, true)).toMatchObject({
+    detected: true, enabled: true, denied: false, message,
+    providers: [{ provider: "anthropic", type: "oauth", available: false, message }],
+  });
+
+  expiresAt = Number.MAX_SAFE_INTEGER;
+  await sources.enable("claude-code", false);
+  await sources.enable("claude-code", true, true);
+  expect((await sources.status()).find((row) => row.source === "claude-code")).toEqual({
+    source: "claude-code", detected: true, enabled: true, denied: false,
+    providers: [{ provider: "anthropic", type: "oauth", available: true }],
+  });
+});
+
+it("reports an expired Codex CLI login", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const payload = { exp: 1, "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } };
+  const access = `fake.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`;
+  await fixture("codex", { tokens: { access_token: access, account_id: "fixture" } });
+
+  const message = "Your Codex login expired. Open Codex once, or sign in here.";
+  const sources = createExternalSources(home);
+  expect(await sources.enable("codex", true)).toMatchObject({
+    detected: true, enabled: true, message,
+    providers: [{ provider: "openai-codex", type: "oauth", available: false, message }],
+  });
+});
+
+it("reports an expired Pi login only when Pi has no usable credential", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const payload = { exp: 1, "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } };
+  const access = `fake.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.sig`;
+  const expired = { "openai-codex": { type: "oauth", access, accountId: "fixture", expires: 1000 } };
+  await fixture("pi", expired);
+
+  const message = "Your Pi login expired. Run `pi` in a terminal to sign in again.";
+  const sources = createExternalSources(home);
+  expect(await sources.enable("pi", true)).toMatchObject({
+    detected: true, enabled: true, message,
+    providers: [{ provider: "openai-codex", type: "oauth", available: false, message }],
+  });
+
+  await fixture("pi", { ...expired, openai: { type: "api_key", key: "fake-file-key" } });
+  expect((await sources.status()).find((row) => row.source === "pi")).toEqual({
+    source: "pi", detected: true, enabled: true, denied: false,
+    providers: [
+      { provider: "openai-codex", type: "oauth", available: false },
+      { provider: "openai", type: "api_key", available: true },
+    ],
   });
 });
