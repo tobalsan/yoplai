@@ -43,8 +43,7 @@ export type DeleteTeamResult = {
 
 export type DeleteTeamPreview = { teamlessUsers: string[] };
 
-// A forked pool agent and its provenance link. `teamId` is null when the fork
-// has no owning team. Public forks remain chattable without team links.
+// An agent's access record and current team links.
 export type AgentFork = {
   sourcePoolId: string;
   forkAgentId: string;
@@ -55,26 +54,6 @@ export type AgentFork = {
   assignedAt: string | null;
   public: boolean;
   assignment: { mode: "list"; teamIds: string[] };
-};
-
-// The single action a pool catalog card should offer the current user. Mirrors
-// the gateway pool-catalog resolver: chat (fork exists + chattable/staff),
-// assign_to_team (staff, no fork yet), or none (visible-but-inert).
-type PoolCatalogAction = "chat" | "assign_to_team" | "none";
-
-// Why action is "none"; null whenever action isn't "none".
-type PoolCatalogNoneReason = "no_workspace" | "unassigned" | "other_team";
-
-export type PoolCatalogEntry = {
-  poolId: string;
-  forked: boolean;
-  // The fork agent id the Chat action routes to; non-null only when action is
-  // "chat".
-  chatAgentId: string | null;
-  action: PoolCatalogAction;
-  reason: PoolCatalogNoneReason | null;
-  // The fork's team display name, when known; null otherwise.
-  teamName: string | null;
 };
 
 async function request<T>(path: string, init?: RequestInit, gateway?: GatewayName): Promise<T> {
@@ -186,8 +165,7 @@ export async function removeTeamMember(
   );
 }
 
-// Admin-only: all fork provenance rows. Lets the pool catalog decide whether a
-// pool agent is already forked (and to which team) or still assignable.
+// Admin-only: agent access records.
 export async function fetchForks(gateway?: GatewayName): Promise<AgentFork[]> {
   const data = await request<{ forks: AgentFork[] }>("/api/admin/forks", undefined, gateway);
   return data.forks;
@@ -201,41 +179,32 @@ export async function fetchTeamAgents(teamId: string): Promise<AgentFork[]> {
   return data.forks;
 }
 
-// Per-user catalog action states for every pool agent. Available to any
-// authenticated user; visibility is global and only the action is gated.
-export async function fetchPoolActions(gateway?: GatewayName): Promise<PoolCatalogEntry[]> {
-  const data = await request<{ actions: PoolCatalogEntry[] }>(
-    "/api/pool-actions", undefined, gateway
-  );
-  return data.actions;
-}
-
 /** Replace an agent's explicit team set. */
 export async function setForkTeams(
-  poolId: string,
+  agentId: string,
   assignment: AgentFork["assignment"],
   gateway?: GatewayName
-): Promise<AgentFork> {
-  const data = await request<{ fork: AgentFork }>(
-    `/api/admin/forks/${encodeURIComponent(poolId)}/teams`,
+): Promise<AgentFork | null> {
+  const data = await request<{ fork: AgentFork | null }>(
+    `/api/admin/forks/${encodeURIComponent(agentId)}/teams`,
     { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) },
     gateway
   );
   return data.fork;
 }
 
-export async function setForkVisibility(poolId: string, isPublic: boolean, gateway?: GatewayName): Promise<AgentFork> {
+export async function setForkVisibility(agentId: string, isPublic: boolean, gateway?: GatewayName): Promise<AgentFork> {
   const data = await request<{ fork: AgentFork }>(
-    `/api/admin/forks/${encodeURIComponent(poolId)}/visibility`,
+    `/api/admin/forks/${encodeURIComponent(agentId)}/visibility`,
     { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ public: isPublic }) },
     gateway
   );
   return data.fork;
 }
 
-export async function removeForkFromTeam(poolId: string, teamId: string): Promise<AgentFork> {
+export async function removeForkFromTeam(agentId: string, teamId: string): Promise<AgentFork> {
   const data = await request<{ fork: AgentFork }>(
-    `/api/admin/teams/${encodeURIComponent(teamId)}/agents/${encodeURIComponent(poolId)}`,
+    `/api/admin/teams/${encodeURIComponent(teamId)}/agents/${encodeURIComponent(agentId)}`,
     { method: "DELETE" }
   );
   return data.fork;

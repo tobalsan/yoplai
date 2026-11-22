@@ -105,7 +105,7 @@ describe("gateway root and resolved config schemas", () => {
 
   it("keep discovery and resolved agent inputs distinct", () => {
     expect(
-      GatewayRootConfigSchema.safeParse({ agents: ["a/*"], pool: "p/*" })
+      GatewayRootConfigSchema.safeParse({ agents: ["a/*"] })
         .success
     ).toBe(true);
     expect(GatewayRootConfigSchema.safeParse({ agents: [agent] }).success).toBe(
@@ -120,16 +120,8 @@ describe("gateway root and resolved config schemas", () => {
     );
     expect(GatewayConfigSchema.safeParse({}).success).toBe(false);
     expect(
-      GatewayConfigSchema.parse({ version: 2, agents: [], pool: [agent] })
-    ).toMatchObject({ version: 2, pool: [{ id: "pom" }] });
+      GatewayConfigSchema.parse({ version: 2, agents: [agent] })
+    ).toMatchObject({ version: 2, agents: [{ id: "pom" }] });
   });
 
-  it("keep forkedAgents only in the resolved config", () => {
-    expect(GatewayRootConfigSchema.parse({ forkedAgents: true })).not.toHaveProperty(
-      "forkedAgents"
-    );
-    expect(
-      GatewayConfigSchema.parse({ agents: [], forkedAgents: true }).forkedAgents
-    ).toBe(true);
-  });
 });

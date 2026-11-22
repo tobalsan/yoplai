@@ -40,12 +40,12 @@ describe("multi-user db", () => {
     legacy.close();
     const openStore = () => {
       const db = initializeMultiUserDatabase(dbPath);
-      return { db, store: createForkStore({ db, getPoolAgent: () => null, getForksDir: () => home }) };
+      return { db, store: createForkStore({ db, agentExists: (id) => id === "legacy" }) };
     };
     let current = openStore();
     expect(current.store.getForkByPool("legacy")).toMatchObject({ public: true, teamId: null, assignment: { mode: "list", teamIds: [] } });
     expect(current.store.listForksForTeam("team")).toEqual([]);
-    current.store.setPublic("legacy", false);
+    current.store.setPublic("legacy", false, "admin");
     current.db.close();
     current = openStore();
     expect(current.store.getForkByPool("legacy")).toMatchObject({ public: false, teamId: null, assignment: { mode: "list", teamIds: [] } });
@@ -243,8 +243,7 @@ describe("fork teams backfill", () => {
     ensureAgentForksTable(db);
     const store = createForkStore({
       db,
-      getForksDir: () => "",
-      getPoolAgent: () => null,
+      agentExists: (id) => id === "scribe",
     });
     store.setTeams("scribe", { mode: "list", teamIds: ["team-b"] }, "admin-1");
 
@@ -400,8 +399,7 @@ describe("assignments → teams migration", () => {
     const membership = createMembershipStore(db);
     const forks = createForkStore({
       db,
-      getForksDir: () => "/tmp/agents",
-      getPoolAgent: () => null,
+      agentExists: (id) => id === "scribe" || id === "sage",
     });
     const resolver = createAccessResolver({ membership, forks });
 

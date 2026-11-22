@@ -64,7 +64,6 @@ import { SuggestionCards } from "./SuggestionCards";
 import { showToast } from "../lib/toast";
 import { ChatSettingsMenu } from "./ChatSettingsMenu";
 import { Button } from "./ui/Button";
-import { fetchPoolActions } from "../api/teams";
 import {
   notificationSoundEnabled,
   toggleNotificationSound,
@@ -152,21 +151,6 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
   const [agent] = createResource(() => params.agentId, fetchAgent);
   // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
   const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
-  // Settings live on the pool agent in forked mode; the chat agent is a fork.
-  // A remote agent has no local pool entry. Its settings page resolves the agent on its own gateway.
-  const [settingsPoolActions] = createResource(
-    () => (capabilities.forkedAgents && !agent.loading && !chatGateway() ? params.agentId : null),
-    (chatAgentId) => fetchPoolActions()
-      .then((entries) => ({ chatAgentId, poolId: entries.find((entry) => entry.action === "chat" && entry.chatAgentId === chatAgentId)?.poolId ?? null }))
-      .catch(() => ({ chatAgentId, poolId: null }))
-  );
-  // Ignore a stale result from the previous agent while the new lookup loads.
-  const settingsAgentId = () => {
-    if (chatGateway() || !capabilities.forkedAgents) return params.agentId;
-    const resolved = settingsPoolActions();
-    return resolved?.chatAgentId === params.agentId ? resolved.poolId : null;
-  };
-
   const hasSuperadminRole = (role: string | string[] | null | undefined) => {
     return Array.isArray(role)
       ? role.includes("superadmin")
@@ -939,7 +923,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
           </svg>
           <span class="new-chat-label">New chat</span>
         </button>
-        <ChatSettingsMenu agentId={params.agentId} settingsAgentId={settingsAgentId()} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
+        <ChatSettingsMenu agentId={params.agentId} settingsAgentId={params.agentId} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
       </div>
   );
 
@@ -968,7 +952,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
         onRestore={async () => { await session.restoreArchived(); }}
       />
 
-      <ScheduleAlertsBanner agentId={params.agentId} gateway={chatGateway()} schedulesAgentId={settingsAgentId() ?? undefined} />
+      <ScheduleAlertsBanner agentId={params.agentId} gateway={chatGateway()} />
 
       <div class="chat-body" role="region" aria-label="Chat transcript">
         <div class="hero-spacer hero-spacer-top" />

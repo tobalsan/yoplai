@@ -53,12 +53,10 @@ const {
   fetchChatProjectMock,
   fetchMainAgentPreferenceMock,
   fetchMainAgentOptionsMock,
-  fetchPoolActionsMock,
   routeState,
 } = vi.hoisted(() => ({
   fetchMainAgentPreferenceMock: vi.fn(),
   fetchMainAgentOptionsMock: vi.fn(),
-  fetchPoolActionsMock: vi.fn(),
   fetchAgentMock: vi.fn(),
   fetchAgentSuggestionsMock: vi.fn(),
   fetchSimpleHistoryMock: vi.fn(),
@@ -141,7 +139,6 @@ vi.mock("../api/main-agent", () => ({
   saveMainAgentPreference: vi.fn(),
 }));
 
-vi.mock("../api/teams", () => ({ fetchPoolActions: fetchPoolActionsMock }));
 
 vi.mock("../api/chat-projects", () => ({
   fetchChatProject: fetchChatProjectMock,
@@ -302,7 +299,6 @@ describe("ChatView abort handling", () => {
     });
     fetchMainAgentPreferenceMock.mockResolvedValue({ mainAgentId: null, accessible: false, pickerDismissedAt: null });
     fetchMainAgentOptionsMock.mockResolvedValue({ preference: null, agents: [{ id: "agent-1", name: "Agent" }, { id: "agent-2", name: "Other" }] });
-    fetchPoolActionsMock.mockResolvedValue([]);
     setRouteVersion(0);
     setRouteAgentVersion(0);
   });
@@ -1495,33 +1491,14 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it("links menu settings to the pool agent in forked mode and hides the entry without a match", async () => {
-    setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
-    fetchPoolActionsMock.mockResolvedValue([{ poolId: "pool-1", action: "chat", chatAgentId: "agent-1", forked: true, reason: null, teamName: null }]);
-    const first = renderView();
-    queryByRole(first.container, "button", { name: "Chat settings" })!.click();
-    await waitFor(() => expect(queryByRole(first.container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/pool-1/edit"));
-    first.dispose();
-    fetchPoolActionsMock.mockResolvedValue([]);
-    const second = renderView();
-    queryByRole(second.container, "button", { name: "Chat settings" })!.click();
-    await tick();
-    await tick();
-    expect(queryByRole(second.container, "menuitem", { name: "Agent settings" })).toBeNull();
-    second.dispose();
-  });
 
-  it("links the chat settings menu of a remote agent to its qualified route and never reads the local pool", async () => {
-    setCapabilitiesForTests({ multiUser: false, forkedAgents: true });
+  it("links the chat settings menu of a remote agent to its qualified route", async () => {
     routeState.agentId = "pom%40ams";
     fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: "Pom (remote)", gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
-    // A local pool entry with the same chat ID must not capture the remote agent.
-    fetchPoolActionsMock.mockResolvedValue([{ poolId: "local-pool", action: "chat", chatAgentId: "pom@ams", forked: true, reason: null, teamName: null }]);
     const { container, dispose } = renderView();
     await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
     queryByRole(container, "button", { name: "Chat settings" })!.click();
     await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit"));
-    expect(fetchPoolActionsMock).not.toHaveBeenCalled();
     dispose();
   });
 

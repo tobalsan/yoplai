@@ -2,16 +2,10 @@ import { setupRepairHref } from "../desktop-setup/repair";
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { RemoteAgentMark } from "../components/RemoteAgentMark";
 import { A, useNavigate } from "@solidjs/router";
-import { fetchAgents, fetchPool } from "../api";
+import { fetchAgents } from "../api";
 import { startNewChat } from "../api/chat";
-import {
-  fetchPoolActions,
-  type PoolCatalogEntry,
-} from "../api/teams";
-import { useSession } from "../auth/client";
 import { capabilities } from "../lib/capabilities";
 import { subscribeToRealtime } from "../api/realtime-client";
-import { hasStaffRole as hasAdminRole, isSuperadmin as hasSuperadminRole } from "../lib/roles";
 import { fetchMainAgentPreference, saveMainAgentPreference } from "../api/main-agent";
 import { showToast } from "../lib/toast";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -22,76 +16,22 @@ function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
 }
 
-const UNASSIGNED_MESSAGE = "This agent has not been assigned to a team.";
-
-// Copy for a card with no Chat: an admin's unforked card or a superadmin's inert card.
-function unavailableMessage(entry: PoolCatalogEntry | undefined): string {
-  return entry?.reason === "no_workspace"
-    ? "This agent has no workspace."
-    : UNASSIGNED_MESSAGE;
-}
-
 export function AgentCatalog(props: { hideHeading?: boolean }) {
   const [mainAgent, { mutate: setMainAgent }] = createResource(() => fetchMainAgentPreference().catch(() => null));
   const [savingMain, setSavingMain] = createSignal<string | null>(null);
   const navigate = useNavigate();
-  const [pendingMain, setPendingMain] = createSignal<{ chatAgentId: string; name: string } | null>(null);
+  const [pendingMain, setPendingMain] = createSignal<{ agentId: string; name: string } | null>(null);
   const [mainAgentError, setMainAgentError] = createSignal("");
-  const [agents] = createResource(() =>
-    capabilities.forkedAgents ? fetchPool() : fetchAgents()
-  );
-  const session = useSession();
-  const isAdmin = createMemo(() =>
-    hasAdminRole(
-      (session().data?.user as { role?: string | string[] } | undefined)?.role
-    )
-  );
-  const isSuperadmin = createMemo(() =>
-    hasSuperadminRole(
-      (session().data?.user as { role?: string | string[] } | undefined)?.role
-    )
-  );
-  // The per-user action state for every pool card, resolved by the gateway
-  // (chat / assign_to_team / none).
-  const [actions, { refetch: refetchActions }] = createResource(
-    () => capabilities.forkedAgents,
-    (enabled) => (enabled ? fetchPoolActions() : Promise.resolve([]))
-  );
+  const [agents, { refetch: refetchAgents }] = createResource(fetchAgents);
+  const loadedAgents = () => agents.error ? undefined : agents();
   createEffect(() => {
     if (typeof window === "undefined") return;
-    const unsubscribe = subscribeToRealtime({ interests: [{ type: "project" }], onEvent: (event) => { if (event.type === "agent_changed" && event.projectId === "membership") void refetchActions(); } });
+    const unsubscribe = subscribeToRealtime({ interests: [{ type: "project" }], onEvent: (event) => { if (event.type === "agent_changed" && event.projectId === "membership") void refetchAgents(); } });
     onCleanup(unsubscribe);
   });
-  const actionByPool = createMemo(() => {
-    const map = new Map<string, PoolCatalogEntry>();
-    for (const entry of actions() ?? []) map.set(entry.poolId, entry);
-    return map;
-  });
-  // Users and admins only see agents they can chat; admins also see unforked
-  // agents they can assign. Superadmins see every card. Inaccessible cards are
-  // held back until actions resolve so they don't flash in.
-  const visibleAgents = createMemo(() => {
-    const list = agents() ?? [];
-    if (!capabilities.forkedAgents || isSuperadmin()) return list;
-    if (!actions()) return [];
-    return list.filter((agent) => {
-      const action = actionByPool().get(agent.id)?.action;
-      return action === "chat" || (isAdmin() && action === "assign_to_team");
-    });
-  });
-  const isMainCard = (agentId: string) => {
-    const chatAgentId = mainAgentIdFor(agentId);
-    return !!chatAgentId && mainAgent()?.accessible === true && mainAgent()?.mainAgentId === chatAgentId;
-  };
+  const isMainCard = (agentId: string) => mainAgent()?.accessible === true && mainAgent()?.mainAgentId === agentId;
   // Main agent first; Array.sort is stable so the rest keep their order.
-  const sortedAgents = createMemo(() => [...visibleAgents()].sort((a, b) => Number(isMainCard(b.id)) - Number(isMainCard(a.id))));
-  const canEditAgent = (entry: PoolCatalogEntry | undefined) =>
-    !capabilities.forkedAgents || isSuperadmin() || entry?.action === "chat" || entry?.action === "assign_to_team";
-  const mainAgentIdFor = (agentId: string) => {
-    if (!capabilities.forkedAgents) return agentId;
-    const entry = actionByPool().get(agentId);
-    return entry?.action === "chat" ? entry.chatAgentId : null;
-  };
+  const sortedAgents = createMemo(() => [...(loadedAgents() ?? [])].sort((a, b) => Number(isMainCard(b.id)) - Number(isMainCard(a.id))));
   const makeMainAgent = async (agentId: string, name: string) => {
     if (savingMain()) return;
     setSavingMain(agentId);
@@ -116,7 +56,7 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
           description={`Home opens a fresh chat with ${pending().name}. Every agent stays available.`}
           confirmLabel="Make main agent"
           error={mainAgentError()}
-          onConfirm={() => makeMainAgent(pending().chatAgentId, pending().name)}
+          onConfirm={() => makeMainAgent(pending().agentId, pending().name)}
           onCancel={() => { setPendingMain(null); setMainAgentError(""); }}
         />
       )}</Show>
@@ -129,64 +69,59 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
         <div class="error">Failed to load agents</div>
       </Show>
 
-      <Show when={capabilities.desktopSetup && !capabilities.multiUser && agents()?.length === 0}>
+      <Show when={capabilities.desktopSetup && !capabilities.multiUser && loadedAgents()?.length === 0}>
         <h2>Create your first agent</h2>
         <button type="button" onClick={() => navigate(setupRepairHref("agent", "/agents"))}>Create agent</button>
       </Show>
 
-      <Show when={agents()}>
+      <Show when={loadedAgents()}>
         <div class="catalog-grid" data-tour="agent-grid">
           <For each={sortedAgents()}>
             {(agent, index) => (
               <div
                 class="catalog-card"
-                classList={{ "is-main": isMainCard(agent.id), "is-chattable": !!mainAgentIdFor(agent.id) }}
+                classList={{ "is-main": isMainCard(agent.id) }}
                 data-tour={index() === 0 ? "agent-card" : undefined}
                 // Whole-card click starts a chat; the Chat link stays the keyboard path.
                 onClick={(event) => {
-                  const chatAgentId = mainAgentIdFor(agent.id);
-                  if (!chatAgentId || (event.target as Element).closest("a, button")) return;
-                  startNewChat(chatAgentId);
-                  navigate(`/chat/${chatAgentId}`);
+                  if ((event.target as Element).closest("a, button")) return;
+                  startNewChat(agent.id);
+                  navigate(`/chat/${agent.id}`);
                 }}
               >
-                <Show when={canEditAgent(actionByPool().get(agent.id))}>
-                  <A
-                    href={`/agents/${agent.id}/edit`}
-                    class="catalog-edit"
-                    data-tour={index() === 0 ? "agent-edit" : undefined}
-                    aria-label={`Edit ${agent.name}`}
-                    title="Edit agent"
+                <A
+                  href={`/agents/${agent.id}/edit`}
+                  class="catalog-edit"
+                  data-tour={index() === 0 ? "agent-edit" : undefined}
+                  aria-label={`Edit ${agent.name}`}
+                  title="Edit agent"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
                   >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  </A>
-                </Show>
-                <Show when={mainAgentIdFor(agent.id)}>{(chatAgentId) => (
-                  <button
-                    type="button"
-                    class="catalog-star"
-                    classList={{ "is-main": isMainCard(agent.id) }}
-                    disabled={isMainCard(agent.id)}
-                    aria-pressed={isMainCard(agent.id)}
-                    aria-label={isMainCard(agent.id) ? `${agent.name} is your main agent` : `Make ${agent.name} your main agent`}
-                    title={isMainCard(agent.id) ? "Main agent" : "Make main agent"}
-                    onClick={() => { setMainAgentError(""); setPendingMain({ chatAgentId: chatAgentId(), name: agent.name }); }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill={isMainCard(agent.id) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>
-                  </button>
-                )}</Show>
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </A>
+                <button
+                  type="button"
+                  class="catalog-star"
+                  classList={{ "is-main": isMainCard(agent.id) }}
+                  disabled={isMainCard(agent.id)}
+                  aria-pressed={isMainCard(agent.id)}
+                  aria-label={isMainCard(agent.id) ? `${agent.name} is your main agent` : `Make ${agent.name} your main agent`}
+                  title={isMainCard(agent.id) ? "Main agent" : "Make main agent"}
+                  onClick={() => { setMainAgentError(""); setPendingMain({ agentId: agent.id, name: agent.name }); }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill={isMainCard(agent.id) ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>
+                </button>
                 <Show when={agent.avatar} fallback={<div class="catalog-avatar"><img src={defaultAvatarUrl(agent.id)} alt={agent.name} class="avatar-img" /></div>}>
                   {(avatar) => (
                     <div class="catalog-avatar">
@@ -198,7 +133,7 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                     </div>
                   )}
                 </Show>
-                <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={agent.gateway ? agent.id : mainAgentIdFor(agent.id)} gateway={agent.gateway} /></div>
+                <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={agent.id} gateway={agent.gateway} /></div>
                 <Show when={agent.role}>
                   <div class="catalog-role">{agent.role}</div>
                 </Show>
@@ -206,50 +141,14 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                   <div class="catalog-description">{agent.description}</div>
                 </Show>
                 <div class="catalog-divider" />
-                {(() => {
-                  const entry = actionByPool().get(agent.id);
-                  if (!capabilities.forkedAgents) {
-                    return (
-                      <A
-                        href={`/chat/${agent.id}`}
-                        class="catalog-chat-link"
-                        data-tour={index() === 0 ? "agent-chat" : undefined}
-                        onClick={() => startNewChat(agent.id)}
-                      >
-                        Chat
-                      </A>
-                    );
-                  }
-                  // Chat: a fork exists and this user can chat it (member or
-                  // staff). Route to the fork agent id, never the pool id.
-                  return (
-                    <Show
-                      when={entry?.action === "chat"}
-                      fallback={
-                        <Show
-                          when={
-                            entry?.action === "none" ||
-                            entry?.action === "assign_to_team"
-                          }
-                          fallback={null}
-                        >
-                          <span class="catalog-unavailable">
-                            {unavailableMessage(entry)}
-                          </span>
-                        </Show>
-                      }
-                    >
-                      <A
-                        href={`/chat/${entry?.chatAgentId ?? agent.id}`}
-                        class="catalog-chat-link"
-                        data-tour={index() === 0 ? "agent-chat" : undefined}
-                        onClick={() => startNewChat(entry?.chatAgentId ?? agent.id)}
-                      >
-                        Chat
-                      </A>
-                    </Show>
-                  );
-                })()}
+                <A
+                  href={`/chat/${agent.id}`}
+                  class="catalog-chat-link"
+                  data-tour={index() === 0 ? "agent-chat" : undefined}
+                  onClick={() => startNewChat(agent.id)}
+                >
+                  Chat
+                </A>
               </div>
             )}
           </For>
@@ -286,6 +185,7 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
 
         .catalog-card {
           position: relative;
+          cursor: pointer;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -297,8 +197,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
           border-radius: 12px;
           transition: border-color 0.2s ease, background 0.2s ease;
         }
-
-        .catalog-card.is-chattable { cursor: pointer; }
 
         .catalog-card:hover,
         .catalog-card:focus-within {
@@ -441,14 +339,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
 
         .catalog-chat-link:hover {
           background: var(--border-default);
-        }
-
-        .catalog-unavailable {
-          display: inline-block;
-          padding: 8px 20px;
-          font-size: 13px;
-          color: var(--text-tertiary);
-          font-style: italic;
         }
 
         @media (max-width: 768px) {

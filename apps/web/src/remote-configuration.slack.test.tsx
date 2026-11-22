@@ -13,7 +13,7 @@ vi.mock("./components/LeftNavShell", () => ({ LeftNavShell: (props: { children?:
 const east = relayPrefix("east");
 const west = relayPrefix("west");
 const caps = (overrides: Record<string, unknown> = {}) => ({
-  version: 2, extensions: {}, agents: [], multiUser: true, forkedAgents: false, enableCronMonitoring: false,
+  version: 2, extensions: {}, agents: [], multiUser: true, enableCronMonitoring: false,
   user: { id: "remote-alice", name: "Alice", role: "user" }, ...overrides,
 });
 const pairing = (slackUserId: string, workspaceId = "T1") => ({ workspaceId, slackUserId, pairedAt: 1_700_000_000_000 });

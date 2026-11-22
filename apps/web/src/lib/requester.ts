@@ -15,7 +15,6 @@ export type Requester = {
   ready: boolean;
   unknown: boolean;
   multiUser: boolean;
-  forkedAgents: boolean;
   enableCronMonitoring: boolean;
   user?: { id: string; name?: string | null; email?: string | null; image?: string | null; role?: SessionRole };
   isExtensionEnabled: (id: string) => boolean;
@@ -44,7 +43,6 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
         ready: !session().isPending && capabilitiesReady(),
         unknown: capabilitiesFailed(),
         multiUser: capabilities.multiUser,
-        forkedAgents: capabilities.forkedAgents === true,
         enableCronMonitoring: capabilities.enableCronMonitoring === true,
         user,
         isExtensionEnabled: (id) => capabilities.extensions[id] === true,
@@ -62,7 +60,6 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
       ready: loaded,
       unknown: loaded && !caps,
       multiUser: caps?.multiUser === true,
-      forkedAgents: caps?.forkedAgents === true,
       enableCronMonitoring: caps?.enableCronMonitoring === true,
       user: caps?.user,
       isExtensionEnabled: (id) => caps?.extensions[id] === true,

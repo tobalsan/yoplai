@@ -7,8 +7,8 @@ import { addMcpServer, cachedMcpServers, disconnectMcpServer, fetchMcpServer, fe
 import { deleteSchedule, fetchScheduleAlerts, fetchScheduleRuns, fetchScheduleRunTrace, fetchSchedules, updateSchedule } from "./schedules";
 import { fetchWebhooks, updateWebhook } from "./webhooks";
 import { claimDashboard, deleteDashboard, fetchDashboardRecipients, fetchDashboards, saveDashboardShares, setDashboardPinned } from "./dashboards";
-import { fetchAgentDashboards, fetchPool } from "./agents";
-import { fetchForks, fetchPoolActions, fetchTeams, setForkTeams, setForkVisibility } from "./teams";
+import { fetchAgentDashboards } from "./agents";
+import { fetchForks, fetchTeams, setForkTeams, setForkVisibility } from "./teams";
 import { fetchTopExtensions } from "./top-extensions";
 
 const east = relayPrefix("east");
@@ -135,7 +135,7 @@ describe("remote configuration calls", () => {
     expect(gateways.requests[1].body).toMatchObject({ returnTo: "/agents/assistant/edit" });
   });
 
-  it("sends the global dashboard, pool, team, and top-extension calls through the named gateway", async () => {
+  it("sends the global dashboard, team, and top-extension calls through the named gateway", async () => {
     await fetchDashboards("east");
     await fetchDashboardRecipients("east");
     await setDashboardPinned("d/1", true, "east");
@@ -143,12 +143,10 @@ describe("remote configuration calls", () => {
     await saveDashboardShares("d/1", [{ kind: "all", mode: "read" }], "east");
     await claimDashboard("d/1", "east");
     await deleteDashboard("d/1", "east");
-    await fetchPool("east");
     await fetchTeams("east");
     await fetchForks("east");
-    await fetchPoolActions("east");
-    await setForkTeams("pool/1", { mode: "list", teamIds: ["t"] }, "east");
-    await setForkVisibility("pool/1", true, "east");
+    await setForkTeams("agent-1", { mode: "list", teamIds: ["t"] }, "east");
+    await setForkVisibility("agent-1", true, "east");
     await fetchTopExtensions("east");
     await fetchScheduleAlerts("east");
     expect(urls()).toEqual([
@@ -159,12 +157,10 @@ describe("remote configuration calls", () => {
       `PATCH ${east}/api/dashboards/d%2F1/sharing`,
       `POST ${east}/api/dashboards/d%2F1/claim`,
       `DELETE ${east}/api/dashboards/d%2F1`,
-      `GET ${east}/api/pool`,
       `GET ${east}/api/teams`,
       `GET ${east}/api/admin/forks`,
-      `GET ${east}/api/pool-actions`,
-      `PUT ${east}/api/admin/forks/pool%2F1/teams`,
-      `PATCH ${east}/api/admin/forks/pool%2F1/visibility`,
+      `PUT ${east}/api/admin/forks/agent-1/teams`,
+      `PATCH ${east}/api/admin/forks/agent-1/visibility`,
       `GET ${east}/api/top-extensions`,
       `GET ${east}/api/schedule-alerts`,
     ]);

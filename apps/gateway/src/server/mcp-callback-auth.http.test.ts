@@ -6,7 +6,7 @@ import { request as httpRequest } from "node:http";
 import type { Context } from "hono";
 import type { AddressInfo } from "node:net";
 import type { MultiUserRuntime } from "../../../../packages/extensions/multi-user/src/runtime-state.js";
-import { writeTestAgent, writeTestV3Config } from "../test-utils/v3-config.js";
+import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 // The real gateway server, the real multi-user authentication middleware, and the real agent gate run over a real
 // Node socket. Only the Better Auth session lookup is replaced: a header names the session, and no header means no cookie.
@@ -34,10 +34,8 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
-    await writeTestAgent(path.join(tmpDir, "pool"), { id: "allowed-agent" });
     await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "allowed-agent", name: "Allowed Agent" }],
-      extraConfig: { pool: [path.join(tmpDir, "pool", "agents", "allowed-agent")] },
       extensions: { multiUser: { enabled: true, oauth: { google: { clientId: "client-id", clientSecret: "client-secret" } }, sessionSecret: "x".repeat(32) } },
     });
 
@@ -57,7 +55,6 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const { createPoolCatalogResolver } = await import("../../../../packages/extensions/multi-user/src/catalog.js");
     const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
@@ -71,8 +68,7 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     dbMod.ensureUserOnboardingTable(db);
     dbMod.ensureUserAgentConnectPromptTable(db);
     db.prepare("INSERT INTO teams (id, name, createdBy) VALUES ('team-red', 'Red', 'alice')").run();
-    const poolAgent = { id: "allowed-agent", workspaceDir: path.join(tmpDir, "pool", "agents", "allowed-agent") };
-    const forks = createForkStore({ db, getForksDir: () => path.join(tmpDir, "forks"), getPoolAgent: (id) => (id === poolAgent.id ? poolAgent : null) });
+    const forks = createForkStore({ db, agentExists: (id) => id === "allowed-agent" });
     const membership = createMembershipStore(db);
     forks.setTeams("allowed-agent", { mode: "list", teamIds: ["team-red"] }, "alice");
     membership.setMembers("team-red", { mode: "list", userIds: ["alice"] }, "alice");
@@ -80,10 +76,8 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     const access = createAccessResolver({ membership, forks });
     setMultiUserRuntime({
       db, forks, membership, access,
-      catalog: createPoolCatalogResolver({ forks, access, isAgentRunnable: () => true, getTeamName: () => null }),
       onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
-      getPoolAgentIds: () => [poolAgent.id],
       // The session lookup: a header names the session. No header is a request with no cookie.
       auth: { api: { getSession: async ({ headers }: { headers: Headers }) => {
         const id = headers.get(SESSION_HEADER);

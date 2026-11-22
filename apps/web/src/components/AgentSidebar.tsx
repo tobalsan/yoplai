@@ -525,7 +525,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <i class="fa-solid fa-chart-line nav-icon" aria-hidden="true" />
               <span class="nav-full">Dashboards</span>
             </A>
-            <Show when={capabilities.multiUser && capabilities.forkedAgents}>
+            <Show when={capabilities.multiUser}>
               <A
                 href="/teams"
                 class="nav-link"

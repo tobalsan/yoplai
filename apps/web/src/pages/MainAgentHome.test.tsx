@@ -16,8 +16,6 @@ let hangPreference: boolean;
 let sessions: Array<{ agentId: string; lastActivity: number }>;
 let hangSave: boolean;
 let resolveHeldSave: ((response: Response) => void) | undefined;
-let poolActions: Array<{ poolId: string; action: string; chatAgentId: string | null }>;
-let poolAgents: Agent[];
 const requests: Array<{ path: string; method: string; body?: unknown }> = [];
 
 beforeEach(() => {
@@ -30,9 +28,7 @@ beforeEach(() => {
   sessions = [];
   hangSave = false;
   resolveHeldSave = undefined;
-  poolActions = [];
-  poolAgents = [];
-  setCapabilitiesForTests({ forkedAgents: false, multiUser: false });
+  setCapabilitiesForTests({ multiUser: false });
   history.replaceState({}, "", "/");
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -57,8 +53,6 @@ beforeEach(() => {
       return Response.json(preference);
     }
     if (path === "/api/agents") return Response.json(agents);
-    if (path === "/api/pool") return Response.json(poolAgents);
-    if (path === "/api/pool-actions") return Response.json({ actions: poolActions });
     if (path === "/api/agents/sessions") return Response.json({ items: sessions });
     return Response.json(null);
   }));
@@ -267,15 +261,13 @@ describe("main agent home", () => {
     await vi.waitFor(() => expect(container.querySelector("h1")?.textContent).toBe("Chat with solo"));
   });
 
-  it("uses catalog order and runnable fork IDs when there is no recent chat", async () => {
-    setCapabilitiesForTests({ forkedAgents: true });
-    agents = [{ id: "fork-b", name: "Second" }, { id: "fork-a", name: "First" }];
-    poolAgents = [{ id: "pool-a", name: "First" }, { id: "pool-b", name: "Second" }];
-    poolActions = [{ poolId: "pool-a", action: "chat", chatAgentId: "fork-a" }, { poolId: "pool-b", action: "chat", chatAgentId: "fork-b" }];
+  it("uses the agent list order and IDs when there is no recent chat", async () => {
+    setCapabilitiesForTests({ multiUser: true });
+    agents = [{ id: "alpha", name: "First" }, { id: "beta", name: "Second" }];
     await mountHome();
     expect(container.querySelector("h3")?.textContent).toBe("First");
     button("Make First my main agent").click();
-    await vi.waitFor(() => expect(container.querySelector("h1")?.textContent).toBe("Chat with fork-a"));
-    expect(preference.mainAgentId).toBe("fork-a");
+    await vi.waitFor(() => expect(container.querySelector("h1")?.textContent).toBe("Chat with alpha"));
+    expect(preference.mainAgentId).toBe("alpha");
   });
 });

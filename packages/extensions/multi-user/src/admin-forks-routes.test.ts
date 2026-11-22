@@ -78,7 +78,7 @@ function createSession(role: Role) {
 
 let db: Database.Database;
 let homeDir: string;
-let poolDir: string;
+let workspaceDir: string;
 let teamId: string;
 let getSession: ReturnType<typeof vi.fn>;
 
@@ -87,9 +87,7 @@ function buildRuntime() {
   const teams = createTeamStore(db, membership);
   const forks = createForkStore({
     db,
-    getForksDir: () => path.join(homeDir, "agents"),
-    getPoolAgent: (poolId) =>
-      poolId === "scribe" ? { id: "scribe", workspaceDir: poolDir } : null,
+    agentExists: (id) => id === "scribe",
   });
   return {
     audit: { record: recordAudit },
@@ -99,8 +97,8 @@ function buildRuntime() {
     teams,
     membership,
     forks,
+    getAgent: (id: string) => id === "scribe" ? { id, workspaceDir } : undefined,
     access: createAccessResolver({ membership, forks }),
-    getPoolAgentIds: () => ["scribe"],
   };
 }
 
@@ -133,10 +131,10 @@ beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
   homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "yoplai-fork-routes-"));
-  poolDir = path.join(homeDir, "pool", "scribe");
-  fs.mkdirSync(poolDir, { recursive: true });
+  workspaceDir = path.join(homeDir, "agents", "scribe");
+  fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(
-    path.join(poolDir, "agent.yaml"),
+    path.join(workspaceDir, "agent.yaml"),
     "id: scribe\nname: scribe\n"
   );
 
@@ -170,12 +168,50 @@ afterEach(async () => {
 });
 
 describe("admin fork/assignment routes", () => {
+  it("keeps an agent Public when an admin submits an empty first assignment", async () => {
+    const app = await makeApp("admin");
+    const result = await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [] }, "PUT"));
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ fork: null });
+    const list = await app.request(req("/admin/forks", undefined, "GET"));
+    expect(await list.json()).toEqual({ forks: [] });
+    expect(notifyAgentListChanged).not.toHaveBeenCalled();
+    const { canUserUseAgent } = await import("./runtime-state.js");
+    expect(canUserUseAgent("user-1", "scribe")).toBe(true);
+  });
+  it("lets only a superadmin set initial visibility and applies it to chat access", async () => {
+    const app = await makeApp("admin");
+    const { requireAgentAccess } = await import("./middleware.js");
+    app.get("/agents/:id/chat", requireAgentAccess(), (c) => c.json({ ok: true }));
+    const visibility = (agentId: string, value: boolean) =>
+      app.request(req(`/admin/forks/${agentId}/visibility`, { public: value }, "PATCH"));
+    const chat = () => app.request(req("/agents/scribe/chat", undefined, "GET"));
+
+    expect((await visibility("scribe", false)).status).toBe(403);
+    getSession.mockResolvedValue(createSession("user"));
+    expect((await chat()).status).toBe(200);
+    getSession.mockResolvedValue(createSession("superadmin"));
+    const result = await visibility("scribe", false);
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({
+      fork: { forkAgentId: "scribe", createdBy: "superadmin-1", public: false, assignment: { teamIds: [] } },
+    });
+    const missing = await visibility("missing", false);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "Agent not found" });
+    getSession.mockResolvedValue(createSession("user"));
+    expect((await chat()).status).toBe(403);
+    getSession.mockResolvedValue(createSession("superadmin"));
+    expect((await visibility("scribe", true)).status).toBe(200);
+    getSession.mockResolvedValue(createSession("user"));
+    expect((await chat()).status).toBe(200);
+  });
   it("blocks a pending regular user upstream even when the fork is Public", async () => {
     const app = await makeApp("user");
     const { getMultiUserRuntime } = await import("./runtime-state.js");
     const runtime = getMultiUserRuntime()!;
     runtime.forks.setTeams("scribe", { mode: "list", teamIds: [] }, "superadmin-1");
-    runtime.forks.setPublic("scribe", true);
+    runtime.forks.setPublic("scribe", true, "superadmin-1");
     const { requireAgentAccess } = await import("./middleware.js");
     app.get("/agents/:id/chat", requireAgentAccess(), (c) => c.json({ ok: true }));
     expect((await app.request(req("/agents/scribe/chat", undefined, "GET"))).status).toBe(200);
@@ -245,21 +281,21 @@ describe("admin fork/assignment routes", () => {
     expect((await setVisibility(await makeApp("superadmin"), true)).status).toBe(200);
     expect((await superApp.request(req("/admin/forks/scribe/teams", { mode: "all" }, "PUT"))).status).toBe(400);
   });
-  it("sets explicit teams, forks once, and is idempotent", async () => {
-    const app = await makeApp("superadmin");
+  it("lets an admin assign a plain agent to their team without modifying its workspace", async () => {
+    createMembershipStore(db).setMembers(teamId, { mode: "list", userIds: ["admin-1"] }, "superadmin-1");
+    const app = await makeApp("admin");
     const res = await app.request(
       req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId] }, "PUT")
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      fork: { forkAgentId: string; assignment: { mode: string; teamIds: string[] } };
-    };
-    expect(body.fork.forkAgentId).toBe("scribe");
-    expect(body.fork.assignment).toEqual({ mode: "list", teamIds: [teamId] });
-    expect(fs.existsSync(path.join(homeDir, "agents", "scribe"))).toBe(true);
+    expect(await res.json()).toMatchObject({
+      fork: { sourcePoolId: "scribe", forkAgentId: "scribe", public: false, assignment: { mode: "list", teamIds: [teamId] } },
+    });
+    expect(fs.readdirSync(path.join(homeDir, "agents"))).toEqual(["scribe"]);
+    expect(fs.readFileSync(path.join(workspaceDir, "agent.yaml"), "utf8")).toBe("id: scribe\nname: scribe\n");
     expect((await app.request(req("/admin/forks/scribe/teams", { mode: "list", teamIds: [teamId, teamId] }, "PUT"))).status).toBe(200);
     expect(recordAudit).toHaveBeenCalledTimes(1);
-    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_teams", agentId: "scribe", targetId: "scribe", actorUserId: "superadmin-1" }));
+    expect(recordAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "admin.fork_teams", agentId: "scribe", targetId: "scribe", actorUserId: "admin-1" }));
     expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
     expect((await app.request(req(`/admin/teams/${teamId}/agents/scribe`, undefined, "DELETE"))).status).toBe(200);
     expect(recordAudit).toHaveBeenCalledTimes(2);
@@ -324,7 +360,7 @@ describe("admin fork/assignment routes", () => {
     expect(body.fork.assignment).toEqual({ mode: "list", teamIds: [] });
   });
 
-  it("returns 404 assigning an unknown pool id", async () => {
+  it("returns 404 assigning an unknown agent", async () => {
     const app = await makeApp("superadmin");
     const res = await app.request(
       req("/admin/forks/ghost/teams", { mode: "list", teamIds: [teamId] }, "PUT")

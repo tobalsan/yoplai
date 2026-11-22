@@ -10,7 +10,6 @@ const defaultCapabilities: CapabilitiesResponse = {
   agents: [],
   multiUser: false,
   desktopSetup: false,
-  forkedAgents: false,
   enableCronMonitoring: false,
   relayLink: { available: false },
 };
@@ -105,7 +104,6 @@ export function setCapabilitiesForTests(
     multiUser: value.multiUser ?? defaultCapabilities.multiUser,
     desktopSetup: value.desktopSetup === true,
     authMethods: value.authMethods,
-    forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,
     relayLink: value.relayLink ?? defaultCapabilities.relayLink,
     gatewayLink: value.gatewayLink,

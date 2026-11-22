@@ -17,7 +17,7 @@ const east = relayPrefix("east");
 const west = relayPrefix("west");
 
 const caps = (overrides: Record<string, unknown> = {}) => ({
-  version: 2, extensions: { scheduler: true, mcp: true }, agents: [], multiUser: true, forkedAgents: false,
+  version: 2, extensions: { scheduler: true, mcp: true }, agents: [], multiUser: true,
   enableCronMonitoring: true, user: { id: "remote-root", name: "Root", role: "superadmin" }, ...overrides,
 });
 const top = (extensions: string[], candidates = ["exa"]) => ({

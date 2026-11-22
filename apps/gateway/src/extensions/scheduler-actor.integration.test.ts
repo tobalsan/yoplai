@@ -20,16 +20,16 @@ it("rechecks owner account and agent membership before every script-only schedul
     db.prepare("INSERT INTO user VALUES ('alice', 'Alice', 'alice@example.test', 1, 'user', 0)").run();
     ensureTeamsTable(db); ensureTeamMembersTable(db); ensureAgentForksTable(db);
     db.prepare("INSERT INTO teams (id, name, createdBy) VALUES ('team', 'Team', 'alice')").run();
-    const source = path.join(home, "pool");
-    await fs.mkdir(source);
-    await fs.writeFile(path.join(source, "agent.yaml"), "id: alpha\nname: Alpha\n");
-    await fs.writeFile(path.join(source, "mark.sh"), "#!/bin/bash\nprintf fired >> marker.txt\n");
-    const forks = createForkStore({ db, getForksDir: () => path.join(home, "agents"), getPoolAgent: () => ({ id: "alpha", workspaceDir: source }) });
+    const workspace = path.join(home, "agents", "alpha");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(path.join(workspace, "agent.yaml"), "id: alpha\nname: Alpha\n");
+    await fs.writeFile(path.join(workspace, "mark.sh"), "#!/bin/bash\nprintf fired >> marker.txt\n");
+    const forks = createForkStore({ db, agentExists: (id) => id === "alpha" });
     forks.setTeams("alpha", { mode: "list", teamIds: ["team"] }, "alice");
     const membership = createMembershipStore(db);
     membership.setMembers("team", { mode: "list", userIds: ["alice"] }, "alice");
-    setMultiUserRuntime({ db, forks, membership, access: createAccessResolver({ membership, forks }), getPoolAgentIds: () => [] } as unknown as MultiUserRuntime);
-    const agent = { id: "alpha", name: "Alpha", workspace: path.join(home, "agents", "alpha"), model: { provider: "test", model: "test" } } as AgentConfig;
+    setMultiUserRuntime({ db, forks, membership, access: createAccessResolver({ membership, forks }) } as unknown as MultiUserRuntime);
+    const agent = { id: "alpha", name: "Alpha", workspace, model: { provider: "test", model: "test" } } as AgentConfig;
     const config = { version: 3, agents: [agent], extensions: { multiUser: { enabled: true, sessionSecret: "test", emailAndPassword: { enabled: true } } } } as GatewayConfig;
     const mintToolToken = vi.fn(() => ({ token: "fixture-tool-token", gatewayUrl: "http://127.0.0.1:4000", revoke: vi.fn() }));
     setSchedulerContext({

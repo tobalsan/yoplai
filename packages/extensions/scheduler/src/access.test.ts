@@ -76,7 +76,7 @@ describe("scheduled-job agent access", () => {
   });
 
   it("returns an owner's credential pause as an actionable alert", async () => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     actor = { user: { id: "member", role: "user", approved: true }, session: { id: "test", userId: "member" } };
     const job = await getScheduler().add("alpha", {
       name: "Morning inbox", credentialMode: "owner",
@@ -100,7 +100,7 @@ describe("scheduled-job agent access", () => {
   });
 
   it.each([["member", "user"], ["root", "superadmin"]] as const)("hides another owner's pause alert from %s", async (id, role) => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     actor = { user: { id, role, approved: true }, session: { id: "test", userId: id } };
     const job = await getScheduler().add("alpha", {
       name: "Private inbox", credentialMode: "owner",
@@ -120,7 +120,7 @@ describe("scheduled-job agent access", () => {
     ["member", "user", false], ["foreign", "admin", false],
     ["manager", "admin", true], ["root", "superadmin", true],
   ] as const)("shows a Public Team-job pause only to managers: %s", async (id, role, allowed) => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     actor = { user: { id, role, approved: true }, session: { id: "test", userId: id } };
     const job = (await getScheduler().list("alpha"))[0]!;
     Object.assign(job, { enabled: false, pausedReason: {
@@ -192,7 +192,7 @@ describe("scheduled-job agent access", () => {
     ["manager", "admin", ["Team task", "Manager task"]],
     ["member", "user", ["Team task", "Member task"]],
   ] as const)("lists foreign Mine jobs only for superadmins: %s", async (id, role, names) => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     const body = { credentialMode: "owner" as const, schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" } };
     await getScheduler().add("alpha", { ...body, name: "Member task" }, "member");
     await getScheduler().add("alpha", { ...body, name: "Manager task" }, "manager");
@@ -229,7 +229,7 @@ describe("scheduled-job agent access", () => {
   });
 
   it("lets superadmins read foreign Mine runs, traces and output without managing or running the job", async () => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     const ctx = getSchedulerContext();
     ctx.getConfig().enableCronMonitoring = true;
     const workspace = ctx.getAgent("alpha")!.workspace;
@@ -276,7 +276,7 @@ describe("scheduled-job agent access", () => {
   });
 
   it.each([["foreign", "admin", false], ["member", "user", false], ["manager", "admin", true], ["root", "superadmin", true]] as const)("limits Public Team-job management for %s through REST and tools", async (id, role, allowed) => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     actor = { user: { id, role, approved: true }, session: { id: "test", userId: id } };
     const ctx = getSchedulerContext();
     const agent = ctx.getAgent("alpha")!;
@@ -297,7 +297,7 @@ describe("scheduled-job agent access", () => {
   });
 
   it("lets a teamless Public user create and edit Team jobs and manage only their own Mine jobs", async () => {
-    getMultiUserRuntime()!.forks.setPublic("alpha", true);
+    getMultiUserRuntime()!.forks.setPublic("alpha", true, "root");
     actor = { user: { id: "member", role: "user", approved: true }, session: { id: "test", userId: "member" } };
     const body = { agentId: "alpha", name: "Shared", credentialMode: "team", schedule: { cron: "0 8 * * *", tz: "UTC" }, payload: { message: "hello" } };
     const created = await app.request("/api/schedules", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

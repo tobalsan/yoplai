@@ -47,7 +47,7 @@ The choice step is a prompt that looks like a character select screen. It is pla
 
 ### `/api/me/main-agent` (gateway route)
 
-* Eligible agents are the agents the requester can chat with. In fork mode (multi-user with forked agents), an eligible agent is a catalog entry with pool action `chat`. The saved ID is that entry's `chatAgentId`, never a pool template ID. Outside fork mode, every agent from the agent list is eligible. One shared helper resolves the eligible list for the route and for the web.
+* Every agent in the requester’s agent list is eligible. The saved ID is the selected agent’s ID.
 * `GET` returns `{ mainAgentId, accessible: boolean, pickerDismissedAt }`. `accessible` is true only when the saved agent is in the eligible list.
 * `PUT { mainAgentId }` returns 403 when the agent is not eligible. On success it clears `pickerDismissedAt`.
 * `PUT { pickerDismissedAt: now }` records a dismissal without a pick. The server sets the timestamp.
@@ -93,7 +93,7 @@ The choice step is a prompt that looks like a character select screen. It is pla
 ## Testing Decisions
 
 * A good test asserts user-visible behaviour through public seams: HTTP responses, rendered text, roles, labels, and hrefs. No CSS class or DOM path selectors. No checks on store internals.
-* `/api/me/main-agent` routes: GET empty, PUT valid, PUT ineligible agent returns 403, PUT a pool template ID in fork mode returns 403, PUT dismissal, DELETE, GET reports `accessible: false` after the agent disappears, two users keep separate records, single-user mode works. Prior art: the onboarding and connect-prompt route tests in the gateway agent-access REST tests.
+* `/api/me/main-agent` routes: GET empty, PUT valid, PUT ineligible agent returns 403, PUT dismissal, DELETE, GET reports `accessible: false` after the agent disappears, two users keep separate records, single-user mode works. Prior art: the onboarding and connect-prompt route tests in the gateway agent-access REST tests.
 * HomeRoute branching: zero eligible agents shows the catalog, one agent auto-picks, set and accessible redirects to the chat, set and inaccessible shows the picker, dismissed shows the catalog with the picker again, a load failure shows the catalog without the picker. Prior art: `AgentCatalog.test.tsx` and other page tests under the web `pages` folder.
 * MainAgentPicker: `Esc` and outside click keep it open, `x` and "I will decide later" close it and record a dismissal, arrows move focus, confirm saves and shows the chat with the agent name, initial focus lands on the most recent agent. Prior art: component tests under the web `components` folder.
 * MainAgentPreference store and change entry points: no dedicated unit tests. The route tests and the e2e section cover them.
@@ -118,7 +118,7 @@ The choice step is a prompt that looks like a character select screen. It is pla
 
 ## E2E Validation
 
-Follow `docs/validation_e2e.md` with an isolated `.yoplai-e2e` home inside the issue worktree, email/password dummy accounts, two pool agents and runnable forks. Disable Board and Projects so neither owns home. Start only with `YOPLAI_HOME=$(pwd)/.yoplai-e2e pnpm dev` and record the actual gateway/UI ports. Never use a production home or restart the production gateway.
+Follow `docs/validation_e2e.md` with an isolated `.yoplai-e2e` home inside the issue worktree, email/password dummy accounts, two plain agents. Disable Board and Projects so neither owns home. Start only with `YOPLAI_HOME=$(pwd)/.yoplai-e2e pnpm dev` and record the actual gateway/UI ports. Never use a production home or restart the production gateway.
 
 Run the exact changed gateway and web test files serially with `YOPLAI_HOME` unset before the browser scenarios. Keep cookies and authentication artifacts in the ignored temporary home, outside `validation/`.
 
@@ -132,7 +132,7 @@ Run the exact changed gateway and web test files serially with `YOPLAI_HOME` uns
 | Dismissal | Clear the preference through DELETE, visit `/`, dismiss with x or I will decide later. The catalog works and GET has a server-generated dismissal timestamp; the next `/` visit shows the picker again. | `06-dismissed.png`, `06-dismissed.dom.txt` |
 | One agent | Sign in as a user with exactly one eligible agent. Visiting `/` saves that agent and opens chat without a picker. Repeat in an isolated single-user home. A forced save failure shows the catalog, error and Retry, and retry succeeds after recovery. | `07-single.png`, `07-single.dom.txt` |
 | No blank sessions | Before sending any message, record session files and GET `/api/agents/sessions`. Visit home, pick, return, and switch main agents. No history/runtime `.jsonl` or logical `sessions.json` file is created, and the session list stays empty. Then send a first message to prove normal session persistence begins only then. | `08-sessions.json`, filesystem transcript |
-| Removed access | Remove a selected fork's assignment for a normal user. GET reports `accessible: false`; home shows the picker with only eligible agents. A pool template or inaccessible agent PUT returns 403. | redacted access transcript |
+| Removed access | Remove a selected Private agent's team link for a normal user. GET reports `accessible: false`; home shows the picker with only eligible agents. An inaccessible agent PUT returns 403. | redacted access transcript |
 | Failure and responsive behavior | At desktop and 390px widths in light/dark themes, confirm focused avatar and action stay visible, keyboard focus is trapped/restored, and all controls remain reachable. Fail preference/eligible-list loads and hold a request until its finite timeout: catalog stays usable with error and Retry, then recovery works. | `09-mobile.png`, `09-mobile.dom.txt`, failure transcript |
 
 Capture screenshots, matching role-based DOM snapshots, exact commands, ports, implementation revision, and PASS/FAIL/NOT RUN per scenario in `validation/notes.md`. Check browser console errors. A screenshot does not prove server authorization or persistence: re-fetch state and inspect the isolated session files. Record any unavailable provider-dependent first-message run as a harness gap.

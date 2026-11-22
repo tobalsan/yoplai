@@ -1,6 +1,6 @@
 # E2E Validation Playbook
 
-Use this after finishing any ALG-339 child issue. Unit tests are still required,
+Use this playbook to verify user-facing changes. Unit tests are still required,
 but the issue is not done until the changed behavior is proven against a real
 gateway, a real web UI, and an isolated `YOPLAI_HOME`.
 
@@ -15,25 +15,23 @@ steps to the slice they implemented.
 - Always use a temporary `YOPLAI_HOME` inside the working repo.
 - Always launch the actual gateway/web stack, not only unit tests.
 - Capture evidence under `validation/`.
-- Keep the seeded config minimal. Add only the pool agents, fork dirs, teams,
-  users, and auth state needed by the slice.
+- Keep the seeded config minimal. Add only the agents, teams, users, and auth state needed by the slice.
 
 ## 1. Prepare a Temporary Home
 
 From the repo root:
 
 ```bash
-rm -rf .yoplai-e2e validation
-mkdir -p .yoplai-e2e/{pool,agents} validation
+mkdir -p .yoplai-e2e/agents validation
 ```
 
-Create two tiny pool agents. Keep them cheap and deterministic; the goal is to
+Create two tiny agents. Keep them cheap and deterministic; the goal is to
 validate routing/access/UI, not model quality.
 
 ```bash
-mkdir -p .yoplai-e2e/pool/sales .yoplai-e2e/pool/support
+mkdir -p .yoplai-e2e/agents/sales .yoplai-e2e/agents/support
 
-cat > .yoplai-e2e/pool/sales/agent.yaml <<'EOF'
+cat > .yoplai-e2e/agents/sales/agent.yaml <<'EOF'
 id: sales
 name: Sales
 role: Sales Assistant
@@ -44,7 +42,7 @@ model:
 system: You are the Sales test agent. Reply with "sales-ok".
 EOF
 
-cat > .yoplai-e2e/pool/support/agent.yaml <<'EOF'
+cat > .yoplai-e2e/agents/support/agent.yaml <<'EOF'
 id: support
 name: Support
 role: Support Assistant
@@ -62,7 +60,6 @@ Write the temporary config:
 cat > .yoplai-e2e/yoplai.json <<'EOF'
 {
   "version": 3,
-  "pool": "pool/*",
   "agents": "agents/*",
   "gateway": {
     "host": "127.0.0.1",
@@ -82,11 +79,6 @@ cat > .yoplai-e2e/yoplai.json <<'EOF'
 }
 EOF
 ```
-
-If the slice needs a pre-existing runnable agent, copy one from `pool` into
-`agents` and update the config or database link state required by the slice.
-Do not point this temp config at a real Yoplai/customer pool unless the slice
-specifically needs those definitions.
 
 ## 2. Run Required Tests First
 
@@ -194,26 +186,23 @@ Examples:
   then promote/demote another user.
 - Teams CRUD issue: create a team, edit name/description/color/icon, delete it.
 - Membership issue: create two users and two teams, assign one user to both.
-- Agent assignment issue: assign `sales` from the pool, verify a runnable fork
-  appears under `.yoplai-e2e/agents`.
+- Agent assignment issue: assign `sales` to a team and verify the team link appears without workspace edits.
 - Access issue: create one allowed user and one denied user, then prove chat/API
   access differs.
-- UI action-state issue: create pool agents covering each state: no fork,
-  fork assigned to user's team, fork assigned to another team, teamless fork.
+- Visibility issue: cover an agent with no access record, a Private agent linked to the user’s team, and a Private agent linked to another team.
 
 Prefer public/admin APIs or UI flows. Direct SQLite writes are acceptable only
 when the slice under test is not responsible for creating that data.
 
 ## 6. Validate Through the Browser
 
-Drive browser scenarios with either the `playwright-cli` skill or the
-claude-in-chrome MCP tools. Save screenshots and DOM snapshots into
+Drive browser scenarios with `buu`. Save screenshots and DOM snapshots into
 `validation/`.
 
-Minimum browser checks for ALG-339 slices:
+Minimum browser checks:
 
 1. Open `${YOPLAI_E2E_UI}` and confirm the app is using the temp home data.
-2. Open `/agents` and confirm pool agents render from `.yoplai-e2e/pool`.
+2. Open `/agents` and confirm visible agents render from `.yoplai-e2e/agents`.
 3. Open `/teams` and verify the slice-specific team UI behavior.
 4. If the slice changes auth/access, validate with at least two users:
    one allowed and one denied.
@@ -223,7 +212,7 @@ Minimum browser checks for ALG-339 slices:
 For chat/access slices, browser validation must prove the actual user path:
 
 - An allowed user can reach the chat action and send to the assigned agent.
-- A denied user can see the pool/team information but cannot chat/run it.
+- Check that a Private agent is absent from a denied user’s agent list and that a direct chat request returns 403.
 - A staff user can bypass team membership when the PRD says staff bypass applies.
 
 ## 7. Validate APIs and Persistence
@@ -234,7 +223,6 @@ Useful probes:
 
 ```bash
 curl -s "$YOPLAI_E2E_API/api/capabilities" | jq .
-curl -s "$YOPLAI_E2E_API/api/pool" | jq .
 curl -s "$YOPLAI_E2E_API/api/agents" | jq .
 ```
 
@@ -247,7 +235,7 @@ sqlite3 "$YOPLAI_E2E_HOME/auth.db" '.tables'
 
 For assignment/access slices, verify both sides:
 
-- Filesystem: fork folders exist or remain absent as expected.
+- Filesystem: agent folders and `agent.yaml` contents match the pre-assignment state.
 - Database: team, membership, and agent-team link rows match the UI.
 - Runtime/API: allowed users can access the agent; denied users cannot.
 

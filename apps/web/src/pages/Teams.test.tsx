@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   fetchTeamMembers: vi.fn(),
   fetchTeamAgents: vi.fn(),
   fetchUsers: vi.fn(),
-  fetchPool: vi.fn(),
+  fetchAgents: vi.fn(),
   useSession: vi.fn(),
 }));
 
@@ -27,7 +27,7 @@ vi.mock("../api/teams", () => ({
   setTeamMembers: vi.fn(),
 }));
 vi.mock("../api/admin", () => ({ fetchUsers: mocks.fetchUsers }));
-vi.mock("../api/agents", () => ({ fetchPool: mocks.fetchPool }));
+vi.mock("../api/agents", () => ({ fetchAgents: mocks.fetchAgents }));
 vi.mock("../auth/client", () => ({ useSession: mocks.useSession }));
 vi.mock("@solidjs/router", () => ({ A: () => document.createElement("a") }));
 
@@ -51,7 +51,7 @@ describe("team organization", () => {
     mocks.fetchTeamMembers.mockResolvedValue({ teamId: team.id, allUsers: false, members: [{ id: "user-1", name: "Member", email: null }] });
     mocks.fetchTeamAgents.mockResolvedValue([]);
     mocks.fetchUsers.mockResolvedValue([]);
-    mocks.fetchPool.mockResolvedValue([]);
+    mocks.fetchAgents.mockResolvedValue([]);
     mocks.useSession.mockReturnValue(() => ({ data: { user: { role: "superadmin" } } }));
     container = document.createElement("div");
     document.body.append(container);
@@ -145,25 +145,28 @@ describe("team organization", () => {
 
   it("shows Public and Private badges on the team's owned agents", async () => {
     mocks.fetchTeamAgents.mockResolvedValue([
-      { sourcePoolId: "casey", forkAgentId: "Casey", public: true, assignment: { mode: "list", teamIds: [team.id] } },
-      { sourcePoolId: "henry", forkAgentId: "Henry", public: false, assignment: { mode: "list", teamIds: [team.id] } },
+      { sourcePoolId: "old-sales-id", forkAgentId: "sales", public: true, assignment: { mode: "list", teamIds: [team.id] } },
+      { sourcePoolId: "support", forkAgentId: "support", public: false, assignment: { mode: "list", teamIds: [team.id] } },
     ]);
-    mocks.fetchPool.mockResolvedValue([{ id: "casey", name: "Casey Sales", avatar: "/api/pool/casey/avatar" }]);
+    mocks.fetchAgents.mockResolvedValue([
+      { id: "sales", name: "Sales Assistant", avatar: "/api/agents/sales/avatar" },
+      { id: "support", name: "Support Assistant" },
+    ]);
     await click("Members");
-    await vi.waitFor(() => expect(container.textContent).toContain("Casey Sales"));
-    expect(container.querySelector('img[src="/api/pool/casey/avatar"]')).not.toBeNull();
+    await vi.waitFor(() => expect(container.textContent).toContain("Sales Assistant"));
+    expect(container.querySelector('img[src="/api/agents/sales/avatar"]')).not.toBeNull();
     const rows = [...container.querySelectorAll("li")];
-    expect(rows.find((row) => row.textContent?.includes("Casey"))?.textContent).toContain("Public");
-    expect(rows.find((row) => row.textContent?.includes("Henry"))?.textContent).toContain("Private");
+    expect(rows.find((row) => row.textContent?.includes("Sales"))?.textContent).toContain("Public");
+    expect(rows.find((row) => row.textContent?.includes("Support"))?.textContent).toContain("Private");
   });
 
   it("shows the default avatar for a team agent with no avatar", async () => {
     mocks.fetchTeamAgents.mockResolvedValue([
-      { sourcePoolId: "henry", forkAgentId: "Henry", public: false, assignment: { mode: "list", teamIds: [team.id] } },
+      { sourcePoolId: "support", forkAgentId: "support", public: false, assignment: { mode: "list", teamIds: [team.id] } },
     ]);
-    mocks.fetchPool.mockResolvedValue([{ id: "henry", name: "Henry" }]);
+    mocks.fetchAgents.mockResolvedValue([{ id: "support", name: "Support" }]);
     await click("Members");
-    await vi.waitFor(() => expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("henry")));
+    await vi.waitFor(() => expect(defaultAvatarSources(container)).toContain(defaultAvatarUrl("support")));
   });
 
   it("shows member photos with initials for absent or failed photos", async () => {
@@ -188,22 +191,22 @@ describe("team organization", () => {
   it("asks before removing an agent from the team", async () => {
     const { removeForkFromTeam } = await import("../api/teams");
     vi.mocked(removeForkFromTeam).mockResolvedValue(undefined as never);
-    mocks.fetchTeamAgents.mockResolvedValue([{ sourcePoolId: "casey", forkAgentId: "casey", public: false, assignment: { mode: "list", teamIds: [team.id] } }]);
-    mocks.fetchPool.mockResolvedValue([{ id: "casey", name: "Casey" }]);
+    mocks.fetchTeamAgents.mockResolvedValue([{ sourcePoolId: "sales", forkAgentId: "sales", public: false, assignment: { mode: "list", teamIds: [team.id] } }]);
+    mocks.fetchAgents.mockResolvedValue([{ id: "sales", name: "Sales" }]);
     await vi.waitFor(() => expect(container.textContent).toContain("Research"));
     const research = [...container.querySelectorAll("article")].find((card) => card.textContent?.includes("Research"))!;
     [...research.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Members")!.click();
     const remove = await vi.waitFor(() => {
-      const button = container.querySelector<HTMLButtonElement>('[aria-label="Remove Casey from team"]');
+      const button = container.querySelector<HTMLButtonElement>('[aria-label="Remove Sales from team"]');
       expect(button).not.toBeNull();
       return button!;
     });
     remove.click();
     const confirm = () => container.querySelector<HTMLElement>('[role="alertdialog"]');
-    expect(confirm()?.textContent).toContain("If you remove Casey from this team, Casey has no team. Only a superadmin can assign Casey to a team again.");
+    expect(confirm()?.textContent).toContain("If you remove Sales from this team, Sales has no team. Only a superadmin can assign Sales to a team again.");
     expect(removeForkFromTeam).not.toHaveBeenCalled();
     [...confirm()!.querySelectorAll("button")].find((button) => button.textContent === "Remove")!.click();
-    await vi.waitFor(() => expect(removeForkFromTeam).toHaveBeenCalledWith("casey", team.id));
+    await vi.waitFor(() => expect(removeForkFromTeam).toHaveBeenCalledWith("sales", team.id));
     await vi.waitFor(() => expect(confirm()).toBeNull());
   });
 

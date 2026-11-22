@@ -1396,7 +1396,6 @@ const GatewayCommonFields = {
 export const GatewayRootConfigSchema = z.object({
   version: z.literal(3).optional(),
   agents: AgentDiscoveryConfigSchema.optional(),
-  pool: AgentDiscoveryConfigSchema.optional(),
   ...GatewayCommonFields,
 });
 // Keep programmatic configs compatible; parsed configs receive routing defaults.
@@ -1408,8 +1407,6 @@ export type GatewayRootConfig = Omit<z.infer<typeof GatewayRootConfigSchema>, "m
 export const GatewayConfigSchema = z.object({
   version: z.number().optional(),
   agents: z.array(AgentConfigSchema),
-  pool: z.array(AgentConfigSchema).optional(),
-  forkedAgents: z.boolean().optional(),
   ...GatewayCommonFields,
 });
 export type GatewayConfig = Omit<z.infer<typeof GatewayConfigSchema>, "modelRouting"> & {
@@ -2119,7 +2116,6 @@ export const CapabilitiesResponseSchema = z.object({
   authMethods: z
     .object({ google: z.boolean(), emailAndPassword: z.boolean() })
     .optional(),
-  forkedAgents: z.boolean().optional().default(false),
   enableCronMonitoring: z.boolean().optional(),
   /** The remote dashboard embed contract. A gateway without it cannot serve remote viewers. */
   dashboardEmbed: z

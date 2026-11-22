@@ -2,7 +2,6 @@ import { createResource, createEffect, createSignal, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { fetchMainAgentOptions, saveMainAgentPreference } from "../api/main-agent";
 import { startNewChat } from "../api/chat";
-import { capabilities } from "../lib/capabilities";
 import { AgentCatalog } from "./AgentCatalog";
 import { MainAgentPicker } from "../components/MainAgentPicker";
 import { Button } from "../components/ui/Button";
@@ -14,7 +13,7 @@ export function MainAgentHome() {
   const [options, { refetch }] = createResource(async () => {
     setError("");
     try {
-      const state = await fetchMainAgentOptions(capabilities.forkedAgents === true);
+      const state = await fetchMainAgentOptions();
       if (state.agents.length === 1) {
         await saveMainAgentPreference({ mainAgentId: state.agents[0].id });
         state.preference = { mainAgentId: state.agents[0].id, accessible: true, pickerDismissedAt: null };

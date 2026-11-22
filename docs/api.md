@@ -141,7 +141,7 @@ write with a body (`400`). The linked gateway checks the linked user's role.
 - board: `/api/board/*`
 - tracker orchestrator: `/api/orchestrator/*`
 - host OAuth: `/api/oauth/:provider/*`
-- multi-user auth/admin: `/api/auth/*`, `/api/me`, `/api/admin/*`, teams/pool routes. The gateway returns 404 for Better Auth's `/api/auth/admin/*` namespace.
+- multi-user auth/admin: `/api/auth/*`, `/api/me`, `/api/admin/*`, team and agent-access routes. The gateway returns 404 for Better Auth's `/api/auth/admin/*` namespace.
 - webhooks: `/hooks/:agentId/:name/:secret`
 - sandbox tool bridge: `/internal/tools` (per-run token required)
 

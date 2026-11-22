@@ -19,7 +19,7 @@ const agent = "assistant%40east";
 const PROVIDER_URL = "https://provider.example.test/authorize?state=abc";
 
 const remoteCapabilities = {
-  version: 2, extensions: { scheduler: true }, agents: ["assistant"], multiUser: true, forkedAgents: false,
+  version: 2, extensions: { scheduler: true }, agents: ["assistant"], multiUser: true,
   enableCronMonitoring: true, user: { id: "remote-alice", name: "Alice", role: "admin" },
 };
 

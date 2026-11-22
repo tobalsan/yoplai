@@ -43,7 +43,6 @@ vi.mock("../agents/index.js", () => ({ getSessionHistory }));
 
 const config = {
   agents: [{ id: "support", workspace: "/tmp/support", extensions: {} }],
-  pool: [],
 };
 const context = {
   agent: config.agents[0],
@@ -494,7 +493,6 @@ describe("capability discovery tools", () => {
 describe("multi-user capability self-enable", () => {
   let db: ReturnType<typeof initializeMultiUserDatabase>;
   let fixtureDir: string;
-  let poolAgentIds: string[];
 
   beforeEach(() => {
     multiUserEnabled = true;
@@ -510,17 +508,14 @@ describe("multi-user capability self-enable", () => {
     migrateAssignmentsToTeams(db);
     const forks = createForkStore({
       db,
-      getPoolAgent: () => null,
-      getForksDir: () => { throw new Error("Fixture must not create forks on disk"); },
+      agentExists: (id) => id === "legacy" || id === "support",
     });
     const membership = createMembershipStore(db);
-    poolAgentIds = [];
     setMultiUserRuntime({
       db,
       forks,
       membership,
       access: createAccessResolver({ membership, forks }),
-      getPoolAgentIds: () => poolAgentIds,
     } as MultiUserRuntime);
     updateAgentExtensionConfig.mockClear();
     reconcileExternal.mockClear();
@@ -549,7 +544,7 @@ describe("multi-user capability self-enable", () => {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
-  it("lets a user enable a capability on a no-pool plain agent", async () => {
+  it("lets a user enable a capability on an agent with no access record", async () => {
     const plainContext = { ...context, sessionId: "no-pool-plain" };
     await tool("capabilities.list").execute(
       { need: "spreadsheet" },
@@ -573,7 +568,7 @@ describe("multi-user capability self-enable", () => {
     expect(reconcileExternal).toHaveBeenCalledWith(config);
   });
 
-  it("refuses a no-pool Private legacy fork for a non-member", async () => {
+  it("refuses a Private legacy agent for a non-member", async () => {
     const legacyAgent = { ...config.agents[0], id: "legacy", workspace: "/tmp/legacy" };
     const legacyContext = {
       ...context,
@@ -599,30 +594,4 @@ describe("multi-user capability self-enable", () => {
     expect(reconcileExternal).not.toHaveBeenCalled();
   });
 
-  it("keeps refusing a pooled Private fork for a non-member", async () => {
-    poolAgentIds.push("legacy");
-    const legacyAgent = { ...config.agents[0], id: "legacy", workspace: "/tmp/legacy" };
-    const pooledContext = {
-      ...context,
-      agent: legacyAgent,
-      config: { ...config, agents: [config.agents[0], legacyAgent], pool: [legacyAgent] },
-      sessionId: "pooled-restricted",
-    };
-    await tool("capabilities.list", legacyAgent).execute(
-      { need: "spreadsheet" },
-      pooledContext as never
-    );
-
-    await expect(
-      tool("capabilities.enable", legacyAgent).execute(
-        { id: "sheets", kind: "extension" },
-        pooledContext as never
-      )
-    ).resolves.toEqual({
-      outcome: "refused",
-      reason: "You are not allowed to configure this agent.",
-    });
-    expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
-    expect(reconcileExternal).not.toHaveBeenCalled();
-  });
 });

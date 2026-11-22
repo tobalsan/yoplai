@@ -115,23 +115,6 @@ export function registerMultiUserRoutes(app: Hono): void {
     });
   });
 
-  // Per-user pool catalog action states. Every card stays visible (visibility
-  // is global); this only resolves the single action each card should offer for
-  // the current user: chat (fork exists + chattable/staff), assign_to_team
-  // (staff, no fork yet), or none (visible-but-inert). Drives AgentCatalog.
-  app.get("/pool-actions", (c) => {
-    const { catalog, getPoolAgentIds } = getRuntimeOrThrow();
-    const authContext =
-      getRequestAuthContext(c) ?? getForwardedAuthContext(c.req.raw.headers);
-    if (!authContext) return c.json({ error: "unauthorized" }, 401);
-    const actions = catalog.resolvePoolActions(getPoolAgentIds(), {
-      id: authContext.user.id,
-      isStaff: hasAdminRole(authContext),
-      isSuperadmin: hasSuperadminRole(authContext),
-    });
-    return c.json({ actions });
-  });
-
   app.get("/teams", (c) => {
     const { teams, membership } = getRuntimeOrThrow();
     const authContext =

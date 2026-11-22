@@ -23,11 +23,12 @@ const agentYaml = path.join(CONFIG_DIR, "agent.yaml");
 const fixtureYaml = "id: fixture\nname: Fixture\nmodel:\n  provider: openai\n  model: fixture\n";
 const config = GatewayConfigSchema.parse({ version: 3, agents: [{ id: "fixture", name: "Fixture", workspace: CONFIG_DIR, ...(["selection", "double-rename"].includes(mode) ? { extensions: { retained: { enabled: true }, dependent: { enabled: true } } } : {}), model: { provider: "openai", model: "fixture" } }], extensionsPath: root,
   extensions: { sample: { enabled: true }, ...(["recovery-routes", "restart", "status-race"].includes(mode) ? { other: { enabled: true }, dependent: { enabled: true } } : {}), multiUser }, extensionCatalog: { url: `${base}/catalog.json` } });
+const scribeYaml = fixtureYaml.replace("fixture\nname: Fixture", "scribe\nname: Scribe");
+const scribeDir = path.join(CONFIG_DIR, "agents", "scribe");
 if (multiUser) {
-  const poolDir = path.join(CONFIG_DIR, "pool", "scribe");
-  await fs.mkdir(poolDir, { recursive: true });
-  await fs.writeFile(path.join(poolDir, "agent.yaml"), fixtureYaml.replace("fixture\nname: Fixture", "scribe\nname: Scribe"));
-  config.pool = [{ ...config.agents[0], id: "scribe", workspace: poolDir }];
+  await fs.mkdir(scribeDir, { recursive: true });
+  await fs.writeFile(path.join(scribeDir, "agent.yaml"), scribeYaml);
+  config.agents.push({ ...config.agents[0], id: "scribe", name: "Scribe", workspace: scribeDir });
 }
 setLoadedConfig(config);
 const initial = await loadExtensions(config);
@@ -275,7 +276,7 @@ switch (mode) {
   case "fork-race":
   case "write-race":
   case "watch-race": {
-    const disk = { version: 3, agents: multiUser ? "agents/*" : [], ...(multiUser ? { pool: "pool/*" } : {}),
+    const disk = { version: 3, agents: multiUser ? "agents/*" : [],
       extensionsPath: root, extensions: config.extensions, extensionCatalog: config.extensionCatalog };
     await fs.writeFile(getConfigPath(), JSON.stringify(disk));
     const watched = gate();
@@ -292,20 +293,16 @@ switch (mode) {
       await fs.writeFile(getConfigPath(), JSON.stringify({ ...disk, extensionCatalog: { ...disk.extensionCatalog, enabled: true } }));
       const changeTime = new Date(Date.now() + 2000);
       await fs.utimes(getConfigPath(), changeTime, changeTime);
-      const reload = multiUser ? Promise.resolve(app.request("/api/admin/forks/scribe/teams", {
-        method: "PUT", headers: { cookie: cookie!, "content-type": "application/json" },
-        body: JSON.stringify({ mode: "list", teamIds: [] }),
-      })).then(async (response) => assert.equal(response.status, 200, await response.text()))
-        : timer ? watched.promise : reloadAfterExtensionWrite();
       if (multiUser) {
-        const forkFile = path.join(CONFIG_DIR, "agents", "scribe", "agent.yaml");
-        for (let attempt = 0; attempt < 100; attempt++) {
-          if (await fs.stat(forkFile).then(() => true, () => false)) break;
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        assert.ok((await fs.stat(forkFile)).isFile());
-        assert.ok(!loadConfig().agents.some((agent) => agent.id === "scribe"));
+        const assignment = await app.request("/api/admin/forks/scribe/teams", {
+          method: "PUT", headers: { cookie: cookie!, "content-type": "application/json" },
+          body: JSON.stringify({ mode: "list", teamIds: [] }),
+        });
+        assert.equal(assignment.status, 200);
+        assert.equal((await assignment.json() as { fork: { public: boolean } }).fork.public, false);
+        assert.equal(await fs.readFile(path.join(scribeDir, "agent.yaml"), "utf8"), scribeYaml);
       }
+      const reload = timer ? watched.promise : reloadAfterExtensionWrite();
       await new Promise((resolve) => setTimeout(resolve, 40));
       assert.equal(loadConfig().extensionCatalog?.enabled, config.extensionCatalog?.enabled);
       release.resolve();

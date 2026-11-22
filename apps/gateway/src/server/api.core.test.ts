@@ -496,33 +496,6 @@ describe("api core session resolution", () => {
     ]);
   });
 
-  it("returns pool agents without per-user filtering", async () => {
-    const pool = [
-      {
-        id: "gamma",
-        name: "Gamma",
-        model: { provider: "anthropic", model: "claude" },
-      },
-    ];
-    getActiveAgents.mockReturnValue([]);
-    loadConfigValue = {
-      branding: undefined,
-      agents: [],
-      pool,
-      forkedAgents: true,
-    };
-    const { api } = await import("./api.core.js");
-
-    const response = await api.request(new Request("http://localhost/pool"));
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual([
-      expect.objectContaining({
-        id: "gamma",
-        name: "Gamma",
-      }),
-    ]);
-  });
 
   it("searches the caller's sidebar sessions, including project and CLI histories, without tool text", async () => {
     await fs.rm("/tmp/yoplai-test", { recursive: true, force: true });
@@ -1041,7 +1014,7 @@ describe("api core session resolution", () => {
       workspace = await fs.mkdtemp(path.join(os.tmpdir(), "webhook-api-"));
       await fs.writeFile(path.join(workspace, "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: openai\n  model: test\nwebhooks:\n  incoming:\n    prompt: private prompt\n    signingSecret: $env:INCOMING_SECRET\n");
       const agent = { ...parse(await fs.readFile(path.join(workspace, "agent.yaml"), "utf8")), workspaceDir: workspace, workspace: "/wrong/template" };
-      loadConfigValue = { agents: [agent], pool: [{ ...agent, workspaceDir: "/wrong/pool" }], extensions: { multiUser: { enabled: true } }, server: { baseUrl: "https://hooks.example.com/" } };
+      loadConfigValue = { agents: [agent], extensions: { multiUser: { enabled: true } }, server: { baseUrl: "https://hooks.example.com/" } };
       reloadConfig.mockImplementation(() => loadConfigValue);
       await fs.mkdir("/tmp/yoplai-test", { recursive: true });
       await fs.writeFile("/tmp/yoplai-test/webhook-secrets.json", JSON.stringify({ "alpha:incoming": "abc123" }));
@@ -1201,7 +1174,6 @@ describe("api core session resolution", () => {
     it("returns the agent's extension catalog in single-user mode", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha" }],
-        pool: [],
       };
       buildExtensionCatalog.mockResolvedValue(catalog);
       const { api } = await import("./api.core.js");
@@ -1222,69 +1194,10 @@ describe("api core session resolution", () => {
       );
     });
 
-    it("resolves the agent from the pool when not an active agent", async () => {
-      loadConfigValue = {
-        agents: [],
-        pool: [
-          {
-            id: "poolie",
-            name: "Poolie",
-            extensions: { acme: { enabled: true, region: "pool" } },
-          },
-        ],
-      };
-      buildExtensionCatalog.mockResolvedValue(catalog);
-      const { api } = await import("./api.core.js");
 
-      const response = await api.request(
-        new Request("http://localhost/agents/poolie/extensions")
-      );
-
-      expect(response.status).toBe(200);
-      expect(buildExtensionCatalog).toHaveBeenCalledWith(
-        loadConfigValue,
-        expect.not.objectContaining({ extensions: expect.anything() }),
-        { configurable: false, rawConfig: loadConfigValue }
-      );
-    });
-
-    it("uses an existing fork config instead of pool template config", async () => {
-      loadConfigValue = {
-        agents: [
-          {
-            id: "poolie",
-            name: "Fork",
-            extensions: { acme: { enabled: false, region: "fork" } },
-          },
-        ],
-        pool: [
-          {
-            id: "poolie",
-            name: "Poolie",
-            extensions: { acme: { enabled: true, region: "pool" } },
-          },
-        ],
-      };
-      buildExtensionCatalog.mockResolvedValue(catalog);
-      const { api } = await import("./api.core.js");
-
-      const response = await api.request(
-        new Request("http://localhost/agents/poolie/extensions")
-      );
-
-      expect(response.status).toBe(200);
-      expect(buildExtensionCatalog).toHaveBeenCalledWith(
-        loadConfigValue,
-        expect.objectContaining({
-          id: "poolie",
-          extensions: { acme: { enabled: false, region: "fork" } },
-        }),
-        { configurable: true, rawConfig: loadConfigValue }
-      );
-    });
 
     it("404s for an unknown agent", async () => {
-      loadConfigValue = { agents: [], pool: [] };
+      loadConfigValue = { agents: [] };
       const { api } = await import("./api.core.js");
 
       const response = await api.request(
@@ -1296,7 +1209,7 @@ describe("api core session resolution", () => {
     });
 
     it("allows same-team members in multi-user mode", async () => {
-      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
+      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }] };
       multiUserState.loaded = true;
       multiUserState.agentAccess = true;
       multiUserState.authContext = {
@@ -1318,7 +1231,7 @@ describe("api core session resolution", () => {
     });
 
     it("keeps prompting to grant permissions while a usable grant lacks requested scopes", async () => {
-      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
+      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }] };
       buildExtensionCatalog.mockResolvedValue([{
         ...catalog[0],
         oauth: { provider: "google", scopes: ["drive.readonly", "drive", "email"], minimumScopes: ["drive.readonly", "email"] },
@@ -1342,7 +1255,7 @@ describe("api core session resolution", () => {
     });
 
     it("403s for non-members in multi-user mode", async () => {
-      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
+      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }] };
       multiUserState.loaded = true;
       multiUserState.agentAccess = false;
       multiUserState.authContext = {
@@ -1360,7 +1273,7 @@ describe("api core session resolution", () => {
     });
 
     it("allows admins in multi-user mode", async () => {
-      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }], pool: [] };
+      loadConfigValue = { agents: [{ id: "alpha", name: "Alpha" }] };
       multiUserState.loaded = true;
       multiUserState.authContext = {
         user: { id: "admin1", role: "admin" },
@@ -1406,7 +1319,6 @@ describe("api core session resolution", () => {
     it("updates an extension and returns the refreshed catalog", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue(catalog);
@@ -1463,7 +1375,6 @@ describe("api core session resolution", () => {
             slack: { token: "xoxb-root", appToken: "xapp-root" },
           },
         ],
-        pool: [],
       };
       buildExtensionCatalog.mockResolvedValue([
         { ...catalog[0], id: "slack", managedAtRoot: true },
@@ -1498,7 +1409,6 @@ describe("api core session resolution", () => {
             extensions: { slack: { enabled: false } },
           },
         ],
-        pool: [],
       };
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue([
@@ -1533,7 +1443,6 @@ describe("api core session resolution", () => {
             extensions: { acme: { apiKey: "$env:ACME_API_KEY" } },
           },
         ],
-        pool: [],
       };
       const resolvedReloaded = {
         ...rawReloaded,
@@ -1573,7 +1482,6 @@ describe("api core session resolution", () => {
     it("passes config and secrets through to the writer", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue(catalog);
@@ -1608,7 +1516,6 @@ describe("api core session resolution", () => {
     it("returns 422 when prospective enabled config is invalid", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       resolveExtensionDefinition.mockResolvedValue({
         id: "cloudifi-admin",
@@ -1648,36 +1555,17 @@ describe("api core session resolution", () => {
       expect(reloadConfig).not.toHaveBeenCalled();
     });
 
-    it("rejects writes when no fork exists for a pool agent", async () => {
+
+    it("writes to the configured agent workspace", async () => {
       loadConfigValue = {
-        agents: [],
-        pool: [{ id: "poolie", name: "Poolie", workspace: "/ws/poolie" }],
-      };
-      const { api } = await import("./api.core.js");
-
-      const response = await api.request(
-        new Request("http://localhost/agents/poolie/extensions/acme", {
-          method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ enabled: false }),
-        })
-      );
-
-      expect(response.status).toBe(404);
-      expect(updateAgentExtensionConfig).not.toHaveBeenCalled();
-    });
-
-    it("writes to an existing fork instead of the pool template", async () => {
-      loadConfigValue = {
-        agents: [{ id: "poolie", name: "Fork", workspace: "/ws/poolie-fork" }],
-        pool: [{ id: "poolie", name: "Poolie", workspace: "/ws/poolie" }],
+        agents: [{ id: "writer", name: "Writer", workspace: "/ws/writer" }],
       };
       updateAgentExtensionConfig.mockResolvedValue({});
       buildExtensionCatalog.mockResolvedValue(catalog);
       const { api } = await import("./api.core.js");
 
       const response = await api.request(
-        new Request("http://localhost/agents/poolie/extensions/acme", {
+        new Request("http://localhost/agents/writer/extensions/acme", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ enabled: false }),
@@ -1686,7 +1574,7 @@ describe("api core session resolution", () => {
 
       expect(response.status).toBe(200);
       expect(updateAgentExtensionConfig).toHaveBeenCalledWith(
-        "/ws/poolie-fork",
+        "/ws/writer",
         "acme",
         { enabled: false },
         expect.any(Function)
@@ -1696,7 +1584,6 @@ describe("api core session resolution", () => {
     it("lets the agent manager write team config", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       multiUserState.loaded = true;
       multiUserState.agentAccess = true;
@@ -1723,7 +1610,6 @@ describe("api core session resolution", () => {
     it("403s when a non-member writes extension config", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       multiUserState.loaded = true;
       multiUserState.agentAccess = false;
@@ -1746,7 +1632,7 @@ describe("api core session resolution", () => {
     });
 
     it("404s for an unknown agent", async () => {
-      loadConfigValue = { agents: [], pool: [] };
+      loadConfigValue = { agents: [] };
       const { api } = await import("./api.core.js");
 
       const response = await api.request(
@@ -1764,7 +1650,6 @@ describe("api core session resolution", () => {
     it("rejects toggling a factory extension", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       resolveExtensionDefinition.mockResolvedValue({
         id: "cloudifi_admin",
@@ -1787,7 +1672,6 @@ describe("api core session resolution", () => {
     it("403s for non-members in multi-user mode (server-side guard)", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       multiUserState.loaded = true;
       multiUserState.agentAccess = false;
@@ -1812,7 +1696,6 @@ describe("api core session resolution", () => {
     it("400s on a non-boolean enabled", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       const { api } = await import("./api.core.js");
 
@@ -1831,7 +1714,6 @@ describe("api core session resolution", () => {
     it("400s when the writer rejects (schema invalid)", async () => {
       loadConfigValue = {
         agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha" }],
-        pool: [],
       };
       updateAgentExtensionConfig.mockRejectedValue(
         new Error("agent.yaml would be invalid after update")
@@ -1851,7 +1733,7 @@ describe("api core session resolution", () => {
 
     describe("personal credential scope", () => {
       beforeEach(() => {
-        loadConfigValue = { agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha", extensions: { acme: { enabled: true } } }], pool: [] };
+        loadConfigValue = { agents: [{ id: "alpha", name: "Alpha", workspace: "/ws/alpha", extensions: { acme: { enabled: true } } }] };
         multiUserState.loaded = true;
         multiUserState.authContext = { user: { id: "alice", role: "user" }, session: { id: "s1", userId: "alice" } };
         resolveExtensionDefinition.mockResolvedValue({ id: "acme", requiredSecrets: ["apiKey"], configJsonSchema: { properties: { apiKey: { type: "string" } } } });

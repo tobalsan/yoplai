@@ -11,7 +11,7 @@ import {
 import { getMultiUserRuntime } from "./runtime-state.js";
 import { logImpersonationEvent, startImpersonation } from "./impersonation.js";
 import { isDuplicateTeamNameError, isTeamNotFoundError } from "./teams.js";
-import { isForkNotFoundError, isPoolAgentNotFoundError } from "./forks.js";
+import { isForkNotFoundError, isAgentNotFoundError } from "./forks.js";
 import { isAllUsersTeamError } from "./membership.js";
 
 const UpdateAdminUserBodySchema = z
@@ -213,8 +213,6 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     return c.json({ assignments: assignments.getAllAssignments() });
   });
 
-  // Fork/team provenance — lets the pool catalog decide whether to show
-  // "Assign to team" (no fork yet) vs a reassign flow (fork exists).
   app.get("/admin/forks", requireAdmin(), (c) => {
     const { forks } = getRuntimeOrThrow();
     return c.json({ forks: forks.listForks() });
@@ -223,13 +221,15 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
   app.patch("/admin/forks/:poolId/visibility", requireAdmin(), async (c) => {
     const parsed = SetForkVisibilityBodySchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
-    const { forks, notifyAgentListChanged } = getRuntimeOrThrow();
-    const poolId = c.req.param("poolId");
-    const existing = forks.getForkByPool(poolId);
-    if (!existing) return c.json({ error: "Fork not found" }, 404);
-    if (!canManageAgent(getRequestAuthContext(c), existing.forkAgentId)) return c.json({ error: "forbidden" }, 403);
-    const fork = forks.setPublic(poolId, parsed.data.public);
-    recordAdminChange(c, { action: "admin.fork_visibility", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, { public: existing.public }, { public: fork.public });
+    const authContext = getRequestAuthContext(c);
+    if (!authContext) return c.json({ error: "unauthorized" }, 401);
+    const { forks, getAgent, notifyAgentListChanged } = getRuntimeOrThrow();
+    const agentId = c.req.param("poolId");
+    if (!getAgent(agentId)) return c.json({ error: "Agent not found" }, 404);
+    if (!canManageAgent(authContext, agentId)) return c.json({ error: "forbidden" }, 403);
+    const existing = forks.getForkByAgentId(agentId);
+    const fork = forks.setPublic(agentId, parsed.data.public, authContext.user.id);
+    recordAdminChange(c, { action: "admin.fork_visibility", targetType: "fork", targetId: agentId, agentId }, { public: existing?.public ?? true }, { public: fork.public });
     notifyAgentListChanged?.();
     return c.json({ fork });
   });
@@ -239,12 +239,12 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
     if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
     const authContext = getRequestAuthContext(c);
     if (!authContext) return c.json({ error: "unauthorized" }, 401);
-    const { forks, teams, membership, reloadConfig, notifyAgentListChanged } = getRuntimeOrThrow();
+    const { forks, teams, membership, getAgent, notifyAgentListChanged } = getRuntimeOrThrow();
     if (parsed.data.teamIds.some((teamId) => !teams.getTeam(teamId))) {
       return c.json({ error: "Team not found" }, 404);
     }
-    const poolId = c.req.param("poolId");
-    const existing = forks.getForkByPool(poolId);
+    const agentId = c.req.param("poolId");
+    const existing = forks.getForkByAgentId(agentId);
     let assignment = parsed.data;
     if (!hasSuperadminRole(authContext)) {
       // Admins only (un)assign their own teams; links to other teams are kept.
@@ -254,28 +254,31 @@ export function registerMultiUserAdminRoutes(app: Hono): void {
       if (assignment.teamIds.some((teamId) => !ownTeams.has(teamId))) return c.json({ error: "forbidden" }, 403);
       const otherTeams = existing?.assignment.teamIds.filter((teamId) => !ownTeams.has(teamId)) ?? [];
       assignment = { mode: "list", teamIds: [...new Set([...otherTeams, ...assignment.teamIds])] };
+      if (!existing && assignment.teamIds.length === 0) {
+        return getAgent(agentId) ? c.json({ fork: null }) : c.json({ error: "Agent not found" }, 404);
+      }
     }
     try {
       const before = existing ? { assignment: existing.assignment } : {};
-      const fork = forks.setTeams(poolId, assignment, authContext.user.id);
-      if (!existing) await reloadConfig?.();
-      recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
+      const fork = forks.setTeams(agentId, assignment, authContext.user.id);
+      recordAdminChange(c, { action: "admin.fork_teams", targetType: "fork", targetId: agentId, agentId: fork.forkAgentId }, before, { assignment: fork.assignment });
       notifyAgentListChanged?.();
       return c.json({ fork });
     } catch (error) {
-      if (isPoolAgentNotFoundError(error) || isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
+      if (isAgentNotFoundError(error) || isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);
       throw error;
     }
   });
 
   app.delete("/admin/teams/:teamId/agents/:poolId", requireAdmin(), (c) => {
     if (!canManageTeam(c, c.req.param("teamId"))) return c.json({ error: "forbidden" }, 403);
-    const { forks } = getRuntimeOrThrow();
+    const { forks, notifyAgentListChanged } = getRuntimeOrThrow();
     try {
-      const poolId = c.req.param("poolId");
-      const before = forks.getForkByPool(poolId)?.assignment;
-      const fork = forks.removeTeam(poolId, c.req.param("teamId"));
-      recordAdminChange(c, { action: "admin.team_agent_remove", targetType: "fork", targetId: poolId, agentId: fork.forkAgentId }, { assignment: before }, { assignment: fork.assignment });
+      const agentId = c.req.param("poolId");
+      const before = forks.getForkByAgentId(agentId)?.assignment;
+      const fork = forks.removeTeam(agentId, c.req.param("teamId"));
+      recordAdminChange(c, { action: "admin.team_agent_remove", targetType: "fork", targetId: agentId, agentId: fork.forkAgentId }, { assignment: before }, { assignment: fork.assignment });
+      if (before?.teamIds.includes(c.req.param("teamId"))) notifyAgentListChanged?.();
       return c.json({ fork });
     } catch (error) {
       if (isForkNotFoundError(error)) return c.json({ error: (error as Error).message }, 404);

@@ -64,7 +64,7 @@ export function ChatSettingsMenu(props: {
     if (loading()) return;
     setLoading(true);
     try {
-      const options = await fetchMainAgentOptions(capabilities.forkedAgents === true);
+      const options = await fetchMainAgentOptions();
       setPreference(options.preference);
       if (options.agents.length) { setAgents(options.agents); setOpen(false); }
     } catch (error) {

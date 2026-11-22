@@ -18,13 +18,11 @@ import { createOnboardingStore } from "./onboarding.js";
 import { createConnectPromptStore } from "./connect-prompt.js";
 import { createForkStore } from "./forks.js";
 import { createAccessResolver } from "./access.js";
-import { createPoolCatalogResolver } from "./catalog.js";
 import {
   canUserUseAgent,
   getMultiUserRuntime,
   setMultiUserRuntime,
 } from "./runtime-state.js";
-import path from "node:path";
 import { createSurfaceLinkService } from "./surface-links.js";
 import { registerSurfaceLinkRoutes } from "./surface-link-routes.js";
 
@@ -110,21 +108,12 @@ export { createMembershipStore } from "./membership.js";
 export type { MembershipStore, TeamMember } from "./membership.js";
 export { createAccessResolver } from "./access.js";
 export type { AccessResolver } from "./access.js";
-export { createPoolCatalogResolver } from "./catalog.js";
-export type {
-  PoolCatalogResolver,
-  PoolCatalogEntry,
-  PoolCatalogAction,
-  CatalogUser,
-} from "./catalog.js";
 export {
   createForkStore,
-  forkIdForPool,
-  FORK_EXCLUDES,
   ForkNotFoundError,
-  PoolAgentNotFoundError,
+  AgentNotFoundError,
   isForkNotFoundError,
-  isPoolAgentNotFoundError,
+  isAgentNotFoundError,
 } from "./forks.js";
 export type { ForkStore, AgentFork } from "./forks.js";
 
@@ -141,7 +130,6 @@ export const multiUserExtension: Extension = {
     "/api/me",
     "/api/admin",
     "/api/teams",
-    "/api/pool-actions",
     "/api/impersonation",
     "/api/surface-links",
   ],
@@ -170,33 +158,11 @@ export const multiUserExtension: Extension = {
     unregisterSurfaceLinks = registerSurfaceLinkService(createSurfaceLinkService(db, resolveWebBaseUrl(ctx.getConfig())));
     const assignments = createAgentAssignmentStore(db);
     const membership = createMembershipStore(db);
-    // Forks live under $YOPLAI_HOME/agents/<forkId>, alongside functional
-    // agents, so the standard gateway `agents` glob discovers a freshly
-    // copied fork and makes it runnable without a separate forks glob.
-    const agentsDir = path.join(ctx.getDataDir(), "agents");
-    const forks = createForkStore({
-      db,
-      getForksDir: () => agentsDir,
-      getPoolAgent: (poolId) => {
-        const pool = ctx.getConfig().pool ?? [];
-        const match = pool.find((agent) => agent.id === poolId);
-        if (!match) return null;
-        return {
-          id: match.id,
-          workspaceDir: match.workspaceDir ?? match.workspace ?? "",
-        };
-      },
-    });
+    const forks = createForkStore({ db, agentExists: (id) => Boolean(ctx.getAgent(id)) });
     // teams needs a fork lookup so deleteTeam can name soon-to-be-teamless
     // forks; forks has no dependency on teams, so construct it first.
     const teams = createTeamStore(db, membership, () => forks);
     const access = createAccessResolver({ membership, forks });
-    const catalog = createPoolCatalogResolver({
-      forks,
-      access,
-      isAgentRunnable: (agentId) => Boolean(ctx.getAgent(agentId)),
-      getTeamName: (teamId) => teams.getTeam(teamId)?.name ?? null,
-    });
     // Recovery resolves every unfinished key issuance before the remote advertises link support or accepts a managed key.
     ensureManagedKeyPrefixIndex(db);
     const gatewayLinks = createGatewayLinkService({
@@ -218,11 +184,7 @@ export const multiUserExtension: Extension = {
       onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
       access,
-      catalog,
-      getPoolAgentIds: () =>
-        (ctx.getConfig().pool ?? []).map((agent) => agent.id),
       getAgent: ctx.getAgent,
-      reloadConfig: () => ctx.reloadConfig(),
       notifyAgentListChanged: ctx.notifyAgentListChanged,
       audit: ctx.audit,
       logger: ctx.logger,

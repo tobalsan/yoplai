@@ -1,6 +1,5 @@
 import { eligibleMainAgents, type MainAgentState } from "@yoplai/shared/main-agent";
 import { API_BASE, apiFetch } from "./core";
-import type { PoolCatalogEntry } from "./teams";
 import type { Agent } from "./types";
 
 async function withDeadline<T>(action: "load" | "save", operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -35,13 +34,12 @@ export function saveMainAgentPreference(value: { mainAgentId: string } | { picke
   }));
 }
 
-export function fetchMainAgentOptions(forkedAgents: boolean) {
+export function fetchMainAgentOptions() {
   return withDeadline("load", async (signal) => {
-    const [preference, agents, actions] = await Promise.all([
+    const [preference, agents] = await Promise.all([
       request<MainAgentState>("/me/main-agent", signal),
       request<Agent[]>("/agents", signal),
-      forkedAgents ? request<{ actions: PoolCatalogEntry[] }>("/pool-actions", signal).then((data) => data.actions) : Promise.resolve(undefined),
     ]);
-    return { preference, agents: eligibleMainAgents(agents, actions) };
+    return { preference, agents: eligibleMainAgents(agents) };
   });
 }

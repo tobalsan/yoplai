@@ -236,10 +236,7 @@ async function enableCapabilityResult(
     await updateAgentExtensionConfig(workspace, args.id, { enabled: true });
   } else {
     const name = args.id.slice("mcp:".length);
-    const sources = await readMcpServerSources([
-      ...config.agents,
-      ...(config.pool ?? []),
-    ]);
+    const sources = await readMcpServerSources(config.agents);
     const source = sources.find((candidate) => candidate.name === name);
     if (!source)
       return {

@@ -1,27 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import type Database from "better-sqlite3";
 
 /**
- * Directory entries excluded when copying a pool workspace into an agent. These
- * are per-instance runtime artifacts (secrets, agent scratch data, uploads),
- * never part of the shared read-only definition, so a fresh fork must start
- * without them. Adapted from the `agent-templates` branch `FORK_EXCLUDES`.
- */
-export const FORK_EXCLUDES = new Set([".env", "data", "uploads"]);
-
-/**
- * A fork's runnable agent id matches its source pool id. The fork row carries
- * the provenance link, while the on-disk agent stays simple: `agents/<poolId>`.
- * The id doubles as the fork folder basename, which the gateway config loader
- * requires to equal the `agent.yaml` id.
- */
-export function forkIdForPool(poolId: string): string {
-  return poolId;
-}
-
-/**
- * The provenance link row: `sourcePoolId -> forkAgentId -> teamId`. `teamId` is
+ * Agent access and team assignment. `sourcePoolId` is retained for compatibility. `teamId` is
  * null when the fork has no legacy owner link; assignment holds current owners. The
  * who/when columns record both the original fork (`createdBy`/`createdAt`) and
  * the latest team (re)assignment (`assignedBy`/`assignedAt`, null while
@@ -41,38 +21,27 @@ export type AgentFork = {
 
 export type AgentTeamAssignment = { mode: "list"; teamIds: string[] };
 
-/** Minimal shape of a discovered pool agent the store needs to fork it. */
-export type PoolAgentRef = {
-  id: string;
-  workspaceDir: string;
-};
-
 export type ForkStoreDeps = {
   db: Database.Database;
-  /** Resolves a pool agent id to its discovered definition, or null. */
-  getPoolAgent(poolId: string): PoolAgentRef | null;
-  /** Absolute directory the fork folders live in (covered by the agents glob). */
-  getForksDir(): string;
+  agentExists(agentId: string): boolean;
 };
 
-/** Thrown when assigning a pool id that does not resolve to a pool agent. */
-export class PoolAgentNotFoundError extends Error {
-  constructor(poolId: string) {
-    super(`Pool agent ${poolId} not found`);
-    this.name = "PoolAgentNotFoundError";
+export class AgentNotFoundError extends Error {
+  constructor() {
+    super("Agent not found");
+    this.name = "AgentNotFoundError";
   }
 }
 
-/** Thrown when reassign/unassign targets a pool id that has never been forked. */
 export class ForkNotFoundError extends Error {
-  constructor(poolId: string) {
-    super(`No fork exists for pool agent ${poolId}`);
+  constructor(agentId: string) {
+    super(`No access record for agent ${agentId}`);
     this.name = "ForkNotFoundError";
   }
 }
 
-export function isPoolAgentNotFoundError(error: unknown): boolean {
-  return error instanceof Error && error.name === "PoolAgentNotFoundError";
+export function isAgentNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AgentNotFoundError";
 }
 
 export function isForkNotFoundError(error: unknown): boolean {
@@ -80,18 +49,11 @@ export function isForkNotFoundError(error: unknown): boolean {
 }
 
 export type ForkStore = {
-  /**
-   * Assign a pool agent to a team. On first assignment this copies the pool
-   * workspace into the forks dir, rewrites the copied `agent.yaml` id to the
-   * fork id, and writes the link row. If a fork already exists it is reused
-   * (fork-once) and its team link is updated — no second folder is created.
-   */
-  setTeams(poolId: string, assignment: AgentTeamAssignment, assignedBy: string): AgentFork;
-  setPublic(poolId: string, publicValue: boolean): AgentFork;
-  removeTeam(poolId: string, teamId: string): AgentFork;
+  setTeams(agentId: string, assignment: AgentTeamAssignment, assignedBy: string): AgentFork;
+  setPublic(agentId: string, publicValue: boolean, actorId: string): AgentFork;
+  removeTeam(agentId: string, teamId: string): AgentFork;
   getForkByPool(poolId: string): AgentFork | null;
-  /** Resolve a fork by its agent id (the chat/list surface key). */
-  getForkByAgentId(forkAgentId: string): AgentFork | null;
+  getForkByAgentId(agentId: string): AgentFork | null;
   listForks(): AgentFork[];
   listForksForTeam(teamId: string): AgentFork[];
   listTeamsForFork(poolId: string): string[];
@@ -108,39 +70,8 @@ type ForkRow = {
   public: number;
 };
 
-/**
- * Copy `sourceDir` into `destDir`, skipping {@link FORK_EXCLUDES} at the top
- * level. The copy is otherwise byte-for-byte: no per-team customization is
- * applied here.
- */
-function copyWorkspace(sourceDir: string, destDir: string): void {
-  fs.mkdirSync(destDir, { recursive: true });
-  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-    if (FORK_EXCLUDES.has(entry.name)) continue;
-    const from = path.join(sourceDir, entry.name);
-    const to = path.join(destDir, entry.name);
-    fs.cpSync(from, to, { recursive: true });
-  }
-}
-
-/**
- * Ensure the top-level `id:` value in an `agent.yaml` matches `forkId`, leaving
- * the rest of the file untouched. A line-scoped rewrite avoids a YAML round-trip
- * if the copied file ever needs normalization.
- */
-function rewriteAgentYamlId(agentYamlPath: string, forkId: string): void {
-  const original = fs.readFileSync(agentYamlPath, "utf8");
-  // Match the first top-level (column-0) `id:` key.
-  const idLine = /^id:[ \t]*\S.*$/m;
-  if (!idLine.test(original)) {
-    throw new Error(`agent.yaml at ${agentYamlPath} has no top-level id field`);
-  }
-  const rewritten = original.replace(idLine, `id: ${forkId}`);
-  fs.writeFileSync(agentYamlPath, rewritten);
-}
-
 export function createForkStore(deps: ForkStoreDeps): ForkStore {
-  const { db, getPoolAgent, getForksDir } = deps;
+  const { db, agentExists } = deps;
 
   const getByPoolStatement = db.prepare(
     "SELECT sourcePoolId, forkAgentId, teamId, createdBy, createdAt, assignedBy, assignedAt, public FROM agent_forks WHERE sourcePoolId = ?"
@@ -155,8 +86,13 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
     "SELECT f.sourcePoolId, f.forkAgentId, f.teamId, f.createdBy, f.createdAt, f.assignedBy, f.assignedAt, f.public FROM agent_forks f WHERE EXISTS (SELECT 1 FROM agent_fork_teams l WHERE l.forkAgentId = f.forkAgentId AND l.teamId = ?) ORDER BY f.forkAgentId"
   );
   const insertStatement = db.prepare(`
-    INSERT INTO agent_forks (sourcePoolId, forkAgentId, teamId, createdBy, assignedBy, assignedAt)
-    VALUES (@sourcePoolId, @forkAgentId, @teamId, @createdBy, @assignedBy, CURRENT_TIMESTAMP)
+    INSERT INTO agent_forks (sourcePoolId, forkAgentId, createdBy, assignedAt)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+  `);
+  const upsertVisibility = db.prepare(`
+    INSERT INTO agent_forks (sourcePoolId, forkAgentId, createdBy, public)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(forkAgentId) DO UPDATE SET public = excluded.public
   `);
   const linksForFork = db.prepare("SELECT teamId FROM agent_fork_teams WHERE forkAgentId = ? ORDER BY teamId");
   const clearLinks = db.prepare("DELETE FROM agent_fork_teams WHERE forkAgentId = ?");
@@ -177,69 +113,36 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
     return row ? rowToFork(row) : null;
   }
 
-  function requireFork(poolId: string): AgentFork {
-    const fork = getForkByPool(poolId);
-    if (!fork) throw new ForkNotFoundError(poolId);
+  function requireFork(agentId: string): AgentFork {
+    const fork = getForkByAgentId(agentId);
+    if (!fork) throw new ForkNotFoundError(agentId);
     return fork;
   }
 
-  function createFork(poolId: string, assignedBy: string): void {
-    const pool = getPoolAgent(poolId);
-    if (!pool) throw new PoolAgentNotFoundError(poolId);
-
-    const forkId = forkIdForPool(poolId);
-    const destDir = path.join(getForksDir(), forkId);
-
-    // The link row is the source of truth for "already forked"; if the folder
-    // somehow lingers from a prior run without a row, replace it so the copy is
-    // a clean, byte-for-byte reflection of the current pool source.
-    if (fs.existsSync(destDir)) {
-      fs.rmSync(destDir, { recursive: true, force: true });
+  const replaceTeams = db.transaction((agentId: string, assignment: AgentTeamAssignment, assignedBy: string) => {
+    if (!agentExists(agentId)) throw new AgentNotFoundError();
+    if (!getForkByAgentId(agentId)) {
+      insertStatement.run(agentId, agentId, assignedBy);
     }
-
-    try {
-      copyWorkspace(pool.workspaceDir, destDir);
-      rewriteAgentYamlId(path.join(destDir, "agent.yaml"), forkId);
-      insertStatement.run({
-        sourcePoolId: poolId,
-        forkAgentId: forkId,
-        teamId: null,
-        createdBy: assignedBy,
-        assignedBy: null,
-      });
-    } catch (error) {
-      // A failed copy/YAML rewrite/row insert is not a fork. Remove the partial
-      // folder so a corrected pool definition can be retried cleanly.
-      fs.rmSync(destDir, { recursive: true, force: true });
-      throw error;
-    }
-  }
+    clearLinks.run(agentId);
+    for (const teamId of new Set(assignment.teamIds)) insertLink.run(agentId, teamId, assignedBy);
+    return requireFork(agentId);
+  });
 
   return {
-    setTeams(poolId, assignment, assignedBy) {
+    setTeams(agentId, assignment, assignedBy) {
       if (assignment.mode !== "list") throw new Error("Unsupported agent assignment mode");
-      // Fork-once: only copy + insert when no fork exists yet. An already
-      // forked pool reuses its single fork and simply (re)points the link.
-      if (!getForkByPool(poolId)) {
-        createFork(poolId, assignedBy);
-      }
-      const fork = requireFork(poolId);
-      const replace = db.transaction(() => {
-        clearLinks.run(fork.forkAgentId);
-        for (const teamId of new Set(assignment.teamIds)) insertLink.run(fork.forkAgentId, teamId, assignedBy);
-      });
-      replace();
-      return requireFork(poolId);
+      return replaceTeams.immediate(agentId, assignment, assignedBy);
     },
-    setPublic(poolId, publicValue) {
-      requireFork(poolId);
-      db.prepare("UPDATE agent_forks SET public = ? WHERE sourcePoolId = ?").run(publicValue ? 1 : 0, poolId);
-      return requireFork(poolId);
+    setPublic(agentId, publicValue, actorId) {
+      if (!agentExists(agentId)) throw new AgentNotFoundError();
+      upsertVisibility.run(agentId, agentId, actorId, publicValue ? 1 : 0);
+      return requireFork(agentId);
     },
-    removeTeam(poolId, teamId) {
-      const fork = requireFork(poolId);
-      db.prepare("DELETE FROM agent_fork_teams WHERE forkAgentId = ? AND teamId = ?").run(fork.forkAgentId, teamId);
-      return requireFork(poolId);
+    removeTeam(agentId, teamId) {
+      requireFork(agentId);
+      db.prepare("DELETE FROM agent_fork_teams WHERE forkAgentId = ? AND teamId = ?").run(agentId, teamId);
+      return requireFork(agentId);
     },
     getForkByPool,
     getForkByAgentId,

@@ -60,7 +60,7 @@ async function start() {
   state.setGatewayListener({ address: "127.0.0.1", port: 4000 });
 }
 
-function config(rules: { agents?: string | string[]; pool?: string | string[] } = { agents: agentsGlob }) {
+function config(rules: { agents?: string | string[] } = { agents: agentsGlob }) {
   return fs.writeFile(path.join(home, "yoplai.json"), JSON.stringify({ version: 3, ...rules }));
 }
 
@@ -246,9 +246,9 @@ it("does not expand reserved prefixes in the name or purpose", async () => {
   expect(JSON.stringify(await list())).not.toContain(value);
 });
 
-it("avoids existing folders and IDs from custom rules and the pool", async () => {
-  await config({ agents: [agentsGlob, "team/*"], pool: "pool/*" });
-  await fixture(path.join(home, "pool", "test"));
+it("avoids existing folders and IDs from custom rules", async () => {
+  await config({ agents: [agentsGlob, "team/*"] });
+  await fixture(path.join(home, "team", "test"));
   await fixture(path.join(home, "team", "test-2"));
   await fs.mkdir(dir("test-3"), { recursive: true });
   const res = await create(body("Test"));
@@ -258,10 +258,10 @@ it("avoids existing folders and IDs from custom rules and the pool", async () =>
 });
 
 it("uses a suffix when an existing folder or agent ID differs only in letter case", async () => {
-  await config({ agents: [agentsGlob, "team/*"], pool: "pool/*" });
+  await config({ agents: [agentsGlob, "team/*"] });
   await fs.mkdir(dir("ALPHA"), { recursive: true });
   await fixture(path.join(home, "team", "Alpha-2"));
-  await fixture(path.join(home, "pool", "ALPHA-3"));
+  await fixture(path.join(home, "team", "ALPHA-3"));
   const res = await create(body("alpha"));
   expect(res.status).toBe(201);
   expect(await res.json()).toMatchObject({ id: "alpha-4" });
@@ -453,10 +453,7 @@ it.each([
   { agents: [agentsGlob, "agents/{alpha,beta}"] },
   { agents: "custom/*" },
   { agents: [agentsGlob, "run/*"] },
-  { pool: ["pool/*", agentsGlob] },
-  { agents: agentsGlob, pool: ["pool/*", agentsGlob] },
 ])("refuses a discovery rule that cannot list the final agent alone: %j", async (rules) => {
-  if (rules.pool) await fixture(path.join(home, "pool", "existing"));
   await config(rules);
   const res = await create(body("Alpha"));
   expect(res.status).toBe(409);

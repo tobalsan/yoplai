@@ -16,12 +16,6 @@ export async function fetchAgents(): Promise<Agent[]> {
   return res.json();
 }
 
-export async function fetchPool(gateway?: GatewayName): Promise<Agent[]> {
-  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/pool`));
-  if (!res.ok) throw new Error("Failed to fetch pool");
-  return res.json();
-}
-
 export async function fetchAgent(agentId: string): Promise<Agent> {
   const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`);
   if (!res.ok) throw new Error("Failed to fetch agent");

@@ -191,16 +191,7 @@ describe("team store deleteTeam teamlessAgents", () => {
   });
 
   it("names forks assigned to the team as soon-to-be teamless", () => {
-    const poolDir = path.join(tempDir, "pool", "scribe");
-    fs.mkdirSync(poolDir, { recursive: true });
-    fs.writeFileSync(path.join(poolDir, "agent.yaml"), "id: scribe\nname: scribe\n");
-
-    const forks = createForkStore({
-      db: fdb,
-      getForksDir: () => path.join(tempDir, "agents"),
-      getPoolAgent: (poolId) =>
-        poolId === "scribe" ? { id: "scribe", workspaceDir: poolDir } : null,
-    });
+    const forks = createForkStore({ db: fdb, agentExists: (id) => id === "scribe" });
     const teamStore = createTeamStore(fdb, undefined, () => forks);
     const team = teamStore.createTeam({ name: "Team A", createdBy: "admin-1" });
     forks.setTeams("scribe", { mode: "list", teamIds: [team.id] }, "admin-1");

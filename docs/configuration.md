@@ -17,7 +17,7 @@ Yoplai uses v3 configuration: instance settings live in `$YOPLAI_HOME/yoplai.jso
 }
 ```
 
-Agent entries may be exact directories or glob patterns relative to config file. Every matched directory must contain flat `agent.yaml`; its `id` must match directory basename. If `agents` is omitted outside pool mode, Yoplai looks in `$YOPLAI_HOME/agents`.
+Agent entries may be exact directories or glob patterns relative to config file. Every matched directory must contain flat `agent.yaml`; its `id` must match directory basename. If `agents` is omitted, Yoplai discovers `$YOPLAI_HOME/agents/*`. Yoplai ignores the legacy top-level `pool` key and logs one warning per process.
 
 Migrate old centralized agent records with:
 
@@ -127,7 +127,6 @@ Core `yoplai.json` fields:
 | ------------------------------------ | ------------------------------------------------------------------- |
 | `version`                            | Config version; current value is `3`                                |
 | `agents`                             | Agent directory or glob, or array of them                           |
-| `pool`                               | Optional pool-agent directory/glob for forked multi-user mode       |
 | `defaultProjectManager`              | Preferred board/project lead agent id                               |
 | `gateway`, `ui`, `server`, `web`     | Network and public/base URL settings                                |
 | `canvas`                             | Dashboard serving (`enabled`, optional public `baseUrl`)            |

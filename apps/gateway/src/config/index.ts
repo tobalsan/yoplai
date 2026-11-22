@@ -25,6 +25,7 @@ export const SCHEDULES_PATH = path.join(CONFIG_DIR, "schedules.json");
 let cachedConfig: GatewayConfig | null = null;
 let rawLoadedConfig: GatewayConfig | null = null;
 let singleAgentId: string | null = null;
+let warnedLegacyPool = false;
 const agentEnvDigests = new Map<string, string>();
 
 export function getConfigPath(): string {
@@ -120,14 +121,13 @@ function readDesktopDiscoveryRules() {
   const configPath = getConfigPath();
   const configDir = path.dirname(configPath);
   const config = GatewayRootConfigSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8")));
-  const agents = config.agents ?? (config.pool === undefined ? DEFAULT_AGENT_DISCOVERY : []);
-  return { configDir, agents, pool: config.pool };
+  return { configDir, agents: config.agents ?? DEFAULT_AGENT_DISCOVERY };
 }
 
 export function desktopDiscoveryCaseAliases(parent: string): string[] {
-  const { configDir, agents, pool } = readDesktopDiscoveryRules();
+  const { configDir, agents } = readDesktopDiscoveryRules();
   const realParent = fs.realpathSync(parent);
-  return [agents, pool ?? []].flat().flatMap((rule) => {
+  return [agents].flat().flatMap((rule) => {
     if (hasGlobMagic(rule)) return [];
     const resolved = path.resolve(resolvePathFromConfig(rule, configDir));
     const name = path.basename(resolved);
@@ -142,26 +142,21 @@ export function desktopDiscoveryCaseAliases(parent: string): string[] {
 }
 
 export function allowsDesktopAgentDiscovery(finalDir: string, stagingDir: string): boolean {
-  const { configDir, agents, pool } = readDesktopDiscoveryRules();
+  const { configDir, agents } = readDesktopDiscoveryRules();
   const { identity, identities: [final, staging], files } = projectDirectories([finalDir, stagingDir], configDir);
-  function matches(patterns: string | string[] = []) {
-    return [patterns].flat().flatMap((pattern) => globToDirs(pattern, configDir, files))
-      .map((dir) => identity(path.resolve(dir)));
-  }
-  const agentDirs = matches(agents);
-  const poolDirs = matches(pool);
-  return agentDirs.filter((dir) => dir === final).length === 1 && !poolDirs.includes(final) &&
-    !agentDirs.includes(staging) && !poolDirs.includes(staging);
+  const agentDirs = [agents].flat().flatMap((pattern) => globToDirs(pattern, configDir, files))
+    .map((dir) => identity(path.resolve(dir)));
+  return agentDirs.filter((dir) => dir === final).length === 1 && !agentDirs.includes(staging);
 }
 
 function discoverAgents(
-  agentGlobs: string | string[] | undefined,
+  agentGlobs: string | string[],
   configDir: string,
   extensionEnvAllowlist: ReadonlySet<string>,
-  options: { strict?: boolean; label?: string; emptyMessage?: string } = {}
+  strict: boolean
 ): AgentConfig[] {
   const patterns =
-    typeof agentGlobs === "string" ? [agentGlobs] : (agentGlobs ?? []);
+    typeof agentGlobs === "string" ? [agentGlobs] : agentGlobs;
   const agents: AgentConfig[] = [];
   const seen = new Map<string, string>();
 
@@ -170,9 +165,9 @@ function discoverAgents(
       const agentPath = path.join(workspaceDir, "agent.yaml");
       if (!fs.existsSync(agentPath)) {
         const message = `[config] no agent.yaml in ${workspaceDir}`;
-        if (options.strict) {
+        if (strict) {
           throw new Error(
-            `${message}. Configure ${options.label ?? "agents"} with directories that contain agent.yaml.`
+            `${message}. Configure agents with directories that contain agent.yaml.`
           );
         }
         console.warn(`${message}; skipping`);
@@ -183,14 +178,14 @@ function discoverAgents(
         parsedYaml = yaml.load(fs.readFileSync(agentPath, "utf8"));
       } catch (error) {
         const message = `[config] failed to read ${agentPath}: ${(error as Error).message}`;
-        if (options.strict) throw new Error(message);
+        if (strict) throw new Error(message);
         console.warn(message);
         continue;
       }
       const parsed = AgentYamlConfigSchema.safeParse(parsedYaml);
       if (!parsed.success) {
         const message = `[config] invalid ${agentPath}: ${parsed.error.message}`;
-        if (options.strict) throw new Error(message);
+        if (strict) throw new Error(message);
         console.warn(message);
         continue;
       }
@@ -212,10 +207,9 @@ function discoverAgents(
     }
   }
 
-  if (options.strict && agents.length === 0) {
+  if (strict && agents.length === 0) {
     throw new Error(
-      options.emptyMessage ??
-        `[config] no valid ${options.label ?? "agents"} found. Configure ${options.label ?? "agents"} with directories that contain agent.yaml.`
+      `[config] no valid agents found. Configure agents with directories that contain agent.yaml.`
     );
   }
 
@@ -360,29 +354,20 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
   const parsed = GatewayRootConfigSchema.parse(json);
   const configDir = path.dirname(configPath);
   const extensionEnvAllowlist = new Set(parsed.extensionEnvAllowlist);
-  const hasPoolConfig = Object.prototype.hasOwnProperty.call(json, "pool");
-  const agentDiscovery =
-    parsed.agents ?? (hasPoolConfig ? undefined : DEFAULT_AGENT_DISCOVERY);
-  const poolEmptyMessage =
-    "[config] pool is configured but no valid agents were found. Remove pool for single-folder mode, or point pool at directories containing agent.yaml.";
+  const hasLegacyPool = Object.hasOwn(json, "pool");
+  if (hasLegacyPool && !warnedLegacyPool) {
+    warnedLegacyPool = true;
+    console.warn("[config] The legacy pool key is ignored. Define runnable agents under agents/.");
+  }
   const result: GatewayConfig = {
     ...parsed,
     version: 3,
     agents: discoverAgents(
-      agentDiscovery as string | string[] | undefined,
+      parsed.agents ?? DEFAULT_AGENT_DISCOVERY,
       configDir,
       extensionEnvAllowlist,
-      { strict: !hasPoolConfig && parsed.agents === undefined, label: "agents" }
+      !hasLegacyPool && parsed.agents === undefined
     ),
-    pool: hasPoolConfig
-      ? discoverAgents(
-          parsed.pool as string | string[] | undefined,
-          configDir,
-          extensionEnvAllowlist,
-          { strict: true, label: "pool", emptyMessage: poolEmptyMessage }
-        )
-      : undefined,
-    forkedAgents: hasPoolConfig,
   };
 
   applyEnvPorts(result);
@@ -408,9 +393,6 @@ export function loadConfig(configPathOverride?: string): GatewayConfig {
 
   // Apply defaults
   for (const agent of result.agents) {
-    if (!agent.queueMode) agent.queueMode = "queue";
-  }
-  for (const agent of result.pool ?? []) {
     if (!agent.queueMode) agent.queueMode = "queue";
   }
 

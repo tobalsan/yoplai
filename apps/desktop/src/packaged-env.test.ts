@@ -170,7 +170,7 @@ describe("home", () => {
   it.each(["yoplai.json", "aihub.json"])("changes only the empty agents array in %s", (name) => {
     const home = tempDir();
     const file = path.join(home, name);
-    const config = { version: 3, agents: [], pool: "team/*", ui: { port: 3100 }, other: { value: true } };
+    const config = { version: 3, agents: [], ui: { port: 3100 }, other: { value: true } };
     fs.writeFileSync(file, JSON.stringify(config), { mode: 0o600 });
 
     expect(seedHome(home)).toBe(false);
@@ -184,7 +184,7 @@ describe("home", () => {
     const targetDir = tempDir();
     const target = path.join(targetDir, "config.json");
     const link = path.join(home, "yoplai.json");
-    const config = { version: 3, agents: [], pool: "team/*" };
+    const config = { version: 3, agents: [] };
     fs.writeFileSync(target, JSON.stringify(config));
     fs.symlinkSync(path.relative(home, target), link);
 
