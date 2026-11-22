@@ -40,6 +40,11 @@
       "import": "./dist/projectPrompt.js",
       "types": "./dist/projectPrompt.d.ts"
     },
+    "./node/skills": {
+      "development": "./src/node/skills.ts",
+      "import": "./dist/node/skills.js",
+      "types": "./dist/node/skills.d.ts"
+    },
     "./node/system-files": {
       "development": "./src/node/system-files.ts",
       "import": "./dist/node/system-files.js",

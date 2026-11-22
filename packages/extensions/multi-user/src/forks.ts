@@ -49,6 +49,7 @@ export function isForkNotFoundError(error: unknown): boolean {
 }
 
 export type ForkStore = {
+  reservePrivate(agentId: string, creator: string): () => void;
   setTeams(agentId: string, assignment: AgentTeamAssignment, assignedBy: string): AgentFork;
   setPublic(agentId: string, publicValue: boolean, actorId: string): AgentFork;
   removeTeam(agentId: string, teamId: string): AgentFork;
@@ -89,6 +90,8 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
     INSERT INTO agent_forks (sourcePoolId, forkAgentId, createdBy, assignedAt)
     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
   `);
+  const insertPrivate = db.prepare("INSERT INTO agent_forks (sourcePoolId, forkAgentId, createdBy, public) VALUES (?, ?, ?, 0)");
+  const forgetReservation = db.prepare("DELETE FROM agent_forks WHERE forkAgentId = ? AND createdBy = ?");
   const upsertVisibility = db.prepare(`
     INSERT INTO agent_forks (sourcePoolId, forkAgentId, createdBy, public)
     VALUES (?, ?, ?, ?)
@@ -130,6 +133,10 @@ export function createForkStore(deps: ForkStoreDeps): ForkStore {
   });
 
   return {
+    reservePrivate(agentId, creator) {
+      insertPrivate.run(agentId, agentId, creator);
+      return () => { forgetReservation.run(agentId, creator); };
+    },
     setTeams(agentId, assignment, assignedBy) {
       if (assignment.mode !== "list") throw new Error("Unsupported agent assignment mode");
       return replaceTeams.immediate(agentId, assignment, assignedBy);

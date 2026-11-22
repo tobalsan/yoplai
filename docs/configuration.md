@@ -25,6 +25,58 @@ Migrate old centralized agent records with:
 pnpm yoplai agents migrate
 ```
 
+## Agent management from the web UI
+
+Use **New agent** on the Agents page to create an agent under
+`$YOPLAI_HOME/agents/<id>/`. Open **Agent settings** in its chat to change
+its identity, avatar, model, reasoning, instructions, and skills. The model
+picker and instruction writer use the gateway's existing run credentials.
+Enabling management lets eligible creators use those credentials. If the
+model cannot generate instructions, creation uses a template.
+
+| `agentManagement` | Single-user gateway | Multi-user gateway |
+| --- | --- | --- |
+| Unset | On when the bound gateway listener is loopback | Off by default |
+| `false` | Off | Off |
+| `true` | On | Admins and superadmins |
+| `"admin"` | On | Admins and superadmins |
+| `"anyone"` | On | Approved users create and edit their own agents. Staff edit agents they can chat with. |
+| `"superadmin"` | On | Superadmins only |
+
+A headless gateway behind a loopback reverse proxy should set
+`agentManagement: false` to opt out of the loopback default. Management is
+always on for the local single-user desktop gateway. Each linked gateway
+applies its own policy. **Create on** offers the gateways where you can
+create, and the model picker follows your choice.
+
+When you open the web UI from a LAN address, set `web.baseUrl` to the URL
+you use in the browser, including its scheme and port. The gateway checks
+that origin on agent management writes.
+
+On a multi-user gateway, a superadmin can change the mode at **Admin →
+Agent management**. A value in `yoplai.json` takes precedence and locks
+the form. Otherwise the gateway uses the saved mode in
+`$YOPLAI_HOME/agent-management.json`, then the default. Saving the mode in
+Admin applies immediately.
+
+New multi-user agents start Private to their creator, including when an
+admin creates them. Ownership is recorded in `.created-by.json`. Owners
+keep chat access when the mode changes. Members can edit and set their
+own agents Public in `"anyone"` mode. The **Sharing** switch controls
+company-wide chat access. Staff manage team assignments and can use the
+switch when they have both edit and visibility permissions. Agents with
+no access row are Public by default.
+
+| Skill group | Source | Default and controls |
+| --- | --- | --- |
+| Global | Built-ins and `skill-library/default` | Always on. A default skill's `.yoplai.json` can restrict which agents receive it. |
+| Agent | The agent's workspace `skills/` | On by default. Anyone who can edit the agent can turn a workspace skill off in `skills.disabled` in `agent.yaml`. Multi-user System skills are shown in the sidebar only to superadmins. |
+| User | Your own and shared skills | Off by default. Anyone with chat access can enable their own selection for this agent, including in read-only settings. |
+
+Personal skill selections are saved under `agents.<id>` in each user's
+`skill-library/users/<user-id>/state.json`. The old `enabled` list is
+ignored, so previously enabled personal skills start off for every agent.
+
 ## Agent configuration
 
 ```yaml

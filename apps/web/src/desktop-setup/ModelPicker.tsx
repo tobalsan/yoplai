@@ -26,7 +26,7 @@ function ModelSummary(props: { model: Model; provider?: boolean }) {
   </>;
 }
 
-export function ModelPicker(props: { models: Model[]; selected?: Model; suggested?: Model; disabled: boolean; onSelect: (value: string) => void }) {
+export function ModelPicker(props: { models: Model[]; selected?: Model; suggested?: Model; grouped?: boolean; disabled: boolean; onSelect: (value: string) => void }) {
   const catalog = createMemo(() => props.models.map((model) => ({
     model, family: family(model.provider), text: normalize(`${family(model.provider)} ${model.provider} ${model.name} ${model.model}`),
   })));
@@ -55,8 +55,8 @@ export function ModelPicker(props: { models: Model[]; selected?: Model; suggeste
       }
       const groups = [...families.entries()].sort(([a], [b]) => a.localeCompare(b));
       return [
-        ...(!searching && suggested().length ? [{ id: "suggested", label: "Suggested", rows: suggested().map((model) => row(model, "suggested", true)) }] : []),
-        ...groups.map(([name, models]) => searching ? { id: name, label: name, rows: models.map((model) => row(model, name)) } : {
+        ...(!props.grouped && !searching && suggested().length ? [{ id: "suggested", label: "Suggested", rows: suggested().map((model) => row(model, "suggested", true)) }] : []),
+        ...groups.map(([name, models]) => searching || props.grouped ? { id: name, label: name, rows: models.map((model) => row(model, name)) } : {
           id: name,
           rows: [{
             id: name, expand: name,

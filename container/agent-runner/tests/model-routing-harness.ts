@@ -184,6 +184,7 @@ export function barrier() {
 let serial = 0;
 export type RoutingHarness = Awaited<ReturnType<typeof createRoutingHarness>>;
 export async function createRoutingHarness(runtime: RoutingRuntime) {
+  if (CONFIG_DIR !== path.join(setup.home, "config")) throw new Error("Routing harness requires an isolated config directory");
   setup.activeRuntime = runtime;
   setup.dockerErrors = [];
   const id = `routing${++serial}`;

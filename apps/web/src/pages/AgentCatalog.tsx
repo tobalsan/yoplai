@@ -1,3 +1,6 @@
+import { fetchCreationGateways } from "../api/agent-management";
+import { isDesktopWindow } from "../lib/desktop-window";
+import "../components/agent-management/agent-management.css";
 import { setupRepairHref } from "../desktop-setup/repair";
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { RemoteAgentMark } from "../components/RemoteAgentMark";
@@ -22,6 +25,7 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
   const navigate = useNavigate();
   const [pendingMain, setPendingMain] = createSignal<{ agentId: string; name: string } | null>(null);
   const [mainAgentError, setMainAgentError] = createSignal("");
+  const [creationGateways] = createResource(fetchCreationGateways);
   const [agents, { refetch: refetchAgents }] = createResource(fetchAgents);
   const loadedAgents = () => agents.error ? undefined : agents();
   createEffect(() => {
@@ -155,6 +159,11 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
         </div>
       </Show>
 
+      <Show when={isDesktopWindow() || !!creationGateways()?.length}>
+        <button type="button" class="agent-create-fab" aria-label="New agent" title="New agent" onClick={() => navigate("/agents/new")}>
+          <i class="fa-solid fa-plus" aria-hidden="true" />
+        </button>
+      </Show>
       <style>{`
         .agent-catalog {
           padding: 24px;

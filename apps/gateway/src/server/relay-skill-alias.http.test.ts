@@ -217,14 +217,13 @@ describe("nested agent skills through the alias, to the actual skill handlers", 
     expect(await east.store.systemAgentSkills()).not.toContain("banned");
   });
 
-  it("runs the user skill flow through the alias: create, replace, enable, share, version, restore, delete", async () => {
+  it("runs the user skill flow through the alias: create, replace, share, version, restore, delete", async () => {
     const created = await sendForm("POST", `${through("east")}/api/skills`, files("flow-skill"));
     expect(created.status).toBe(201);
     const { id } = await json(created);
     const alias = `${through("east")}/api/skill-ids/${wire(id)}`;
     expect(await json(await send("GET", alias))).toMatchObject({ id, name: "flow-skill", canManage: true });
     expect((await sendForm("PUT", `${alias}/content`, files("flow-skill", skillText("flow-skill") + "\nSecond."))).status).toBe(200);
-    expect((await send("PUT", `${alias}/enabled`, { enabled: true })).status).toBe(200);
     expect((await send("PUT", `${alias}/shares`, { shares: [{ kind: "user", id: "alice", mode: "read" }] })).status).toBe(200);
     expect((await east.store.get(id))?.shares).toEqual([{ kind: "user", id: "alice", mode: "read" }]);
     const { versions } = await json(await send("GET", `${alias}/versions`));
@@ -251,7 +250,7 @@ describe("invalid IDs and routes stop before any upstream request", () => {
     ["a dot segment", ".."],
     ["an encoded dot segment", "%2e%2e"],
   ])("refuses %s in the wire ID", async (_name, id) => {
-    for (const [method, suffix, body] of [["GET", "", undefined], ["DELETE", "", undefined], ["PUT", "/enabled", { enabled: true }], ["PUT", "/system", { system: true }], ["POST", "/default", undefined]] as Array<[string, string, unknown?]>) {
+    for (const [method, suffix, body] of [["GET", "", undefined], ["DELETE", "", undefined], ["PUT", "/system", { system: true }], ["POST", "/default", undefined]] as Array<[string, string, unknown?]>) {
       const response = await send(method, `${through("east")}/api/skill-ids/${id}${suffix}`, body);
       expect([400, 405]).toContain(response.status);
     }
@@ -397,7 +396,7 @@ describe("the remote alias checks the raw wire segment (direct sockets to the ac
     ["an escaped percent", `${good}%25`],
     ["an escaped space", `${good}%20`],
   ];
-  const actions: Array<[string, string, string?]> = [["GET", ""], ["DELETE", ""], ["PUT", "/enabled", "{\"enabled\":true}"], ["PUT", "/system", "{\"system\":false}"], ["PUT", "/shares", "{\"shares\":[]}"], ["GET", "/default"], ["POST", "/default"], ["GET", "/versions"], ["PUT", "/owner", "{\"ownerId\":\"alice\"}"], ["PUT", "/admin", "{\"disabledByAdmin\":true}"]];
+  const actions: Array<[string, string, string?]> = [["GET", ""], ["DELETE", ""], ["PUT", "/system", "{\"system\":false}"], ["PUT", "/shares", "{\"shares\":[]}"], ["GET", "/default"], ["POST", "/default"], ["GET", "/versions"], ["PUT", "/owner", "{\"ownerId\":\"alice\"}"], ["PUT", "/admin", "{\"disabledByAdmin\":true}"]];
 
   it.each(escaped)("answers 400 for %s, whatever the action, and changes no stored state", async (_name, segment) => {
     const before = JSON.stringify({ system: await east.store.systemAgentSkills(), list: await east.store.list(), defaults: (await east.store.defaults()).map((skill) => skill.id) });

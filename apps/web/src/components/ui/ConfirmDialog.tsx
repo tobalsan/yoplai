@@ -3,7 +3,8 @@ import { createSignal, createEffect, onCleanup, Show, createUniqueId, type JSX }
 
 type ConfirmDialogProps = {
   title: string;
-  description: string;
+  description?: string;
+  cancelLabel?: string;
   confirmLabel: string;
   danger?: boolean;
   onConfirm: () => void | Promise<void>;
@@ -103,10 +104,10 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={descId}
+        aria-describedby={props.description ? descId : undefined}
       >
         <h3 id={titleId}>{props.title}</h3>
-        <p id={descId}>{props.description}</p>
+        <Show when={props.description}><p id={descId}>{props.description}</p></Show>
         {props.children}
         <Show when={props.error}>
           {(message) => <p class="ui-confirm-error" role="alert">{message()}</p>}
@@ -118,7 +119,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             disabled={confirming()}
             onClick={props.onCancel}
           >
-            Cancel
+            {props.cancelLabel ?? "Cancel"}
           </Button>
           <Button
             variant={props.danger ? "danger" : "primary"}

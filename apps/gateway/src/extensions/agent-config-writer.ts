@@ -59,7 +59,7 @@ async function writeAtomic(filePath: string, content: string): Promise<void> {
 }
 
 /** Keep ownership checks and all agent config reads/writes in one transaction. */
-async function updateAgentConfig(
+export async function updateAgentConfig(
   workspaceDir: string,
   mutate: (
     doc: Document,

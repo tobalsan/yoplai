@@ -27,5 +27,5 @@ export type Source = { source: string; detected: boolean; enabled: boolean; deni
 export type Access = { owned: { providerId: string; type: string }[]; external: Source[]; attempts: Attempt[]; apiKeyProviders: { id: string; name: string }[] };
 export const readAccess = () => request<Access>("model-access");
 export const readModels = async () => (await request<{ models: Model[] }>("model-access/models")).models;
-export const modelKey = (model: Model) => JSON.stringify([model.provider, model.model]);
+export const modelKey = (model: Pick<Model, "provider" | "model">) => JSON.stringify([model.provider, model.model]);
 export const errorText = (error: unknown) => error instanceof SetupError ? error.message : "The request failed. Try again.";

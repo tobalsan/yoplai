@@ -54,7 +54,7 @@ describe("Skills HTTP", () => {
     const created = await routes.request("/skills", { method: "POST", body: upload() });
     expect(created.status).toBe(201);
     const { id } = await created.json();
-    expect(await (await routes.request("/skills")).json()).toMatchObject({ mine: [{ id, name: "meeting-notes", enabled: false, canManage: true }] });
+    expect(await (await routes.request("/skills")).json()).toMatchObject({ mine: [{ id, name: "meeting-notes", canManage: true }] });
     const conflict = await routes.request("/skills", { method: "POST", body: upload(skillText + "\nNew draft") });
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({ error: "skill_exists", id });
@@ -62,6 +62,14 @@ describe("Skills HTTP", () => {
     expect((await routes.request(`/skills/${id}/content`, { method: "PUT", body: upload(skillText + "\nNew draft") })).status).toBe(200);
     expect(await (await routes.request(`/skills/${id}`)).json()).toMatchObject({ skillMd: skillText + "\nNew draft" });
     expect(await fs.readFile(path.join(home, "skill-library/users/local/meeting-notes/SKILL.md"), "utf8")).toBe(skillText + "\nNew draft");
+  });
+
+  it("retires both gateway-wide personal enable routes", async () => {
+    const { routes } = setup();
+    const { id } = await (await routes.request("/skills", { method: "POST", body: upload() })).json();
+    for (const url of [`/skills/${id}/enabled`, `/skill-ids/${encodeSkillId(id)}/enabled`]) {
+      expect((await routes.request(url, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"enabled":true}' })).status).toBe(404);
+    }
   });
 
   it("shares read/write content independently of ownership, validates recipients, and preserves grants through restore", async () => {
@@ -74,7 +82,6 @@ describe("Skills HTTP", () => {
       expect((await request(`/${id}/shares`, "PUT", { shares: invalid })).status).toBe(400);
     }
     expect(await (await request("", "GET", undefined, "bob")).json()).toMatchObject({ mine: [], sharedWithMe: [{ id, canRead: true, canWrite: false, canManage: false }] });
-    expect((await request(`/${id}/enabled`, "PUT", { enabled: true }, "bob")).status).toBe(200);
     expect((await request(`/${id}/shares`, "PUT", { shares: [] }, "carol")).status).toBe(403);
     expect((await routes.request(`/skills/${id}/content`, { method: "PUT", body: upload(skillText + "\nWriter revision"), headers: { "x-test-user": "carol" } })).status).toBe(200);
     expect((await routes.request(`/skills/${id}/content`, { method: "PUT", body: upload(), headers: { "x-test-user": "bob" } })).status).toBe(404);
@@ -91,7 +98,7 @@ describe("Skills HTTP", () => {
     expect((await request(`/${id}`)).status).toBe(404);
   });
 
-  it("groups curated, locked built-in and legacy agent skills with read-only detail and per-user default switches", async () => {
+  it("groups curated, locked built-in and legacy agent skills with read-only detail and locked defaults", async () => {
     const agentDir = path.join(home, "agents/hr/skills");
     const defaultDir = path.join(home, "skill-library/default/meeting-notes");
     await fs.mkdir(path.join(agentDir, "meeting-notes"), { recursive: true });
@@ -106,8 +113,6 @@ describe("Skills HTTP", () => {
       expect((await routes.request(`/skills/${encodeURIComponent(id)}`)).status).toBe(200);
       expect((await routes.request(`/skills/${encodeURIComponent(id)}/content`, { method: "PUT", body: upload() })).status).toBe(404);
     }
-    const enable = (id: string) => routes.request(`/skills/${encodeURIComponent(id)}/enabled`, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"enabled":false}' });
-    for (const id of ["default:meeting-notes", "builtin:dashboard", "agent:hr:meeting-notes"]) expect(await (await enable(id)).json()).toEqual({ error: "skill_locked" });
     expect(await (await routes.request("/admin/skills")).json()).toMatchObject({ system: expect.arrayContaining([
       expect.objectContaining({ id: "default:meeting-notes", kind: "default", enabled: true, locked: true }),
       expect.objectContaining({ id: "builtin:dashboard", kind: "builtin", enabled: true, locked: true }),
@@ -160,7 +165,7 @@ describe("Skills HTTP", () => {
     expect((await request(`/skills/${id}/shares`, "PUT", { shares: [] })).status).toBe(403);
     expect((await request(`/skills/${id}/admin`, "PUT", { disabledByAdmin: true })).status).toBe(400);
     await store.shares(id, [{ kind: "all", mode: "read" }]);
-    await store.setEnabled("alice", id, true);
+    await store.setAgentSkills("alice", "assistant", [id]);
     expect((await request(`/skills/${id}/admin`, "PUT", { disabledByAdmin: true })).status).toBe(200);
     expect((await store.get(id))?.disabledByAdmin).toBe(true);
     await store.shares(id, []);
@@ -247,17 +252,6 @@ describe("Skills HTTP", () => {
     expect((await routes.request("/skills/default:onboarding", { headers: { "x-test-user": "alice" } })).status).toBe(200);
   });
 
-  it("reports managed-name shadowing without applying agent restrictions", async () => {
-    const { routes, store } = setup();
-    const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: skillText }] });
-    await store.setEnabled("local", skill.id, true);
-    const directory = path.join(home, "skill-library/default/meeting-notes");
-    await fs.mkdir(directory, { recursive: true });
-    await fs.writeFile(path.join(directory, "SKILL.md"), skillText);
-    await fs.writeFile(path.join(directory, ".yoplai.json"), '{"agents":["hr"]}');
-    expect(await (await routes.request("/skills")).json()).toMatchObject({ mine: [{ id: skill.id, shadowed: true }] });
-  });
-
   it("bounds announced and streamed upload bodies, preserves nested paths, and accepts a valid upload after rejection", async () => {
     const { routes } = setup();
     expect((await routes.request("/skills", { method: "POST", headers: { "content-length": String(26 * 1024 * 1024) }, body: "x" })).status).toBe(413);
@@ -329,12 +323,12 @@ describe("skill ID alias routes", () => {
     const users = ["alice", "bob", "carol", "dave", "root", "banned", "pending", "unknown"];
     const nested = "agent:hr:category/folder-name";
     const calls: Array<[string, string, string, unknown?]> = [
-      [skillId, "", "GET"], [skillId, "/versions", "GET"], [skillId, "/enabled", "PUT", {}], [skillId, "/shares", "PUT", { shares: [] }],
+      [skillId, "", "GET"], [skillId, "/versions", "GET"], [skillId, "/shares", "PUT", { shares: [] }],
       [skillId, "/system", "PUT", { system: true }], [skillId, "/owner", "PUT", { ownerId: "bob" }], [skillId, "/admin", "PUT", { disabledByAdmin: true }],
       [skillId, "/default", "GET"], [skillId, "/default", "POST"], [skillId, "/versions/none/restore", "POST"],
-      ["agent:hr:onboarding", "", "GET"], ["agent:hr:onboarding", "/enabled", "PUT", { enabled: true }], ["agent:hr:onboarding", "/system", "PUT", { system: true }],
+      ["agent:hr:onboarding", "", "GET"], ["agent:hr:onboarding", "/system", "PUT", { system: true }],
       ["agent:hr:onboarding", "/shares", "PUT", { shares: [] }], ["agent:hr:onboarding", "/default", "GET"], ["agent:hr:onboarding", "/versions", "GET"],
-      ["builtin:dashboard", "/enabled", "PUT", { enabled: true }], ["missing-skill", "", "GET"], ["missing-skill", "/versions", "GET"],
+      ["missing-skill", "", "GET"], ["missing-skill", "/versions", "GET"],
     ];
     for (const user of users) {
       for (const [id, suffix, method, body] of calls) {
@@ -349,7 +343,6 @@ describe("skill ID alias routes", () => {
     expect((await request(`/skill-ids/${wire(nested)}`, "GET", undefined, "alice")).status).toBe(200);
     expect(await (await request(`/skill-ids/${wire(nested)}`, "GET", undefined, "alice")).json()).toMatchObject({ id: nested, locked: true, canWrite: false, canManage: false });
     expect((await request(`/skill-ids/${wire(nested)}/system`, "PUT", { system: true }, "alice")).status).toBe(403);
-    expect((await request(`/skill-ids/${wire(nested)}/enabled`, "PUT", { enabled: true }, "alice")).status).toBe(400);
     expect((await request(`/skill-ids/${wire(nested)}/versions`, "GET", undefined, "alice")).status).toBe(404);
     expect((await request(`/skill-ids/${wire(nested)}/shares`, "PUT", { shares: [] }, "alice")).status).toBe(404);
     expect((await request(`/skill-ids/${wire(nested)}`, "DELETE", undefined, "alice")).status).toBe(404);
@@ -357,10 +350,6 @@ describe("skill ID alias routes", () => {
 
   it("lets the same allowed change through both routes with the same stored result, and keeps nested IDs exact", async () => {
     const { request, store, skillId } = await fixture();
-    expect((await request(`/skill-ids/${wire(skillId)}/enabled`, "PUT", { enabled: true }, "bob")).status).toBe(200);
-    expect((await store.getState("bob")).enabled).toContain(skillId);
-    expect((await request(`/skills/${skillId}/enabled`, "PUT", { enabled: false }, "bob")).status).toBe(200);
-    expect((await store.getState("bob")).enabled).not.toContain(skillId);
     // Sharing needs manage permission. A writer is refused, the owner changes it, and the stored ID stays the same.
     expect((await request(`/skill-ids/${wire(skillId)}/shares`, "PUT", { shares: [] }, "carol")).status).toBe(403);
     expect((await request(`/skill-ids/${wire(skillId)}/shares`, "PUT", { shares: [{ kind: "all", mode: "read" }] }, "alice")).status).toBe(200);
@@ -393,7 +382,7 @@ describe("skill ID alias routes", () => {
     const good = wire(skillId);
     const bad = ["v1_", "v2_" + good.slice(3), good.slice(3), `${good}=`, "v1_YR", "v1_YWJj%2F", "v1_" + Buffer.from([0xff, 0xfe]).toString("base64url"), "V1_" + good.slice(3)];
     for (const id of bad) {
-      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/enabled", "PUT", { enabled: true }], ["/shares", "PUT", { shares: [] }], ["/system", "PUT", { system: true }], ["/default", "GET"], ["/default", "POST"], ["/versions", "GET"], ["/owner", "PUT", { ownerId: "bob" }], ["/admin", "PUT", { disabledByAdmin: true }]] as Array<[string, string, unknown?]>) {
+      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/shares", "PUT", { shares: [] }], ["/system", "PUT", { system: true }], ["/default", "GET"], ["/default", "POST"], ["/versions", "GET"], ["/owner", "PUT", { ownerId: "bob" }], ["/admin", "PUT", { disabledByAdmin: true }]] as Array<[string, string, unknown?]>) {
         expect({ id, suffix, method, status: (await request(`/skill-ids/${id}${suffix}`, method, body, "root")).status }).toEqual({ id, suffix, method, status: 400 });
       }
     }
@@ -403,7 +392,7 @@ describe("skill ID alias routes", () => {
     const { request, store, skillId } = await fixture();
     const before = JSON.stringify(await store.list());
     for (const id of ["import", "../import", "../../etc/passwd", "ams", "east@west", "agent:hr:../../outside", "%2e%2e/%2fimport", skillId + "/versions"]) {
-      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/enabled", "PUT", { enabled: true }], ["/content", "PUT"], ["/default", "GET"], ["/system", "PUT", { system: true }]] as Array<[string, string, unknown?]>) {
+      for (const [suffix, method, body] of [["", "GET"], ["", "DELETE"], ["/content", "PUT"], ["/default", "GET"], ["/system", "PUT", { system: true }]] as Array<[string, string, unknown?]>) {
         const response = await request(`/skill-ids/${wire(id)}${suffix}`, method, body, "root");
         // A missing object is 404 and a wrong action is 400 or 404. A request that reached the import handler would be 401.
         expect({ id, suffix, method, ok: [400, 404].includes(response.status) }).toEqual({ id, suffix, method, ok: true });
@@ -415,7 +404,7 @@ describe("skill ID alias routes", () => {
   it("refuses an import token on the alias and still serves the import endpoint with it", async () => {
     const { routes, tokens, skillId } = await fixture();
     const { token } = await tokens.create("alice");
-    for (const [suffix, method] of [["", "GET"], ["", "DELETE"], ["/versions", "GET"], ["/enabled", "PUT"]]) {
+    for (const [suffix, method] of [["", "GET"], ["", "DELETE"], ["/versions", "GET"]]) {
       const response = await routes.request(`/skill-ids/${wire(skillId)}${suffix}`, { method, headers: { authorization: `Bearer ${token}`, "x-test-user": "alice" } });
       expect(response.status).toBe(401);
     }

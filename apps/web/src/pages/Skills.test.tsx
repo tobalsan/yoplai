@@ -29,7 +29,6 @@ beforeEach(() => {
     const custom = await respond(path, init); if (custom) return custom;
     if (path === "/api/skills" && method === "GET") return Response.json({ mine, sharedWithMe: [], agent: [] });
     if (path === "/api/agents") return Response.json([{ id: "hr", name: "HR", avatar: "🦊" }, { id: "sales", name: "Sales" }]);
-    if (path.endsWith("/enabled")) { mine = mine.map((skill) => ({ ...skill, enabled: true })); return Response.json({ ok: true }); }
     return Response.json({});
   }));
 });
@@ -44,12 +43,12 @@ const actions = () => click("Actions for meeting-notes");
 async function mount() { dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/skills/:id" component={Skills} /></Router>, root); await vi.waitFor(() => expect(root.textContent).toContain("meeting-notes guidance")); }
 
 describe("Skills", () => {
-  it("groups skills, locks built-ins, searches and enables the user's skill", async () => {
+  it("groups and searches skills and points to the chat settings", async () => {
     await mount();
     expect(Array.from(root.querySelectorAll("h2"), (heading) => heading.textContent)).toEqual(["Your skills", "Agent skills"]);
     expect(control("img", "Skills you upload, create or import.")).toBeDefined();
-    const toggle = control<HTMLInputElement>("switch", "Enable meeting-notes"); toggle.click();
-    await vi.waitFor(() => expect(requests).toContainEqual({ path: "/api/skills/s1/enabled", method: "PUT", body: { enabled: true } }));
+    expect(root.querySelector('[role="switch"]')).toBeNull();
+    expect(root.textContent).toContain("Turn your skills on for an agent in the settings of that agent's chat.");
     const search = control<HTMLInputElement>("searchbox", "Search skills"); search.value = "dashboard"; search.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => expect(root.textContent).not.toContain("meeting-notes guidance"));
   });
@@ -208,7 +207,7 @@ describe("Skills", () => {
       file.dispatchEvent(new Event("change", { bubbles: true }));
     };
     send();
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Skill "notes" added. Turn it on to use it.'));
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Skill "notes" added.'));
     fail = true; send();
     await vi.waitFor(() => expect(document.body.textContent).toContain("Upload failed: Add a SKILL.md file at the top level of the skill."));
   });
@@ -221,22 +220,6 @@ describe("Skills", () => {
     await vi.waitFor(() => expect(requests.some((request) => request.path === "/api/skills" && request.method === "POST")).toBe(true));
     const body = requests.find((request) => request.path === "/api/skills" && request.method === "POST")!.body as FormData;
     expect(body.getAll("files").map((file) => (file as File).name)).toEqual(["SKILL.md", "references/example.txt"]);
-  });
-  it("recovers from a hung enable request while background refresh continues", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
-      const controller = new AbortController(); setTimeout(() => controller.abort(new DOMException("Skill request timed out", "TimeoutError")), milliseconds); return controller.signal;
-    });
-    await mount();
-    respond = (path, init) => path.endsWith("/enabled") ? new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true })) : undefined;
-    control<HTMLInputElement>("switch", "Enable meeting-notes").click();
-    mine.push(row("s4", "new-import"));
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(root.textContent).toContain("Skill request timed out"); expect(root.textContent).toContain("new-import guidance");
-    expect(control<HTMLInputElement>("switch", "Enable meeting-notes").disabled).toBe(false);
-    respond = () => undefined; control<HTMLInputElement>("switch", "Enable meeting-notes").click();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(control<HTMLInputElement>("switch", "Enable meeting-notes").checked).toBe(true);
   });
   it("keeps the actions menu available while focus refresh updates the list", async () => {
     await mount(); actions();

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup, onMount } from "solid-js";
 import { A, useNavigate, useParams } from "@solidjs/router";
-import { fetchSkills, fetchSkill, setSkillEnabled, uploadSkill, fetchSkillRecipients, saveSkillShares, deleteSkill, skillPath, skillsPath, SkillRequestError, type SkillRow, type SkillShare } from "../api/skills";
+import { fetchSkills, fetchSkill, uploadSkill, fetchSkillRecipients, saveSkillShares, deleteSkill, skillPath, skillsPath, SkillRequestError, type SkillRow, type SkillShare } from "../api/skills";
 import type { GatewayName } from "../api/gateway";
 import { missingGatewayText, useGatewayChoice } from "../lib/gateway-choice";
 import { useRequester } from "../lib/requester";
@@ -125,16 +125,6 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
   });
   let folderInput: HTMLInputElement | undefined;
   const rows = (items: SkillRow[] | undefined) => (items ?? []).filter((row) => `${row.name} ${row.description} ${row.ownerName ?? ""} ${row.agentName ?? ""}`.toLowerCase().includes(search().toLowerCase()));
-  const toggle = async (row: SkillRow, enabled: boolean) => {
-    if (unknown()) return;
-    setBusy(row.id); setError("");
-    let failed = false;
-    try { await setSkillEnabled(row.id, enabled, gateway); if (!disposed) await refetch(); }
-    catch (cause) { failed = true; if (!disposed) setError(cause instanceof Error ? cause.message : "Unable to change skill."); }
-    // The remote can commit a write before its answer fails. Read the same gateway before another write.
-    if (failed && !disposed) await settle();
-    if (!disposed) setBusy(undefined);
-  };
   const upload = async (files: File[], folder: boolean, id?: string) => {
     if (!files.length || unknown()) return;
     setBusy("upload"); setError("");
@@ -143,7 +133,7 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
       const skill = await uploadSkill(files, folder, id, gateway);
       if (disposed) return;
       setReplacement(undefined);
-      showToast(id ? `Skill "${skill.name}" replaced.` : `Skill "${skill.name}" added. Turn it on to use it.`, "success");
+      showToast(id ? `Skill "${skill.name}" replaced.` : `Skill "${skill.name}" added.`, "success");
       await refetch();
     } catch (cause) {
       if (disposed) return;
@@ -181,8 +171,8 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
   };
   const owner = (row: SkillRow) => row.kind === "builtin" ? "Built-in" : row.kind === "default" ? "Default" : row.kind === "agent" ? `${row.agentName} workspace` : row.canManage ? "" : row.ownerName;
   const skillRow = (row: SkillRow, byAgent: boolean) => <li class="skill-row">
-    <div class="skill-copy"><Show when={!params.id}><A href={skillPath(row.id, gateway)}>{row.name}</A></Show><p title={row.description}>{row.description}</p><Show when={!byAgent}><div class="skill-meta"><Show when={owner(row)}><span>{owner(row)}</span></Show><Show when={row.canManage && row.shares?.length}><span class="skill-pill">Shared</span></Show><Show when={row.mode === "read" && row.kind === "user"}><span>Can view</span></Show><Show when={row.mode === "write" && !row.canManage}><span>Can edit</span></Show><Show when={row.shadowed}><span class="skill-pill skill-pill--warn" title="Another enabled skill with the same name loads instead.">Not loaded: same name as another skill</span></Show><Show when={row.disabledByAdmin}><span class="skill-pill skill-pill--warn">Disabled by admin</span></Show></div></Show></div>
-    <Show when={row.kind !== "agent"}><Show when={!row.locked} fallback={<span class="skill-locked" aria-label="Always on"><i class="fa-solid fa-lock" aria-hidden="true" /> Always on</span>}><input type="checkbox" role="switch" aria-label={`Enable ${row.name}`} checked={row.enabled} disabled={!!busy() || unknown() || row.disabledByAdmin} onChange={(event) => void toggle(row, event.currentTarget.checked)} /></Show></Show>
+    <div class="skill-copy"><Show when={!params.id}><A href={skillPath(row.id, gateway)}>{row.name}</A></Show><p title={row.description}>{row.description}</p><Show when={!byAgent}><div class="skill-meta"><Show when={owner(row)}><span>{owner(row)}</span></Show><Show when={row.canManage && row.shares?.length}><span class="skill-pill">Shared</span></Show><Show when={row.mode === "read" && row.kind === "user"}><span>Can view</span></Show><Show when={row.mode === "write" && !row.canManage}><span>Can edit</span></Show><Show when={row.disabledByAdmin}><span class="skill-pill skill-pill--warn">Disabled by admin</span></Show></div></Show></div>
+    <Show when={row.kind !== "agent" && row.locked}><span class="skill-locked" aria-label="Always on"><i class="fa-solid fa-lock" aria-hidden="true" /> Always on</span></Show>
     <Show when={row.kind === "user" && (row.canWrite || row.canManage)}><details class="skill-actions" open={openActions() === row.id} onClick={(event) => { if ((event.target as HTMLElement).closest("button")) setOpenActions(undefined); }}><summary role="button" aria-label={`Actions for ${row.name}`} aria-expanded={openActions() === row.id} onClick={(event) => { event.preventDefault(); setOpenActions(openActions() === row.id ? undefined : row.id); }}><i class="fa-solid fa-ellipsis" aria-hidden="true" /></summary><div class="skill-action-menu">
     <Show when={row.canManage && multiUser()}><button aria-label={`Share ${row.name}`} disabled={unknown()} onClick={() => setManaging(row)}><i class="fa-solid fa-user-plus" aria-hidden="true" />Share</button></Show>
     <Show when={row.canWrite && row.kind === "user"}><button aria-label={`Update ${row.name}`} disabled={unknown()} onClick={() => setChoosingReplacement(row)}><i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true" />Update</button></Show>
@@ -197,7 +187,7 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
   const formatSize = (size: number) => size < 1024 ? `${size} bytes` : `${(size / 1024).toFixed(1)} KB`;
   return <>
     <Show when={params.id}><A class="skills-back" href={skillsPath(gateway)}><i class="fa-solid fa-arrow-left" aria-hidden="true" /> All skills</A></Show>
-    <header class="skills-header"><div><h1>{params.id ? detailData()?.name ?? "Skill" : "Skills"}</h1><Show when={!params.id}><p>Skills enabled on this page become available to all your agents.</p></Show></div>
+    <header class="skills-header"><div><h1>{params.id ? detailData()?.name ?? "Skill" : "Skills"}</h1><Show when={!params.id}><p>Turn your skills on for an agent in the settings of that agent's chat.</p></Show></div>
     <Show when={!params.id}>
     <div class="skills-add-control" ref={addControl}><Button variant="primary" icon="fa-solid fa-plus" onClick={() => setAdding(!adding())} disabled={!!busy() || unknown()} aria-expanded={adding()}>Add skill <i class="fa-solid fa-chevron-down skills-chevron" aria-hidden="true" /></Button>
     <Show when={adding()}><div class="skills-add" role="menu"><button role="menuitem" onClick={() => { setAdding(false); setReplaceTarget(undefined); zipInput?.click(); }}><i class="fa-regular fa-file-zipper" aria-hidden="true" />Upload zip</button><button role="menuitem" onClick={() => { setAdding(false); setReplaceTarget(undefined); folderInput?.click(); }}><i class="fa-regular fa-folder-open" aria-hidden="true" />Upload folder</button><Show when={gateway === undefined}><button role="menuitem" disabled={busy() === "create"} onClick={() => void createSkill()}><i class="fa-regular fa-comments" aria-hidden="true" />Create skill</button></Show><button role="menuitem" onClick={() => { setAdding(false); setImporting(true); }}><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true" />Import from Claude or ChatGPT</button></div></Show>

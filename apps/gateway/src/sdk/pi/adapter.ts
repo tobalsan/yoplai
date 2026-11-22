@@ -1,3 +1,4 @@
+import { filterDisabledWorkspaceSkills } from "@yoplai/shared/node/skills";
 import { createModelAuth } from "../../desktop/model-auth.js";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -617,13 +618,13 @@ export const piAdapter: SdkAdapter = {
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
         additionalSkillPaths: [getBuiltInSkillsDir(), workspaceSkillsDir, managedSkills.directory],
         agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
-        ...(!includeGlobalSkills && {
-          skillsOverride: (result) => ({
-            skills: result.skills.filter(
-              (s) => !s.filePath.startsWith(globalSkillsDir)
-            ),
-            diagnostics: result.diagnostics,
-          }),
+        skillsOverride: (result) => ({
+          ...result,
+          skills: filterDisabledWorkspaceSkills(
+            includeGlobalSkills ? result.skills : result.skills.filter((skill) => !skill.filePath.startsWith(globalSkillsDir)),
+            workspaceSkillsDir,
+            agent.skills?.disabled,
+          ),
         }),
       });
       await resourceLoader.reload();

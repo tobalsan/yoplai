@@ -188,7 +188,6 @@ describe("real HTTP adapter: skill routes of the named gateway", () => {
     ["POST", "/api/skills/import-token", undefined],
     ["POST", `/api/skills/${encoded}/default`, undefined],
     ["POST", `/api/skills/${encoded}/versions/v-1/restore`, undefined],
-    ["PUT", `/api/skills/${encoded}/enabled`, { enabled: true }],
     ["PUT", `/api/skills/${encoded}/shares`, { shares: [{ kind: "all", mode: "read" }] }],
     ["PUT", `/api/skills/${encoded}/system`, { system: true }],
     ["PUT", `/api/skills/${encoded}/owner`, { ownerId: "u2" }],
@@ -256,7 +255,7 @@ describe("real HTTP adapter: skill routes of the named gateway", () => {
   });
 
   it("refuses a JSON write with no trusted Origin, a wrong content type, a bad body, or an oversized body, and sends nothing", async () => {
-    const target = `${prefix}/api/skills/abc/enabled`;
+    const target = `${prefix}/api/skills/abc/shares`;
     await expectJsonError(await fetch(`${base}${target}`, { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" }), 403, "untrusted_origin");
     await expectJsonError(await send("PUT", target, {}, { origin: "https://evil.example.test" }), 403, "relay_unavailable");
     await expectJsonError(await send("PUT", target, "{}", { "content-type": "text/plain" }), 415, "json_required");

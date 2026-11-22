@@ -5,10 +5,10 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { decodeSkillId } from "@yoplai/shared/skill-id-wire";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
+import { readWorkspaceSkills } from "./workspace.js";
 import { inspectSkillDirectory, type SkillStore } from "./store.js";
 import type { SkillAccessPolicy } from "./access.js";
 import { SKILL_IMPORT_TOKEN_PREFIX, type ImportTokenStore } from "./import-tokens.js";
-import { resolveRunSkills } from "./resolver.js";
 import { SkillError, type SkillActor, type SkillDirectory, type SkillInput, type SkillRow } from "./types.js";
 
 type SkillRoutesDeps = {
@@ -128,39 +128,26 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     if (!skill) throw new SkillError("not_found", 404);
     return { ...ctx, skill };
   };
-  const present = async (store: SkillStore, policy: SkillAccessPolicy, actor: SkillActor, skill: SkillRow) => ({
+  const present = async (policy: SkillAccessPolicy, actor: SkillActor, skill: SkillRow) => ({
     ...skill, kind: "user", ownerName: await deps.getOwnerName(skill.ownerId),
-    enabled: (await store.getState(actor.userId)).enabled.includes(skill.id),
-    locked: false, shadowed: false, ...await policy.permissions(skill, actor),
+    locked: false, ...await policy.permissions(skill, actor),
     mode: skill.ownerId === actor.userId ? "write" : skill.shares.find((share) => share.kind === "user" && share.id === actor.userId)?.mode ?? "read",
   });
-  const agentSkills = async (c: Context) => {
-    const { loadSkillsFromDir } = await import("@earendil-works/pi-coding-agent");
-    const skills: (SkillDirectory & { agentId: string; agentName: string; skillFile: string })[] = [];
-    for (const agent of await deps.getAgents(c)) {
-      for (const skill of loadSkillsFromDir({ dir: agent.directory, source: "workspace" }).skills) {
-        const relative = path.relative(agent.directory, path.basename(skill.filePath) === "SKILL.md" ? skill.baseDir : skill.filePath).split(path.sep).join("/");
-        skills.push({ id: `agent:${agent.id}:${relative}`, name: skill.name, description: skill.description, directory: skill.baseDir, skillFile: skill.filePath, agentId: agent.id, agentName: agent.name });
-      }
-    }
-    return skills;
-  };
+  const agentSkills = async (c: Context) =>
+    (await Promise.all((await deps.getAgents(c)).map(readWorkspaceSkills))).flat();
   const directoryRow = (skill: SkillDirectory & { agentId?: string; agentName?: string }) => {
     const kind = skill.id.split(":")[0];
     return { id: skill.id, name: skill.name, description: skill.description, kind, agentId: skill.agentId, agentName: skill.agentName, agents: skill.agents,
-      ownerName: "", enabled: true, locked: true, shadowed: false,
+      ownerName: "", enabled: true, locked: true,
       canRead: true, canWrite: false, canManage: false, shares: [], mode: "read" };
   };
   const findDirectory = async (c: Context, store: SkillStore, id: string) => [...await store.builtins(), ...await store.defaults(), ...await agentSkills(c)].find((skill) => skill.id === id);
   routes.get("/skills", async (c) => {
     const { store, policy, actor, multiUser } = await context(c);
     const visible = await policy.filterVisible(await store.list(), actor);
-    const mine = await Promise.all(visible.filter((skill) => skill.ownerId === actor.userId).map((skill) => present(store, policy, actor, skill)));
-    const sharedWithMe = await Promise.all(visible.filter((skill) => skill.ownerId !== actor.userId && skill.shares.some((share) => share.kind === "all" || share.id === actor.userId)).map((skill) => present(store, policy, actor, skill)));
+    const mine = await Promise.all(visible.filter((skill) => skill.ownerId === actor.userId).map((skill) => present(policy, actor, skill)));
+    const sharedWithMe = await Promise.all(visible.filter((skill) => skill.ownerId !== actor.userId && skill.shares.some((share) => share.kind === "all" || share.id === actor.userId)).map((skill) => present(policy, actor, skill)));
     const hidden = new Set(multiUser ? await store.systemAgentSkills() : []);
-    const { diagnostics } = await resolveRunSkills(store, { agentId: "", userId: actor.userId, multiUser, policy, ignoreAgentRestrictions: true });
-    const shadowed = new Set(diagnostics.map((diagnostic) => diagnostic.id));
-    for (const skill of [...mine, ...sharedWithMe]) skill.shadowed = shadowed.has(skill.id);
     return c.json({
       mine, sharedWithMe: multiUser ? sharedWithMe : [],
       agent: (await agentSkills(c)).filter((skill) => !hidden.has(skill.id)).map(directoryRow),
@@ -224,20 +211,12 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
       return c.json({ ...directoryRow(directory), ...content });
     }
     const { store, policy, actor, skill } = await userRow(c);
-    return c.json({ ...await present(store, policy, actor, skill), ...await store.detail(skill.id) });
+    return c.json({ ...await present(policy, actor, skill), ...await store.detail(skill.id) });
   });
   object("PUT", "/content", async (c) => {
     const { store, skill } = await userRow(c, true);
     const updated = await store.replace(skill.id, await multipart(c));
     return c.json({ id: updated.id, name: updated.name });
-  });
-  object("PUT", "/enabled", async (c) => {
-    if (/^(builtin|default|agent):/.test(skillId(c))) throw new SkillError("skill_locked");
-    const { store, actor, skill } = await userRow(c);
-    const result = z.object({ enabled: z.boolean() }).strict().safeParse(await jsonBody(c));
-    if (!result.success) throw new SkillError("invalid_enabled");
-    await store.setEnabled(actor.userId, skill.id, result.data.enabled);
-    return c.json({ ok: true });
   });
   object("PUT", "/shares", async (c) => {
     const { store, policy, actor, skill } = await userRow(c);
@@ -263,7 +242,7 @@ export function createSkillRoutes(deps: SkillRoutesDeps): Hono {
     const reserved = [...await store.builtins(), ...await store.defaults()];
     const active = new Set((await deps.getRecipients()).map((user) => user.id));
     const skills = await Promise.all((await store.list()).map(async (skill) => ({
-      ...await present(store, policy, actor, skill), ownerActive: !multiUser || active.has(skill.ownerId), enabledCount: await store.enableCount(skill.id),
+      ...await present(policy, actor, skill), ownerActive: !multiUser || active.has(skill.ownerId), enabledCount: await store.enableCount(skill.id),
       collisions: reserved.filter((other) => other.name === skill.name).map((other) => other.id),
     })));
     const ids = await store.systemAgentSkills();

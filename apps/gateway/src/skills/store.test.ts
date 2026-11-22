@@ -16,8 +16,10 @@ describe("user skills", () => {
     expect(await fs.readFile(path.join(home, "skill-library/users/alice/greetings/SKILL.md"), "utf8")).toContain("Use a friendly greeting.");
     expect((await store.detail(skill.id)).skillMd).toContain("description: Friendly greetings");
     expect((await store.getState("alice")).enabled).toEqual([]);
-    await store.setEnabled("alice", skill.id, true);
-    expect((await store.getState("alice")).enabled).toEqual([skill.id]);
+    await store.setAgentSkills("alice", "guide", [skill.id]);
+    await store.setAgentSkills("alice", "planner", [skill.id]);
+    expect((await store.getState("alice")).agents).toEqual({ guide: [skill.id], planner: [skill.id] });
+    expect(await store.enableCount(skill.id)).toBe(1);
   });
 });
 
@@ -25,14 +27,14 @@ it("requires explicit replacement, preserves access, and retains ten restorable 
   const store = new SkillStore(home);
   const { skill } = await store.create("alice", input("First release"));
   await store.shares(skill.id, [{ kind: "user", id: "bob", mode: "write" }]);
-  await store.setEnabled("bob", skill.id, true);
+  await store.setAgentSkills("bob", "guide", [skill.id]);
   await expect(store.create("alice", input("Conflict"))).rejects.toMatchObject({ code: "skill_exists", status: 409, details: { id: skill.id } });
   expect((await store.detail(skill.id)).skillMd).toContain("First release");
   await expect(store.create("bob", input())).rejects.toMatchObject({ code: "name_taken", details: { kind: "user" } });
   await expect(store.replace(skill.id, { files: [{ path: "SKILL.md", content: "---\nname: renamed\ndescription: Nope\n---\nRejected" }] })).rejects.toMatchObject({ code: "name_mismatch" });
   for (let revision = 2; revision <= 12; revision++) await store.replace(skill.id, input(`Release ${revision}`));
   expect((await store.get(skill.id))?.shares).toEqual([{ kind: "user", id: "bob", mode: "write" }]);
-  expect((await store.getState("bob")).enabled).toEqual([skill.id]);
+  expect((await store.getState("bob")).agents?.guide).toEqual([skill.id]);
   const versions = await store.versions(skill.id);
   expect(versions).toHaveLength(10);
   await store.restore(skill.id, versions[versions.length - 1].id);
@@ -40,7 +42,8 @@ it("requires explicit replacement, preserves access, and retains ten restorable 
   expect(await store.versions(skill.id)).toHaveLength(10);
   await store.delete(skill.id);
   expect(await store.get(skill.id)).toBeNull();
-  expect((await store.getState("bob")).enabled).toEqual([]);
+  expect((await store.getState("bob")).agents?.guide).toEqual([]);
+  expect(await store.enableCount(skill.id)).toBe(0);
   await expect(fs.stat(path.join(home, "skill-library/users/alice/greetings"))).rejects.toMatchObject({ code: "ENOENT" });
 });
 

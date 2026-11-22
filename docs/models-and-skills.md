@@ -85,9 +85,9 @@ A Pi agent gets skills from five sources. The agent sees one list of skills, wit
 |---|---|---|---|---|---|
 | Pi skill folders | Workspace `.pi/skills/`. On host runs only: `$YOPLAI_HOME/skills/`, and `~/.agents/skills/` when `globalSkills: true` | The operator, on disk | Always on | One agent for `.pi/skills/`, all host agents for the other folders | Not shown |
 | Built-in | `apps/gateway/src/skills/` (`dashboard`, `skill-creator`) | Yoplai developers, in a release | Always on | All Pi agents | **Admin → Skills** |
-| Agent workspace | `$YOPLAI_HOME/agents/<id>/skills/` | The operator, or the agent itself | Always on | Only the agent that owns the workspace | **Skills** page, in the agent tab, read-only. In multi-user mode, a superadmin can mark the skill as System on **Admin → Skills**. A System skill is hidden from **Skills**, but the agent still loads it |
+| Agent workspace | `$YOPLAI_HOME/agents/<id>/skills/` | The operator, or the agent itself | On unless disabled in Agent settings | Only the agent that owns the workspace | **Skills** and **Agent settings**. In multi-user mode, a superadmin can mark a skill System. It appears in the settings sidebar only for superadmins. |
 | Default | `$YOPLAI_HOME/skill-library/default/<name>/` | The operator, on disk | Always on | All Pi agents, or the agents in `.yoplai.json` | **Admin → Skills** |
-| User | `$YOPLAI_HOME/skill-library/users/<owner>/<name>/` | Each user, on the **Skills** page or with `skill_save` | Off until the user turns it on | All Pi agents of that user | **Skills** page, in **Your skills** or **Shared with me** |
+| User | `$YOPLAI_HOME/skill-library/users/<owner>/<name>/` | Each user, on the **Skills** page or with `skill_save` | Off until the user turns it on | Each agent selected by the user | **Skills** lists own and shared skills. Turn them on in **Agent settings** in the agent’s chat. |
 
 A superadmin can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. Yoplai moves the folder out of the workspace. Yoplai blocks the move when a built-in, default or user skill has the same name. Before the move, the dialog lists the paths outside the skill folder that the skill refers to. Other agents may not have these files.
 
@@ -105,7 +105,7 @@ If two skills have the same name, the agent gets only the first one in this orde
 4. Default skills
 5. User skills: first the skills of the user, then skills that other users share
 
-Users cannot take the name of a built-in or default skill. But nothing stops a workspace skill with the same name as a user skill. In that case, the agent gets the workspace skill, and the **Skills** page does not show that the user skill did not load.
+Users cannot take the name of a built-in or default skill. But nothing stops a workspace skill with the same name as a user skill. Skill precedence follows this load order. Disabling a workspace skill also filters it when Pi reaches it through a `.pi/skills` alias.
 
 ## System prompt contributions
 

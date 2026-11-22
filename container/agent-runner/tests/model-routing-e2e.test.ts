@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoutingHarness, routingRuntimes, barrier, poll, type RoutingHarness } from "./model-routing-harness.js";
 
@@ -334,4 +336,33 @@ for (const runtime of routingRuntimes) {
       }, 10_000);
     }
   });
+}
+
+// ALG-751 approves observing the skills loaded by the host adapter and the container runner.
+for (const runtime of routingRuntimes) {
+  it(`filters a disabled workspace skill and its Pi alias from a real ${runtime} run`, async () => {
+    const h = harness = await createRoutingHarness(runtime);
+    const { api } = await import("../../../apps/gateway/src/server/api.core.js");
+    const { reloadConfig } = await import("../../../apps/gateway/src/config/index.js");
+    await fs.writeFile(path.join(h.home, "yoplai.json"), JSON.stringify({ ...h.config, agentManagement: true }));
+    reloadConfig();
+    const workspaceSkills = path.join(h.workspace, "skills");
+    const skill = path.join(workspaceSkills, "harbor-guide");
+    await fs.mkdir(skill, { recursive: true });
+    await fs.writeFile(path.join(skill, "SKILL.md"), "---\nname: harbor-guide\ndescription: Harbor chart index\n---\nRead the index.");
+    const pi = path.join(h.workspace, ".pi");
+    await fs.mkdir(pi);
+    await fs.symlink(workspaceSkills, path.join(pi, "skills"), "dir");
+    expect((await h.send("Read the guide")).status).toBe(200);
+    expect(JSON.stringify(h.modelCalls.at(-1)?.messages.filter((message) => message.role === "system") ?? [])).toContain("Harbor chart index");
+
+    const changed = await api.request(`/agents/${h.id}/settings/agent-skills`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ disabled: ["harbor-guide"] }),
+    });
+    expect(changed.status).toBe(200);
+    h.sessionId = `${h.id}-new-chat`;
+    expect((await h.send("Read the guide again")).status).toBe(200);
+    expect(JSON.stringify(h.modelCalls.at(-1)?.messages.filter((message) => message.role === "system") ?? [])).not.toContain("Harbor chart index");
+  }, 10_000);
 }

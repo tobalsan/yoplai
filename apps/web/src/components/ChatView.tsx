@@ -1,3 +1,5 @@
+import { AgentSettingsSidebar } from "./agent-management/AgentSettingsSidebar";
+import { createDiscardPrompt } from "./agent-management/discard";
 import { stripBase } from "../lib/path";
 import { createFirstChat } from "../desktop-setup/first-chat";
 import { setupRepairHref } from "../desktop-setup/repair";
@@ -32,7 +34,7 @@ import {
 } from "solid-js";
 
 import type { Component, JSX } from "solid-js";
-import { useParams, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
+import { useParams, useBeforeLeave, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { ScheduleAlertsBanner } from "./ScheduleAlertsBanner";
 import { refreshToolLabels } from "../lib/tool-labels";
@@ -148,7 +150,48 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
   };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
-  const [agent] = createResource(() => params.agentId, fetchAgent);
+  const [agent, { mutate: setAgent }] = createResource(() => params.agentId, fetchAgent);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [settingsDirty, setSettingsDirty] = createSignal(false);
+  const [settingsSaving, setSettingsSaving] = createSignal(false);
+  let settingsButton: HTMLButtonElement | undefined;
+  const closeSettings = () => {
+    setSettingsDirty(false);
+    setSettingsOpen(false);
+  };
+  const discardSettings = createDiscardPrompt(() => settingsOpen() && settingsDirty(), "Discard unsaved changes?");
+  const afterSettings = (action: () => void) => {
+    if (settingsSaving()) return;
+    discardSettings.request(() => {
+      closeSettings();
+      action();
+    });
+  };
+  const requestSettingsClose = () => afterSettings(() => settingsButton?.focus());
+  useBeforeLeave((event) => {
+    if (!settingsOpen()) return;
+    if (settingsSaving()) { event.preventDefault(); return; }
+    if (!settingsDirty()) { closeSettings(); return; }
+    event.preventDefault();
+    afterSettings(() => event.retry(true));
+  });
+  createEffect(() => {
+    if (!settingsOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || discardSettings.pending()) return;
+      event.preventDefault();
+      requestSettingsClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
+  const refreshAgentSettingsIdentity = () => {
+    const id = params.agentId;
+    void fetchAgent(id).then((updated) => {
+      if (params.agentId === id) setAgent(updated);
+    }, () => undefined);
+    window.dispatchEvent(new Event("chat-projects-changed"));
+  };
   // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
   const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
   const hasSuperadminRole = (role: string | string[] | null | undefined) => {
@@ -907,7 +950,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
           class="new-chat-btn"
           aria-label="Start a new chat"
           title="New chat"
-          onClick={() => startFreshChat(params.agentId)}
+          onClick={() => afterSettings(() => startFreshChat(params.agentId))}
         >
           <svg
             width="14"
@@ -923,7 +966,12 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
           </svg>
           <span class="new-chat-label">New chat</span>
         </button>
-        <ChatSettingsMenu agentId={params.agentId} settingsAgentId={params.agentId} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
+        <button type="button" class="agent-settings-btn" classList={{ "agent-settings-active": settingsOpen() }}
+          aria-label="Agent settings" title="Agent settings" aria-expanded={settingsOpen()} ref={settingsButton}
+          onClick={() => settingsOpen() ? requestSettingsClose() : setSettingsOpen(true)}>
+          <i class="fa-solid fa-sliders" aria-hidden="true" />
+        </button>
+        <ChatSettingsMenu beforePick={afterSettings} agentId={params.agentId} settingsAgentId={params.agentId} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
       </div>
   );
 
@@ -931,6 +979,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
     <div
       ref={chatViewRef}
       class="chat-view"
+      inert={settingsOpen()}
       onClick={handleCodeCopy}
       classList={{
         "drop-active": isFileDragActive(),
@@ -1233,7 +1282,17 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
   const Shell = props.shell;
   return (
     <DashboardAnnotationsContext.Provider value={annotations}>
-      <Shell toolbar={toolbar()}>{body()}</Shell>
+      <Shell toolbar={toolbar()}>
+        <div class="agent-settings-host">
+          {body()}
+          <Show when={settingsOpen() && !agent.error && agent.latest}>
+            {(current) => <AgentSettingsSidebar agent={current()} onClose={requestSettingsClose} onDirty={setSettingsDirty}
+              onSaving={setSettingsSaving}
+              onAgentChanged={refreshAgentSettingsIdentity} onSaved={() => { closeSettings(); settingsButton?.focus(); }} />}
+          </Show>
+        </div>
+        <discardSettings.Dialog />
+      </Shell>
     </DashboardAnnotationsContext.Provider>
   );
 }

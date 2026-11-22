@@ -136,6 +136,22 @@ describe("configuration transport", () => {
     expect(localCalls).toEqual([]);
   });
 
+  it("keeps versioned avatar URLs distinct for equal local and remote IDs", async () => {
+    fixture.localIds.add("agent");
+    const local = { id: "agent", avatar: "/api/agents/agent/avatar?v=local" };
+    const linked = { id: "agent", avatar: "/api/agents/agent/avatar?v=linked" };
+    const forwarded = { id: "agent@east", avatar: "/api/agents/agent%40east/avatar?v=linked", gateway: "east" };
+    answer = (url) => Response.json(url.pathname.endsWith("/agents") ? url.host === "east.test" ? [linked] : [] : linked);
+    const combined = new Hono();
+    combined.use("/api/*", relayConfigurationHttp());
+    combined.use("/api/*", relayHttp());
+    combined.get("/api/agents", (c) => c.json([local]));
+    expect(await (await combined.request("/api/agents")).json()).toEqual([local, forwarded]);
+    expect(await (await combined.request("/api/agents/agent%40east")).json()).toMatchObject(forwarded);
+    expect((await combined.request("/api/agents/agent%40east/avatar?v=linked")).status).toBe(200);
+    expect(records.at(-1)?.url.href).toBe("https://east.test/api/agents/agent/avatar?v=linked");
+  });
+
   it("keeps equal object IDs separate across gateways", async () => {
     for (const name of ["east", "west"]) {
       const response = await app.request(`${prefix(name)}/api/dashboards/same/pin`, { method: "PUT" });

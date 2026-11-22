@@ -1,9 +1,18 @@
+import { createAgentSettingsRoutes } from "../agent-management/settings.js";
+import { bodyLimit } from "hono/body-limit";
+import { createAgentWriter } from "../agent-management/create.js";
+import { AgentManagementError } from "../agent-management/files.js";
+import { readManagementBody } from "../agent-management/body.js";
+import { createInstructionWriter } from "../desktop/agent-instructions.js";
+import { createModelAccess } from "../desktop/model-access.js";
 import { allowsCatalogWriteOrigin } from "./extension-catalog-policy.js";
 import { CatalogOperationError, installFromCatalog, listReleaseCatalog, removeFromCatalog } from "../extensions/release-catalog.js";
 import { ExtensionOperationBusyError, withExtensionMutation } from "../extensions/registry.js";
+import { agentManagementModeBody, readAgentManagementMode, writeAgentManagementMode } from "../agent-management/mode.js";
+import { agentManagementRequest } from "../agent-management/request.js";
 import { desktopSetupAllowed } from "../desktop/guard.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -114,6 +123,18 @@ import { fiveHourState, pace } from "../model-quota/policy.js";
 import { getLinkCallbackPort, isRelayEnabled } from "../relay/state.js";
 
 const api = new Hono();
+// Browser form posts need the same origin check as our other configuration writes.
+api.use("/agent-management/*", checkManagementWriteOrigin);
+api.use("/agents/:id/settings/*", checkManagementWriteOrigin);
+api.use("/admin/agent-management", checkManagementWriteOrigin);
+
+async function checkManagementWriteOrigin(c: Context, next: () => Promise<void>) {
+  if (c.req.method !== "GET" && c.req.method !== "HEAD" && !allowsCatalogWriteOrigin(c.req.header("Origin"))) {
+    return c.json({ error: "untrusted_origin" }, 403);
+  }
+  await next();
+}
+
 // Hono fetch creates a fresh context. Carry only the outer host’s authenticated
 // identity through its in-process bindings, never through caller-supplied headers.
 api.use("*", async (c: Context, next) => {
@@ -272,6 +293,89 @@ async function isSuperadminRequest(c: Context): Promise<boolean> {
   const role = (await getRequestAuthContext(c))?.user.role;
   return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 }
+
+async function getAgentManagementRequest(c: Context) {
+  const multiUser = loadConfig().extensions?.multiUser?.enabled === true;
+  return agentManagementRequest(multiUser, multiUser ? await getRequestUserId(c) : undefined);
+}
+
+api.get("/agent-management/permissions", async (c) => {
+  c.header("Cache-Control", "no-store");
+  const { canCreate } = await getAgentManagementRequest(c);
+  return c.json({ canCreate });
+});
+
+export const modelAccess = createModelAccess(CONFIG_DIR);
+const createManagedAgent = createAgentWriter(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth));
+const managementBodyLimit = bodyLimit({
+  maxSize: MAX_UPLOAD_SIZE_BYTES,
+  onError: (c) => c.json({ error: "body_too_large", message: "The request is too large." }, 413),
+});
+
+api.get("/agent-management/models", async (c) => {
+  c.header("Cache-Control", "no-store");
+  if (!(await getAgentManagementRequest(c)).canCreate) return c.json({ error: "forbidden" }, 403);
+  try {
+    return c.json({ models: await modelAccess.listModels() });
+  } catch {
+    return c.json({ error: "model_list_failed", message: "Yoplai could not read the model list. Try again." }, 500);
+  }
+});
+
+api.post("/agent-management/agents", managementBodyLimit, async (c) => {
+  const requester = await getAgentManagementRequest(c);
+  if (!requester.canCreate || !requester.actor) return c.json({ error: "forbidden" }, 403);
+  try {
+    const { json, upload } = await readManagementBody(c);
+    let access;
+    if (requester.multiUser) {
+      const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+      const forks = getMultiUserRuntime()?.forks;
+      if (!forks) return c.json({ error: "write_failed", message: "Agent access records are unavailable." }, 500);
+      access = {
+        hasRow: (id: string) => !!(forks.getForkByAgentId(id) ?? forks.getForkByPool(id)),
+        reservePrivate: forks.reservePrivate,
+      };
+    }
+    const { agent, status } = await createManagedAgent(json, { creatorId: requester.actor.userId, upload, access });
+    return c.json(agent, status);
+  } catch (error) {
+    if (error instanceof AgentManagementError) return c.json({ error: error.code, message: error.message }, error.status);
+    throw error;
+  }
+});
+
+api.route("/", createAgentSettingsRoutes({
+  requester: getAgentManagementRequest,
+  canChat: callerHasAgentAccess,
+  canManageVisibility: async (c, id) => {
+    const { canManageAgent } = await loadMultiUserApiDeps();
+    return canManageAgent(await getRequestAuthContext(c), id);
+  },
+  listModels: modelAccess.listModels,
+}));
+
+const agentManagementAdminPath = "/admin/agent-management";
+api.use(agentManagementAdminPath, async (c, next) => {
+  c.header("Cache-Control", "no-store");
+  if (!isExtensionLoaded("multiUser") || !(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+  await next();
+});
+api.get(agentManagementAdminPath, (c) => c.json(readAgentManagementMode()));
+api.put(agentManagementAdminPath, async (c) => {
+  const actor = await getAuditActor(c);
+  const change = agentManagementModeBody.safeParse(await c.req.json().catch(() => null));
+  const before = readAgentManagementMode();
+  if (before.locked) return c.json({ error: "mode_locked" }, 403);
+  if (!change.success) return c.json({ error: "invalid_mode" }, 400);
+  writeAgentManagementMode(change.data.mode);
+  const after = readAgentManagementMode();
+  recordSettingsChange({
+    ...actor, action: "agent_management.update", targetType: "agent-management",
+    changes: diffSettings({ mode: before.mode }, { mode: after.mode }, []),
+  });
+  return c.json(after);
+});
 
 const extensionCatalogPath = "/admin/extension-catalog";
 api.use(`${extensionCatalogPath}/*`, async (c, next) => {
@@ -693,15 +797,19 @@ api.get("/capabilities", async (c) => {
   });
 });
 
-/** Resolve avatar for API response: relative paths become /api/agents/:id/avatar */
-function resolveAvatarForApi(
-  avatar: string | undefined,
-  agentId: string
-): string | undefined {
-  if (!avatar) return undefined;
+/** Give stored avatars a new URL when the file changes, including through a relay. */
+function resolveAvatarForApi(agent: AgentConfig | undefined): string | undefined {
+  const avatar = agent?.avatar;
+  if (!avatar || !agent) return undefined;
   if (/^\p{Emoji}/u.test(avatar) && avatar.length <= 4) return avatar;
   if (/^https?:\/\//i.test(avatar)) return avatar;
-  return `/api/agents/${agentId}/avatar`;
+  const url = `/api/agents/${encodeURIComponent(agent.id)}/avatar`;
+  try {
+    const { mtimeMs, ino } = statSync(path.resolve(resolveWorkspaceDir(agent.workspace), avatar));
+    return `${url}?v=${mtimeMs}-${ino}`;
+  } catch {
+    return url;
+  }
 }
 
 async function resolveExistingSessionHistoryFile(params: {
@@ -739,7 +847,7 @@ api.get("/agents", async (c) => {
       name: a.name,
       description: a.description,
       role: a.role,
-      avatar: resolveAvatarForApi(a.avatar, a.id),
+      avatar: resolveAvatarForApi(a),
       ...(includePrivateMeta ? { model: a.model } : {}),
       sdk: a.sdk ?? "pi",
       ...(includePrivateMeta && a.workspace
@@ -785,7 +893,7 @@ async function listSidebarSessions(c: Context, includeArchived = false) {
         userId,
       });
       if (!session || (!includeArchived && session.summary.archived !== null)) return null;
-      const avatar = resolveAvatarForApi(agent?.avatar, parsed.agentId);
+      const avatar = resolveAvatarForApi(agent);
       return {
         ...session,
         summary: { ...session.summary, ...(avatar ? { avatar } : {}) },
@@ -960,7 +1068,7 @@ api.get("/agents/:id", async (c) => {
     name: agent.name,
     description: agent.description,
     role: agent.role,
-    avatar: resolveAvatarForApi(agent.avatar, agent.id),
+    avatar: resolveAvatarForApi(agent),
     ...(includePrivateMeta ? { model: agent.model } : {}),
     sdk: agent.sdk ?? "pi",
     ...(includePrivateMeta && agent.workspace
@@ -1354,7 +1462,8 @@ api.get("/agents/:id/avatar", async (c) => {
   const wsDir = resolveWorkspaceDir(agent.workspace);
   const filePath = path.resolve(wsDir, agent.avatar);
   // Prevent path traversal outside workspace
-  if (!filePath.startsWith(wsDir)) {
+  const relative = path.relative(wsDir, filePath);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     return c.json({ error: "Invalid path" }, 400);
   }
   try {
@@ -1372,7 +1481,10 @@ api.get("/agents/:id/avatar", async (c) => {
     const contentType = mimeMap[ext] ?? "application/octet-stream";
     const stream = createReadStream(filePath);
     c.header("Content-Type", contentType);
-    c.header("Cache-Control", "public, max-age=3600");
+    c.header("X-Content-Type-Options", "nosniff");
+    const multiUser = loadConfig().extensions?.multiUser?.enabled === true;
+    c.header("Cache-Control", multiUser ? "private, max-age=3600" : "public, max-age=3600");
+    if (multiUser) c.header("Vary", "Cookie, Authorization", { append: true });
     return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
   } catch {
     return c.json({ error: "Not found" }, 404);

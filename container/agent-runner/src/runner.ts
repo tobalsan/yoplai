@@ -1,3 +1,4 @@
+import { filterDisabledWorkspaceSkills } from "@yoplai/shared/node/skills";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -584,6 +585,10 @@ export async function runAgent(
         renderedContext || undefined,
       ].filter((prompt): prompt is string => Boolean(prompt)),
       agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
+      skillsOverride: (result) => ({
+        ...result,
+        skills: filterDisabledWorkspaceSkills(result.skills, path.join(input.workspaceDir, "skills"), input.disabledWorkspaceSkills),
+      }),
     });
     await resourceLoader.reload();
 

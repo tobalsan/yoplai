@@ -1,7 +1,6 @@
 import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
-import { createModelAccess } from "../desktop/model-access.js";
 import { desktopSetupGuard } from "../desktop/guard.js";
 import { createDesktopSetupRoutes } from "../desktop/setup.js";
 import { serve } from "@hono/node-server";
@@ -13,7 +12,7 @@ import { logError } from "../logging.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
-import { api, dashboardSessionExists } from "./api.core.js";
+import { api, dashboardSessionExists, modelAccess } from "./api.core.js";
 import { internalTools } from "./internal-tools.js";
 import { startConfiguredInternalSocket } from "./internal-socket.js";
 import {
@@ -140,7 +139,6 @@ const setupGuard = desktopSetupGuard(
 app.use("/api/desktop-setup/*", setupGuard);
 app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
 app.use("/api/model-access/*", setupGuard);
-const modelAccess = createModelAccess(CONFIG_DIR);
 app.route("/api/model-access", modelAccess.routes);
 app.on("POST", "/api/agents", setupGuard);
 app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
@@ -163,7 +161,7 @@ app.use("/api/*", async (c, next) => {
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
     // These core routes are also available without multi-user.
-    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || ownsExtensionCatalogPath(path))) continue;
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || path === "/api/admin/agent-management" || ownsExtensionCatalogPath(path))) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
