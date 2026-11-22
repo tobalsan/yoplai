@@ -34,7 +34,6 @@ mkdir -p .yoplai-e2e/agents/sales .yoplai-e2e/agents/support
 cat > .yoplai-e2e/agents/sales/agent.yaml <<'EOF'
 id: sales
 name: Sales
-role: Sales Assistant
 description: Handles sales handoffs.
 model:
   provider: openai
@@ -45,7 +44,6 @@ EOF
 cat > .yoplai-e2e/agents/support/agent.yaml <<'EOF'
 id: support
 name: Support
-role: Support Assistant
 description: Handles support handoffs.
 model:
   provider: openai

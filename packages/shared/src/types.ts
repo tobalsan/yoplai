@@ -324,7 +324,6 @@ const AgentConfigBaseSchema = z.object({
   description: z.string().optional(),
   language: z.enum(["en", "fr"]).default("en"),
   avatar: z.string().optional(), // emoji or image URL
-  role: z.string().optional(), // short job title, e.g. "Sales Admin"
   workspace: z.string(),
   workspaceDir: z.string().optional(),
   system_files: z.array(SystemFileEntrySchema).optional(),

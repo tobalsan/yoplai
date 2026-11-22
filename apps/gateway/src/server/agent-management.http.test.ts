@@ -63,7 +63,7 @@ describe("agent management over HTTP", () => {
       extraConfig: { agents: "agents/*" },
     });
     const settingsFile = path.join(home, "agents", "shared", "agent.yaml");
-    await fs.appendFile(settingsFile, '  base_url: https://operator.example.test/v1 # operator URL\n  auth_token: $env:SAMPLE_AGENT_TOKEN\n');
+    await fs.appendFile(settingsFile, '  base_url: https://operator.example.test/v1 # operator URL\n  auth_token: $env:SAMPLE_AGENT_TOKEN\nrole: Harbor Dispatcher\n');
     vi.stubEnv("SAMPLE_AGENT_TOKEN", "synthetic-operator-token");
     vi.resetModules();
     const { loadConfig } = await import("../config/index.js");
@@ -249,7 +249,7 @@ describe("agent management over HTTP", () => {
     const patch = (body: unknown) => write("PATCH", endpoint, superadmin, body);
     expect((await write("PATCH", endpoint, member, { name: "Denied" })).status).toBe(403);
     expect((await write("POST", "/api/agent-management/agents", member, {})).status).toBe(403);
-    expect((await patch({ role: "$env:SAMPLE_AGENT_TOKEN" })).status).toBe(400);
+    expect((await patch({ description: "$env:SAMPLE_AGENT_TOKEN" })).status).toBe(400);
     expect((await patch({ model: { provider: "unknown", model: "unknown" } })).status).toBe(400);
     expect((await patch({ model, avatar: 3 })).status).toBe(200);
     expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ canEditAgent: true, model, hasCustomAvatar: false, defaultFace: 3 });
@@ -297,6 +297,27 @@ describe("agent management over HTTP", () => {
     expect((await write("DELETE", endpoint + "/avatar", superadmin, { avatar: 3 })).status).toBe(200);
     expect(await getAvatar()).not.toBe(after);
     expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ hasCustomAvatar: false, defaultFace: 3 });
+  });
+
+  // ALG-772 Testing Decisions, approved in Thinh's Groom GO, cover this HTTP seam.
+  it("saves a description for a legacy agent and rejects role edits over HTTP", async () => {
+    expect((await putMode(superadmin, "admin")).status).toBe(200);
+    const agentPath = "/api/agents/shared";
+    const settingsPath = `${agentPath}/settings`;
+    expect((await write("PATCH", settingsPath, superadmin, { role: "Dock Coordinator" })).status).toBe(400);
+    expect((await write("PATCH", settingsPath, superadmin, { description: "Coordinates dock arrivals." })).status).toBe(200);
+
+    const settings = await get(settingsPath, superadmin);
+    const detail = await get(agentPath, superadmin);
+    const list = await get("/api/agents", superadmin);
+    expect(settings.status).toBe(200);
+    expect(detail.status).toBe(200);
+    expect(list.status).toBe(200);
+    const listedAgent = (await list.json() as Array<{ id: string }>).find((agent) => agent.id === "shared");
+    for (const payload of [await settings.json(), await detail.json(), listedAgent]) {
+      expect(payload).toMatchObject({ description: "Coordinates dock arrivals." });
+      expect(payload).not.toHaveProperty("role");
+    }
   });
 
   it("uses the same default filter for runs and settings, and saves only the linked gateway's personal state with management off", async () => {

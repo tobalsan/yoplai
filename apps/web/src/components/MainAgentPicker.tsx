@@ -137,7 +137,7 @@ export function MainAgentPicker(props: {
           <Show when={focused()} keyed>{(agent) => (
             <div class="main-agent-copy">
               <h3>{agent.name}</h3>
-              <p>{agent.description ?? agent.role ?? "Ready when you are."}</p>
+              <p>{agent.description || "Ready when you are."}</p>
             </div>
           )}</Show>
         </div>

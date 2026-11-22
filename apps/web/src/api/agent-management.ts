@@ -11,7 +11,6 @@ export type AgentSettings = {
   canSetPublic?: boolean;
   public?: boolean;
   name: string;
-  role?: string;
   description?: string;
   hasCustomAvatar: boolean;
   defaultFace?: number;
@@ -22,7 +21,6 @@ export type AgentSettings = {
 };
 export type AgentSettingsPatch = {
   name?: string;
-  role?: string;
   description?: string;
   model?: ModelChoice;
   reasoning?: ThinkLevel | null;

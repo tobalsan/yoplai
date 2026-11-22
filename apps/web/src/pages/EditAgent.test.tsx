@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getByRole, queryByText } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { Suspense } from "solid-js";
 import type { Agent } from "../api/types";
@@ -423,20 +424,15 @@ describe("EditAgent", () => {
     expect(back?.getAttribute("href")).toBe("/chat/scribe?session=abc");
   });
 
-  it("renders the target agent name and role for an admin", async () => {
+  it("renders the target agent name and avatar for an admin", async () => {
     setSession("admin");
     fetchAgentsMock.mockResolvedValue([
-      agent({ id: "scribe", name: "Scribe", role: "Writer", avatar: "📝" }),
+      agent({ id: "scribe", name: "Scribe", avatar: "📝" }),
     ]);
     await mountEdit("scribe");
 
-    expect(container.querySelector(".edit-agent-name")?.textContent).toBe(
-      "Scribe"
-    );
-    expect(container.querySelector(".edit-agent-role")?.textContent).toBe(
-      "Writer"
-    );
-    expect(container.querySelector(".avatar-emoji")?.textContent).toBe("📝");
+    expect(getByRole(container, "heading", { name: "Scribe", level: 1 })).toBeTruthy();
+    expect(queryByText(container, "📝")).not.toBeNull();
   });
 
   it("shows a not-found message when the agent id is unknown", async () => {
