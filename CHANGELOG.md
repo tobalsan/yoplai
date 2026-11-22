@@ -32,6 +32,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Agent creation works over plain HTTP on a local network, including retries after a lost response.
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
 - Desktop agent creation still succeeds when an unrelated extension's reload hook fails.
 - Desktop setup checks and uses the current model endpoint, sends Claude subscription users to sign-in, and can use a valid Pi login when the Codex CLI login expired.

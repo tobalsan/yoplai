@@ -49,6 +49,10 @@ always on for the local single-user desktop gateway. Each linked gateway
 applies its own policy. **Create on** offers the gateways where you can
 create, and the model picker follows your choice.
 
+When you open the web UI from a LAN address, set `web.baseUrl` to the URL
+you use in the browser, including its scheme and port. The gateway checks
+that origin on agent management writes.
+
 On a multi-user gateway, a superadmin can change the mode at **Admin →
 Agent management**. A value in `yoplai.json` takes precedence and locks
 the form. Otherwise the gateway uses the saved mode in

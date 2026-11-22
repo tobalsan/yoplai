@@ -76,3 +76,44 @@ it("protects the draft and creates with the selected gateway's model", async () 
   expect(location.pathname).toBe("/chat/garden-guide%40east");
   expect(writes).toEqual([{ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed" } }) }]);
 });
+
+it("submits and retries with the same UUID on plain HTTP", async () => {
+  history.replaceState(null, "", "/agents/new");
+  vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+  const requestIds: string[] = [];
+  vi.stubGlobal("fetch", async (path: string, options: RequestInit) => {
+    if (path === "/api/relay/gateways") return Response.json({ gateways: [] });
+    if (path === "/api/agent-management/permissions") return Response.json({ canCreate: true });
+    if (path === "/api/agent-management/models") {
+      return Response.json({ models: [{ provider: "openai", model: "oak", name: "Oak", ready: true }] });
+    }
+    if (path === "/api/agent-management/agents" && options.method === "POST") {
+      requestIds.push(JSON.parse(String(options.body)).requestId);
+      if (requestIds.length === 1) throw new TypeError("Connection lost");
+      return Response.json({ id: "orchard-guide" }, { status: 200 });
+    }
+    return Response.json({}, { status: 404 });
+  });
+  dispose = render(() => <Router>
+    <Route path="/agents/new" component={NewAgent} />
+    <Route path="/chat/:agentId" component={() => <h1>Chat opened</h1>} />
+  </Router>, document.body);
+
+  const byRole = (role: string, name: string | RegExp) => getByRole(document.body, role, { name });
+  fireEvent.input(byRole("textbox", "Name"), { target: { value: "Orchard Guide" } });
+  const model = byRole("button", /^Model:/) as HTMLButtonElement;
+  await waitFor(() => expect(model.disabled).toBe(false));
+  fireEvent.click(model);
+  fireEvent.keyDown(byRole("combobox", "Search models"), { key: "Enter" });
+  const create = byRole("button", "Create agent");
+  fireEvent.click(create);
+
+  await waitFor(() => expect(getByRole(document.body, "alert").textContent).toBe("Could not reach the gateway. Try again."));
+  expect(requestIds).toEqual([expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)]);
+  fireEvent.click(create);
+
+  await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy());
+  expect(location.pathname).toBe("/chat/orchard-guide");
+  expect(requestIds).toEqual([requestIds[0], requestIds[0]]);
+});
