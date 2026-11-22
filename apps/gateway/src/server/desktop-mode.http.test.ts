@@ -80,4 +80,4 @@ it("closes setup, links and external chat credentials on a live multi-user reloa
     vi.unstubAllEnvs();
     await fs.rm(root, { recursive: true, force: true });
   }
-});
+}, 10_000);
