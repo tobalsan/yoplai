@@ -1,6 +1,7 @@
 import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
+import { createAgentConfigRoutes } from "../agents/agent-config-routes.js";
 import { createModelAccess } from "../desktop/model-access.js";
 import { desktopSetupGuard } from "../desktop/guard.js";
 import { createDesktopSetupRoutes } from "../desktop/setup.js";
@@ -142,8 +143,32 @@ app.route("/api/desktop-setup", createDesktopSetupRoutes(CONFIG_DIR));
 app.use("/api/model-access/*", setupGuard);
 const modelAccess = createModelAccess(CONFIG_DIR);
 app.route("/api/model-access", modelAccess.routes);
-app.on("POST", "/api/agents", setupGuard);
-app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth)));
+// Agent creation carries its own agentManagement gate; the desktop setup guard no longer owns this route.
+app.route("/api/agents", createAgentRoutes(CONFIG_DIR, modelAccess.listModels, createInstructionWriter(modelAccess.getAuth), {
+  isMultiUser: () => currentExtensionRuntime().isEnabled("multiUser"),
+  getAuthContext: async (c) => {
+    if (!currentExtensionRuntime().isEnabled("multiUser")) return null;
+    const mod = await loadMultiUserMiddlewareModule();
+    return mod.getRequestAuthContext(c);
+  },
+}));
+app.route("/api/agents", createAgentConfigRoutes({
+  isMultiUser: () => currentExtensionRuntime().isEnabled("multiUser"),
+  getAuthContext: async (c) => {
+    if (!currentExtensionRuntime().isEnabled("multiUser")) return null;
+    const mod = await loadMultiUserMiddlewareModule();
+    return mod.getRequestAuthContext(c);
+  },
+  canManageAgent: async (auth, agentId) => {
+    const mod = await loadMultiUserMiddlewareModule();
+    return mod.canManageAgent(auth as never, agentId);
+  },
+  hasAgentAccess: async (auth, agentId) => {
+    const mod = await loadMultiUserMiddlewareModule();
+    return mod.hasAgentAccess(auth as never, agentId);
+  },
+  listModels: modelAccess.listModels,
+}));
 const configurationRelay = relayConfigurationHttp();
 app.use("/api/*", (c, next) => {
   // Local multi-user mode keeps the relay off. Only the gateway list answers there, with an explicit refusal.
@@ -233,7 +258,7 @@ app.use("/api/mcp/*", async (c, next) => {
 // they already filter their payload per-user via `getVisibleAgents`. Gating
 // them with a per-agent access check would treat the literal segment
 // ("status"/"sessions") as an agent id and reject every non-staff caller.
-const AGGREGATE_AGENT_SEGMENTS = new Set(["status", "sessions"]);
+const AGGREGATE_AGENT_SEGMENTS = new Set(["status", "sessions", "models"]);
 
 app.use("/api/agents/:id", async (c, next) => {
   if (!currentExtensionRuntime().isEnabled("multiUser")) {

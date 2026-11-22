@@ -284,3 +284,32 @@ export async function updateAgentWebhook(
     }
   });
 }
+
+export type AgentCoreConfigPatch = {
+  name?: string;
+  description?: string;
+  avatar?: string;
+  model?: { provider: string; model: string };
+  reasoning?: string;
+  queueMode?: "queue" | "interrupt";
+  globalSkills?: boolean;
+};
+
+/** Apply core agent.yaml fields. The raw document stays intact otherwise. */
+export async function updateAgentCoreConfig(
+  workspaceDir: string,
+  patch: AgentCoreConfigPatch
+): Promise<Record<string, unknown>> {
+  return updateAgentConfig(workspaceDir, (doc) => {
+    if (patch.name !== undefined) doc.set("name", patch.name);
+    if (patch.description !== undefined) doc.set("description", patch.description);
+    if (patch.avatar !== undefined) doc.set("avatar", patch.avatar);
+    if (patch.model !== undefined) {
+      doc.setIn(["model", "provider"], patch.model.provider);
+      doc.setIn(["model", "model"], patch.model.model);
+    }
+    if (patch.reasoning !== undefined) doc.set("reasoning", patch.reasoning);
+    if (patch.queueMode !== undefined) doc.set("queueMode", patch.queueMode);
+    if (patch.globalSkills !== undefined) doc.set("globalSkills", patch.globalSkills);
+  });
+}

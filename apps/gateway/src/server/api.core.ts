@@ -97,6 +97,7 @@ import { getSkillContext, resolveSkillActor } from "../skills/context.js";
 import { ImportTokenStore } from "../skills/import-tokens.js";
 import { listSkillRecipients, skillOwnerName } from "../skills/http-auth.js";
 import { ChatProjectStore, isSafeChatProjectId } from "../chat-projects/store.js";
+import { effectiveAgentManagementMode } from "../agents/agent-management.js";
 import { ChatShareStore } from "../chat-shares/store.js";
 import { getOAuthService } from "../oauth/service.js";
 import { readToolLabels } from "../maintenance/tool-labels.js";
@@ -677,6 +678,7 @@ api.get("/capabilities", async (c) => {
   return c.json({
     version: 2,
     apps: { available: appsAvailable() },
+    agentManagement: effectiveAgentManagementMode(isMultiUserEnabled, config),
     extensions,
     agents: agents.map((agent) => agent.id),
     multiUser: isMultiUserEnabled,

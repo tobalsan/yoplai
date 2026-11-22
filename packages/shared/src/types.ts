@@ -675,6 +675,10 @@ export const ProjectsConfigSchema = z.object({
 });
 export type ProjectsConfig = z.infer<typeof ProjectsConfigSchema>;
 
+/** Who may create agents and edit agent config through the UI. Local single-user gateways allow both by default. */
+export const AgentManagementModeSchema = z.enum(["disabled", "admin", "superadmin", "anyone"]);
+export type AgentManagementMode = z.infer<typeof AgentManagementModeSchema>;
+
 export const SecretRefSchema = z.string();
 export type SecretRef = z.infer<typeof SecretRefSchema>;
 
@@ -1387,6 +1391,7 @@ const GatewayCommonFields = {
   ui: UiConfigSchema.optional(),
   taskboard: TaskboardConfigSchema.optional(),
   projects: ProjectsConfigSchema.optional(),
+  agentManagement: AgentManagementModeSchema.optional(),
   subagents: z.array(SubagentConfigSchema).optional(),
   notifications: NotificationsConfigSchema.optional(),
   dream: DreamGatewayConfigSchema.optional(),
@@ -2113,6 +2118,8 @@ export const CapabilitiesResponseSchema = z.object({
   version: z.number(),
   apps: z.object({ available: z.boolean() }).optional(),
   desktopSetup: z.boolean().optional(),
+  /** Effective agent management mode after local default resolution. */
+  agentManagement: AgentManagementModeSchema.optional(),
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),

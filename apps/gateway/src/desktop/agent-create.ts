@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import yaml from "js-yaml";
 import { z } from "zod";
 import { allowsDesktopAgentDiscovery, desktopDiscoveryCaseAliases, getActiveAgents, getConfigPath, isAgentActive, loadConfig } from "../config/index.js";
+import { canCreateAgent, effectiveAgentManagementMode, writeCreatorUserId } from "../agents/agent-management.js";
 import { reloadAfterExtensionWrite } from "../extensions/reload.js";
 import type { createInstructionWriter } from "./agent-instructions.js";
 import type { createModelAccess } from "./model-access.js";
@@ -134,17 +135,40 @@ async function recoverAgent(parent: string, found: FoundAgent, needsReload: bool
   }
 }
 
+export type AgentCreateRouteDeps = {
+  isMultiUser?: () => boolean;
+  getAuthContext?: (c: import("hono").Context) => Promise<{ user: { id: string; role?: string | string[] | null } } | null>;
+};
+
 export function createAgentRoutes(
   home: string,
   listModels: ReturnType<typeof createModelAccess>["listModels"],
   writeInstructions: ReturnType<typeof createInstructionWriter>,
+  deps: AgentCreateRouteDeps = {},
 ) {
   const routes = new Hono();
   const parent = path.join(home, "agents");
+  routes.get("/models", async (c) => {
+    const multiUser = deps.isMultiUser?.() ?? false;
+    const auth = multiUser && deps.getAuthContext ? await deps.getAuthContext(c) : null;
+    const mode = effectiveAgentManagementMode(multiUser);
+    if (multiUser && !(auth && canCreateAgent(mode, auth.user.role))) {
+      return c.json({ error: "agent_management_disabled" }, 403);
+    }
+    return c.json({ models: await listModels().catch(() => []) });
+  });
   routes.post("/", async (c) => {
     function fail(error: CreateFailure) {
       const [status, message] = failures[error];
       return c.json({ error, message }, status);
+    }
+    const multiUser = deps.isMultiUser?.() ?? false;
+    const auth = multiUser && deps.getAuthContext ? await deps.getAuthContext(c) : null;
+    const mode = effectiveAgentManagementMode(multiUser);
+    if (!multiUser || (auth && canCreateAgent(mode, auth.user.role))) {
+      // Allowed: local single-user gateways, or signed-in users the mode permits.
+    } else {
+      return c.json({ error: "agent_management_disabled", message: "Agent creation is disabled here." }, 403);
     }
     const parsed = bodySchema.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) return fail("invalid_request");
@@ -169,6 +193,7 @@ export function createAgentRoutes(
         const stagingDir = path.join(home, "run", `.desktop-agent-${randomUUID()}`);
         if (!isAgentActive(id) || !allowsDesktopAgentDiscovery(finalDir, stagingDir)) throw new AgentCreateError("discovery_refused");
         await stageAgent(finalDir, stagingDir, id, body, instructions);
+        await writeCreatorUserId(finalDir, auth?.user.id ?? null);
         return { agent: await recoverAgent(parent, { id, instructions: instructions.source }, true), status: 201 } as const;
       });
       return c.json(result.agent, result.status);

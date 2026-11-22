@@ -10,6 +10,7 @@ const defaultCapabilities: CapabilitiesResponse = {
   agents: [],
   multiUser: false,
   desktopSetup: false,
+  agentManagement: "disabled",
   forkedAgents: false,
   enableCronMonitoring: false,
   relayLink: { available: false },
@@ -35,6 +36,7 @@ export async function loadCapabilities(): Promise<CapabilitiesResponse> {
       setCapabilities({
         ...data,
         desktopSetup: data.desktopSetup === true,
+        agentManagement: data.agentManagement ?? "disabled",
         apps: data.apps ?? { available: false },
         enableCronMonitoring: data.enableCronMonitoring ?? false,
         relayLink: data.relayLink ?? { available: false },
@@ -104,6 +106,7 @@ export function setCapabilitiesForTests(
     agents: value.agents ?? defaultCapabilities.agents,
     multiUser: value.multiUser ?? defaultCapabilities.multiUser,
     desktopSetup: value.desktopSetup === true,
+    agentManagement: value.agentManagement ?? "disabled",
     authMethods: value.authMethods,
     forkedAgents: value.forkedAgents ?? defaultCapabilities.forkedAgents,
     enableCronMonitoring: value.enableCronMonitoring ?? defaultCapabilities.enableCronMonitoring,

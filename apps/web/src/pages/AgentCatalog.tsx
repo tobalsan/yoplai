@@ -17,6 +17,8 @@ import { showToast } from "../lib/toast";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { ScheduleAlertDot } from "../components/ScheduleAlertDot";
 import { defaultAvatarUrl } from "../lib/default-avatar";
+import { CreateAgentModal } from "../components/agent/CreateAgentModal";
+import { AgentConfigPanel } from "../components/agent/AgentConfigPanel";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -37,10 +39,20 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
   const navigate = useNavigate();
   const [pendingMain, setPendingMain] = createSignal<{ chatAgentId: string; name: string } | null>(null);
   const [mainAgentError, setMainAgentError] = createSignal("");
-  const [agents] = createResource(() =>
+  const [showCreate, setShowCreate] = createSignal(false);
+  const [configTarget, setConfigTarget] = createSignal<{ id: string; name: string } | null>(null);
+  const [agents, { refetch: refetchAgents }] = createResource(() =>
     capabilities.forkedAgents ? fetchPool() : fetchAgents()
   );
   const session = useSession();
+  const canCreateAgent = createMemo(() => {
+    const mode = capabilities.agentManagement ?? "disabled";
+    if (mode === "disabled") return false;
+    const role = (session().data?.user as { role?: string | string[] } | undefined)?.role;
+    if (mode === "anyone") return !capabilities.multiUser || Boolean(session().data?.user);
+    if (mode === "admin") return hasAdminRole(role);
+    return hasSuperadminRole(role);
+  });
   const isAdmin = createMemo(() =>
     hasAdminRole(
       (session().data?.user as { role?: string | string[] } | undefined)?.role
@@ -109,7 +121,21 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
 
   return (
     <div class="agent-catalog">
-      <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
+      <div class="catalog-head">
+        <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
+        <Show when={canCreateAgent()}>
+          <button type="button" class="catalog-new" onClick={() => setShowCreate(true)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            New agent
+          </button>
+        </Show>
+      </div>
+      <Show when={showCreate()}>
+        <CreateAgentModal onClose={() => setShowCreate(false)} onCreated={() => void refetchAgents()} />
+      </Show>
+      <Show when={configTarget()}>{(target) => (
+        <AgentConfigPanel agentId={target().id} agentName={target().name} onClose={() => setConfigTarget(null)} onSaved={() => void refetchAgents()} />
+      )}</Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}
@@ -172,6 +198,11 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
                     </svg>
                   </A>
+                </Show>
+                <Show when={capabilities.agentManagement !== "disabled"}>
+                  <button type="button" class="catalog-config" aria-label={`Configure ${agent.name}`} title="Configure agent" onClick={() => setConfigTarget({ id: agent.id, name: agent.name })}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" /></svg>
+                  </button>
                 </Show>
                 <Show when={mainAgentIdFor(agent.id)}>{(chatAgentId) => (
                   <button
@@ -267,6 +298,15 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
           color: var(--text-primary);
           margin-bottom: 20px;
         }
+        .catalog-head { display: flex; align-items: center; justify-content: space-between; }
+        .catalog-new { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 8px; background: var(--text-primary); color: var(--bg-base); padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: transform 0.16s cubic-bezier(0.23,1,0.32,1), opacity 0.16s ease; }
+        .catalog-new:hover { opacity: 0.88; }
+        .catalog-new:active { transform: scale(0.97); }
+        .catalog-new:focus-visible { outline: 2px solid rgba(59,130,246,0.6); outline-offset: 2px; }
+        .catalog-config { position: absolute; top: 8px; right: 40px; z-index: 1; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; border-radius: 8px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 80%, transparent); cursor: pointer; opacity: 0; transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease; }
+        .catalog-card:hover .catalog-config, .catalog-card:focus-within .catalog-config { opacity: 1; }
+        .catalog-config:hover { color: var(--text-primary); background: var(--bg-raised); }
+        .catalog-config:focus-visible { opacity: 1; outline: 2px solid rgba(59,130,246,0.6); outline-offset: 2px; }
 
         .loading, .error {
           padding: 24px;

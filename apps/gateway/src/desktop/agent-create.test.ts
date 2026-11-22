@@ -157,7 +157,8 @@ it("starts empty and serves the new agent and avatar before the create returns",
   await expect(fs.readdir(path.join(home, "run"))).resolves.toEqual([]);
   vi.stubEnv("YOPLAI_DESKTOP", "0");
   expect((await request()).status).toBe(200);
-  expect((await create(body())).status).toBe(403);
+  // Single-user gateways allow agent creation without the desktop flag.
+  expect((await create(body())).status).toBe(201);
 });
 
 it("uses the packaged avatar and accepts a write through the packaged UI proxy", async () => {
@@ -217,7 +218,7 @@ it("lists and checks free models and creates an agent only with an eligible sour
 it("rejects invalid JSON, a missing body, bad fields, and a model not on the list", async () => {
   expect((await request("/api/agents", { method: "POST" })).status).toBe(400);
   expect((await request("/api/agents", { ...json(body()), body: "{" })).status).toBe(400);
-  expect((await request("/api/agents", { method: "POST", body: "{}" })).status).toBe(415);
+  expect((await request("/api/agents", { method: "POST", body: "{}" })).status).toBe(400);
   for (const bad of [{ name: " " }, { name: "a".repeat(61) }, { purpose: "a".repeat(281) }, { avatar: "https://example.test/a" }, { avatar: 0 }, { avatar: 11 }, { avatar: 1.5 }, { requestId: "bad" }]) {
     const res = await create({ ...body(), ...bad });
     expect(res.status).toBe(400);
