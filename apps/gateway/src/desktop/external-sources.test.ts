@@ -220,8 +220,68 @@ it("uses fresh Codex tokens for chat without refresh or writes", async () => {
   }
 });
 
+it("uses a Pi Claude login only for the trusted Anthropic model", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const access = "sk-ant-oat-fake-pi";
+  await fixture("pi", { anthropic: { type: "oauth", access, refresh: "fake-refresh", expires: Date.now() + 60_000 } });
+  const claudeCodeAccess = "sk-ant-oat-fake-claude-code";
+  const external = createExternalSources(home, { keychain: {
+    exists: async () => true,
+    read: async () => JSON.stringify({ claudeAiOauth: { accessToken: claudeCodeAccess, expiresAt: Date.now() + 60_000 } }),
+  } });
+  const status = await external.enable("pi", true);
+  expect(status).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: true }] });
+  expect(JSON.stringify(status)).not.toContain(access);
+  expect(JSON.stringify(status)).not.toContain("fake-refresh");
+
+  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  const model = runtime.getModel("anthropic", "claude-haiku-5-5")!;
+  expect(await external.resolve("anthropic", model)).toEqual({ key: access, type: "oauth", source: "pi" });
+  expect(await external.resolve("anthropic", { ...model, baseUrl: "https://untrusted.example" })).toBeUndefined();
+  expect(await external.resolve("anthropic", { ...model, api: "openai-completions" })).toBeUndefined();
+
+  await external.enable("claude-code", true, true);
+  expect(await external.resolve("anthropic", model)).toEqual({ key: claudeCodeAccess, type: "oauth", source: "claude-code" });
+});
+
+it("shows the Pi Claude expiry note without hiding other Pi credentials", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const access = "sk-ant-oat-fake-expired";
+  const message = "Your Pi Claude login expired. Run `pi` in a terminal to sign in again.";
+  await fixture("pi", {
+    anthropic: { type: "oauth", access, expires: Date.now() - 60_000 },
+    openai: { type: "api_key", key: "fake-pi-openai" },
+  });
+  const external = createExternalSources(home);
+  await external.enable("pi", true);
+  const status = (await external.status()).find((row) => row.source === "pi");
+  expect(status).toMatchObject({ enabled: true, message, providers: [
+    { provider: "anthropic", type: "oauth", available: false, message },
+    { provider: "openai", type: "api_key", available: true },
+  ] });
+  expect(JSON.stringify(status)).not.toContain(access);
+  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  expect(await external.resolve("anthropic", runtime.getModel("anthropic", "claude-haiku-5-5"))).toBeUndefined();
+});
+
+it("does not offer a malformed Pi Claude login", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const access = "fake-token-without-marker";
+  await fixture("pi", { anthropic: { type: "oauth", access, expires: Date.now() + 60_000 } });
+  const external = createExternalSources(home);
+  const status = await external.enable("pi", true);
+  expect(status).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: false }] });
+  expect(status).not.toHaveProperty("message");
+  expect(JSON.stringify(status)).not.toContain(access);
+  const { runtime } = await createModelAuth({ readExternal: external.resolve });
+  expect(await external.resolve("anthropic", runtime.getModel("anthropic", "claude-haiku-5-5"))).toBeUndefined();
+});
+
 it.each([
-  { source: "pi", provider: "anthropic", entry: { type: "oauth", access: "fake-token-without-marker" } },
+  { source: "opencode", provider: "anthropic", entry: { type: "oauth", access: "sk-ant-oat-fake" } },
   { source: "pi", provider: "anthropic", entry: { type: "api_key", key: "sk-ant-oat-fake" } },
   { source: "pi", provider: "openai", entry: { type: "api_key", key: "sk-ant-oat-fake" } },
   { source: "opencode", provider: "anthropic", entry: { type: "api", key: "sk-ant-oat-fake" } },

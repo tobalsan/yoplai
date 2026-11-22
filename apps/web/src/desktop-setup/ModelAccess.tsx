@@ -134,8 +134,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
   const external = (id: string) => info()?.access.external.find((row) => row.source === id);
   const ready = (id: string) => id === "key" ? ownedReady("api_key") : oauth.some((row) => row.id === id)
     ? ownedReady("oauth", id) : modelList().some((model) => model.source === id);
-  const rows = createMemo(() => rowOrder.filter((row) => !sources.includes(row) || external(row.id)?.detected)
-    .sort((a, b) => Number(ready(b.id)) - Number(ready(a.id))));
+  const rows = createMemo(() => rowOrder.filter((row) => !sources.includes(row) || external(row.id)?.detected));
 
   return <>
     <div class="setup-model-rows">
