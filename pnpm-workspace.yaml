@@ -25,4 +25,4 @@ overrides:
   # pnpm hoist a newer minor whose internals no longer match.
   '@better-auth/core': 1.6.30
 patchedDependencies:
-  '@earendil-works/pi-coding-agent@1.5.2': patches/@earendil-works__pi-coding-agent@1.5.2.patch
+  '@earendil-works/pi-coding-agent@1.6.0': patches/@earendil-works__pi-coding-agent@1.6.0.patch
