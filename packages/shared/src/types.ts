@@ -360,6 +360,7 @@ const AgentConfigBaseSchema = z.object({
       z.record(z.string(), ExtensionBaseConfigSchema)
     )
     .optional(),
+  skills: z.object({ disabled: z.array(z.string()) }).optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
   codemode: z.boolean().optional(),
   codemodeLimits: CodemodeLimitsSchema.optional(),
@@ -1319,6 +1320,7 @@ export const AgentDiscoveryConfigSchema = z.union([
 
 // Settings shared by the discovery (root) and resolved gateway schemas.
 const GatewayCommonFields = {
+  agentManagement: z.union([z.boolean(), z.enum(["admin", "anyone", "superadmin"])]).optional(),
   modelQuota: z.object({ enabled: z.boolean().default(false) }).optional(),
   modelRouting: ModelRoutingConfigSchema.optional().default({}),
   apps: z.object({
@@ -1649,6 +1651,7 @@ export interface ExtensionContext {
   notifyAgentListChanged?(): void;
 
   // Agent access
+  getAgentOwner?(id: string): string | undefined;
   getAgent(id: string): AgentConfig | undefined;
   getAgents(): AgentConfig[];
   isAgentActive(id: string): boolean;
@@ -3171,6 +3174,7 @@ export const ContainerInputSchema = z.object({
   imageInputSupported: z.boolean().optional(),
   workspaceDir: z.string(),
   managedSkillsDir: z.string().optional(),
+  disabledWorkspaceSkills: z.array(z.string()).optional(),
   sessionDir: z.string(),
   ipcDir: z.string(),
   gatewayUrl: z.string(),

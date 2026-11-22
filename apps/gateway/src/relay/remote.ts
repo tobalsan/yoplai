@@ -177,8 +177,8 @@ export function suffixAgentIds(value: unknown, gatewayName: string): unknown {
 /** Avatar files live on the remote gateway, so the URL names the suffixed agent. */
 export function suffixAvatarUrl(avatar: string, gatewayName: string): string {
   return avatar.replace(
-    /^\/api\/agents\/([^/]+)\/avatar$/,
-    (_match, id: string) =>
-      `/api/agents/${encodeURIComponent(addGatewaySuffix(decodeURIComponent(id), gatewayName))}/avatar`
+    /^\/api\/agents\/([^/?#]+)\/avatar(\?v=[^#]*)?$/,
+    (_match, id: string, query: string | undefined) =>
+      `/api/agents/${encodeURIComponent(addGatewaySuffix(decodeURIComponent(id), gatewayName))}/avatar${query ?? ""}`
   );
 }

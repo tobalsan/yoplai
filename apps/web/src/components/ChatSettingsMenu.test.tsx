@@ -73,7 +73,7 @@ it("keeps the originating chat in router state when opening agent settings", asy
     <Route path="/agents/:agentId/edit" component={SettingsDestination} />
   </Router>, container);
   getByRole(container, "button", { name: "Chat settings" }).click();
-  getByRole(container, "menuitem", { name: "Agent settings" }).click();
+  getByRole(container, "menuitem", { name: "Extensions and schedules" }).click();
   await vi.waitFor(() => expect(getByRole(container, "link", { name: "Back" }).getAttribute("href")).toBe("/chat/assistant?session=saved-session"));
 });
 
@@ -92,13 +92,13 @@ it("opens the menu without hiding the chat while its default preference is pendi
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(queryByText(container, "App boot splash")).toBeNull();
   expect(getByRole(container, "main")).toBe(transcript);
-  expect(getByRole(container, "menuitem", { name: "Agent settings" })).toBeTruthy();
+  expect(getByRole(container, "menuitem", { name: "Extensions and schedules" })).toBeTruthy();
 });
 
 it.each([
-  { mainAgentId: "other", accessible: true, expected: ["Agent settings", "Set as default agent", "Share link"] },
-  { mainAgentId: "assistant", accessible: true, expected: ["Agent settings", "Share link"] },
-  { mainAgentId: "assistant", accessible: false, expected: ["Agent settings", "Set as default agent", "Share link"] },
+  { mainAgentId: "other", accessible: true, expected: ["Extensions and schedules", "Set as default agent", "Share link"] },
+  { mainAgentId: "assistant", accessible: true, expected: ["Extensions and schedules", "Share link"] },
+  { mainAgentId: "assistant", accessible: false, expected: ["Extensions and schedules", "Set as default agent", "Share link"] },
 ])("orders actions and hides only a known accessible default ($mainAgentId, $accessible)", async ({ mainAgentId, accessible, expected }) => {
   setCapabilitiesForTests({ multiUser: true });
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
@@ -125,7 +125,7 @@ it.each(["pending", "failed", "project"])("keeps the default action available un
   if (state !== "project") await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
   getByRole(container, "button", { name: "Chat settings" }).click();
   expect(getAllByRole(container, "menuitem").map((item) => item.textContent)).toEqual(
-    state === "project" ? ["Agent settings"] : ["Agent settings", "Set as default agent"]
+    state === "project" ? ["Extensions and schedules"] : ["Extensions and schedules", "Set as default agent"]
   );
 });
 
@@ -142,7 +142,7 @@ it("keeps Arrow, Home, End, Escape and Tab navigation working in the regrouped m
   const cog = getByRole(container, "button", { name: "Chat settings" });
   fireEvent.keyDown(cog, { key: "ArrowDown" });
   await vi.waitFor(() => expect((getByRole(container, "menuitem", { name: "Share link" }) as HTMLButtonElement).disabled).toBe(false));
-  const settings = getByRole(container, "menuitem", { name: "Agent settings" });
+  const settings = getByRole(container, "menuitem", { name: "Extensions and schedules" });
   const defaultAgent = getByRole(container, "menuitem", { name: "Set as default agent" });
   const share = getByRole(container, "menuitem", { name: "Share link" });
   expect(document.activeElement).toBe(settings);

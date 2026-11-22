@@ -6,7 +6,7 @@ import { gatewayApiPath, type GatewayName } from "./gateway";
 export type SkillShare = { kind: "user"; id: string; mode: "read" | "write" } | { kind: "all"; mode: "read" };
 export type SkillRow = {
   id: string; name: string; description: string; kind: "builtin" | "default" | "user" | "agent";
-  ownerName: string | null; enabled: boolean; locked: boolean; shadowed: boolean;
+  ownerName: string | null; locked: boolean;
   shares: SkillShare[]; mode: "read" | "write"; updatedAt: string | null;
   canRead: boolean; canWrite: boolean; canManage: boolean; disabledByAdmin?: boolean;
   agentId?: string; agentName?: string; system?: boolean;
@@ -73,10 +73,6 @@ async function request<T>(path: string, init?: RequestInit, gateway?: GatewayNam
 }
 export const fetchSkills = (gateway?: GatewayName) => request<SkillGroups>("/skills", undefined, gateway);
 export const fetchSkill = (id: string, gateway?: GatewayName) => request<SkillDetail>(objectPath(id, gateway), undefined, gateway);
-export const setSkillEnabled = (id: string, enabled: boolean, gateway?: GatewayName) => request(objectPath(id, gateway, "/enabled"), {
-  method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }),
-}, gateway);
-
 export function uploadSkill(files: File[], folder: boolean, skillId?: string, gateway?: GatewayName) {
   const body = new FormData();
   for (const file of files) {

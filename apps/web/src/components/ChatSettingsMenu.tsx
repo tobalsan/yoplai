@@ -13,6 +13,7 @@ export function ChatSettingsMenu(props: {
   settingsAgentId?: string | null;
   sessionId?: string | null;
   projectId?: string;
+  beforePick?: (proceed: () => void) => void;
   onPick: (agentId: string) => void;
 }) {
   const location = useLocation();
@@ -103,7 +104,7 @@ export function ChatSettingsMenu(props: {
         }}><i class="fa-solid fa-gear" aria-hidden="true" /></button>
         <Show when={open()}>
           <div ref={menu} class="chat-settings-menu" role="menu" onKeyDown={menuKeydown}>
-            <Show when={props.settingsAgentId}>{(id) => <A role="menuitem" href={`/agents/${encodeURIComponent(id())}/edit`} state={{ backTo: `${location.pathname}${location.search}` }} onClick={() => setOpen(false)}><i class="fa-solid fa-gear" aria-hidden="true" />Agent settings</A>}</Show>
+            <Show when={props.settingsAgentId}>{(id) => <A role="menuitem" href={`/agents/${encodeURIComponent(id())}/edit`} state={{ backTo: `${location.pathname}${location.search}` }} onClick={() => setOpen(false)}><i class="fa-solid fa-gear" aria-hidden="true" />Extensions and schedules</A>}</Show>
             <Show when={!props.projectId && !isMain()}>
               <button type="button" role="menuitem" disabled={loading()} onClick={() => void openPicker()}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>Set as default agent</button>
             </Show>
@@ -116,7 +117,7 @@ export function ChatSettingsMenu(props: {
       </div>
     </Show>
     <Show when={agents()}>{(choices) => <Portal>
-      <MainAgentPicker agents={choices()} initialAgentId={props.agentId} recordDismissal={false} onClose={() => { setAgents(null); button?.focus(); }} onPick={(agent) => {
+      <MainAgentPicker beforePick={props.beforePick} agents={choices()} initialAgentId={props.agentId} recordDismissal={false} onClose={() => { setAgents(null); button?.focus(); }} onPick={(agent) => {
         setPreference({ mainAgentId: agent.id, accessible: true, pickerDismissedAt: null });
         setAgents(null);
         props.onPick(agent.id);

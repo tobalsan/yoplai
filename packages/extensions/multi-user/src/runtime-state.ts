@@ -23,6 +23,7 @@ export type MultiUserRuntime = {
   /** Set after crash recovery ran. Absent in a runtime that never started the link service. */
   gatewayLinks?: GatewayLinkService;
   getAgent: ExtensionContext["getAgent"];
+  getAgentOwner?: ExtensionContext["getAgentOwner"];
   notifyAgentListChanged: ExtensionContext["notifyAgentListChanged"];
   logger: ExtensionLogger;
   audit?: ExtensionContext["audit"];
@@ -48,5 +49,5 @@ export function canUserUseAgent(userId: string, agentId: string): boolean {
   const activeRuntime = getMultiUserRuntime();
   if (!activeRuntime) return true;
   if (!activeRuntime.forks.getForkByAgentId(agentId)) return true;
-  return activeRuntime.access.canUserChatAgent(userId, agentId);
+  return activeRuntime.getAgentOwner?.(agentId) === userId || activeRuntime.access.canUserChatAgent(userId, agentId);
 }

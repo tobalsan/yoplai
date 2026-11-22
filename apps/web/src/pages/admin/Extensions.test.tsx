@@ -85,6 +85,7 @@ describe("AdminExtensionsPage", () => {
       ["Extensions", "/admin/extensions"],
       ["MCP servers", "/admin/mcp-servers"],
       ["Skills", "/admin/skills"],
+      ["Agent management", "/admin/agent-management"],
       ["Quota", "/admin/quota"],
     ]);
     expect(container.querySelector(".admin-tab.active")?.textContent).toBe("Extensions");

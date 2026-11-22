@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Create agents and edit their settings in web and desktop chat. Desktop can also create on a linked gateway that allows it. New multi-user agents start private to their creator.
+- Multi-user superadmins can choose who manages agents. A gateway's `agentManagement` setting overrides that choice.
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.
 - External extension discovery ignores work folders and uses versioned imports.
 - The macOS release has a Developer ID signature and an Apple notarization ticket.
@@ -85,6 +87,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Agent settings show eligible global skills and let you manage workspace and personal skills per agent. Personal skills start off for every agent after upgrade. The old per-user `enabled` list is ignored.
 - Manage team access and Public or Private visibility directly on an agent. Existing agent access records continue to apply, and startup ignores the legacy agent pool key with a warning.
 - Reduce the macOS app and disk image sizes.
 - The desktop splash and setup use the macOS appearance by default. If you select Light or Dark, they use that choice on the next start. The desktop keeps the purpose chips scrollable without a scroll bar.

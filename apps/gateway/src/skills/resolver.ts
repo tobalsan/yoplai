@@ -1,19 +1,27 @@
 import type { SkillAccessPolicy } from "./access.js";
 import type { SkillStore } from "./store.js";
+import { enabledAgentSkills, type SkillRow } from "./types.js";
 
 export type ResolvedRunSkills = {
   skills: { id: string; name: string; directory: string }[];
   diagnostics: { id: string; name: string; winnerId: string }[];
 };
 
-export async function resolveRunSkills(store: SkillStore, options: { agentId: string; userId?: string; multiUser: boolean; policy: SkillAccessPolicy; ignoreAgentRestrictions?: boolean }): Promise<ResolvedRunSkills> {
+export async function defaultsForAgent(store: SkillStore, agentId: string) {
+  return (await store.defaults()).filter((skill) => !skill.agents || skill.agents.includes(agentId));
+}
+
+export function isPersonalSkill(row: SkillRow, userId: string): boolean {
+  return row.ownerId === userId || row.shares.some((share) => share.kind === "all" || share.id === userId);
+}
+
+export async function resolveRunSkills(store: SkillStore, options: { agentId: string; userId?: string; multiUser: boolean; policy: SkillAccessPolicy }): Promise<ResolvedRunSkills> {
   let userId = options.multiUser ? options.userId : "local";
   if (options.multiUser && userId && !await options.policy.options.getEligibleAccount?.(userId)) userId = undefined;
-  const state = userId ? await store.getState(userId) : { enabled: [] };
-  const defaults = (await store.defaults()).filter((skill) => (options.ignoreAgentRestrictions || !skill.agents || skill.agents.includes(options.agentId)));
-  const candidates: ResolvedRunSkills["skills"] = defaults;
+  const candidates: ResolvedRunSkills["skills"] = await defaultsForAgent(store, options.agentId);
   if (userId) {
-    const enabled = (await store.list()).filter((row) => state.enabled.includes(row.id) && !row.disabledByAdmin && (row.ownerId === userId || row.shares.some((share) => share.kind === "all" || share.id === userId)));
+    const ids = enabledAgentSkills(await store.getState(userId), options.agentId);
+    const enabled = (await store.list()).filter((row) => ids.includes(row.id) && !row.disabledByAdmin && isPersonalSkill(row, userId));
     enabled.sort((a, b) => Number(b.ownerId === userId) - Number(a.ownerId === userId) || a.ownerId.localeCompare(b.ownerId) || a.name.localeCompare(b.name));
     for (const row of enabled) {
       if (await options.policy.canRead(row, { userId })) candidates.push({ id: row.id, name: row.name, directory: store.directory(row) });

@@ -13,6 +13,14 @@ import type { RemoteGateway } from "./store.js";
  * `json` marks a global write whose JSON body the relay reads within the 1 MiB bound before it forwards. */
 type Rule = { methods: string[]; path: RegExp; agent?: "path" | "query" | "body"; json?: boolean; multipart?: boolean; bodyless?: boolean };
 const rules: Rule[] = [
+  { methods: ["GET"], path: /^\/api\/agent-management\/(?:permissions|models)$/ },
+  { methods: ["POST"], path: /^\/api\/agent-management\/agents$/, json: true, multipart: true },
+  { methods: ["GET"], path: /^\/api\/agents\/[^/]+\/settings$/, agent: "path" },
+  { methods: ["PATCH"], path: /^\/api\/agents\/[^/]+\/settings$/, agent: "path", json: true, multipart: true },
+  { methods: ["PUT"], path: /^\/api\/agents\/[^/]+\/settings\/(?:agent-skills|user-skills)$/, agent: "path", json: true },
+  { methods: ["PUT"], path: /^\/api\/agents\/[^/]+\/settings\/avatar$/, agent: "path", json: true, multipart: true },
+  { methods: ["DELETE"], path: /^\/api\/agents\/[^/]+\/settings\/avatar$/, agent: "path", json: true },
+
   { methods: ["GET"], path: /^\/api\/agents\/[^/]+(?:\/(?:extensions|connections|webhooks|dashboards|avatar))?$/, agent: "path" },
   { methods: ["PATCH"], path: /^\/api\/agents\/[^/]+\/(?:extensions|webhooks)\/[^/]+$/, agent: "path" },
   { methods: ["DELETE"], path: /^\/api\/agents\/[^/]+\/(?:extensions\/[^/]+\/credentials|connections\/[^/]+\/[^/]+)$/, agent: "path" },
@@ -49,7 +57,7 @@ const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/skills\/(?!import$)[^/]+$/ },
   { methods: ["DELETE"], path: /^\/api\/skills\/(?!import$)[^/]+$/, bodyless: true },
   { methods: ["PUT"], path: /^\/api\/skills\/[^/]+\/content$/, multipart: true },
-  { methods: ["PUT"], path: /^\/api\/skills\/[^/]+\/(?:enabled|shares|system|owner|admin)$/, json: true },
+  { methods: ["PUT"], path: /^\/api\/skills\/[^/]+\/(?:shares|system|owner|admin)$/, json: true },
   { methods: ["GET"], path: /^\/api\/admin\/skills$/ },
   { methods: ["GET"], path: /^\/api\/skills\/[^/]+\/(?:default|versions)$/ },
   { methods: ["POST"], path: /^\/api\/skills\/[^/]+\/default$/, bodyless: true },
@@ -60,7 +68,7 @@ const rules: Rule[] = [
   { methods: ["GET"], path: /^\/api\/skill-ids\/[^/]+$/ },
   { methods: ["DELETE"], path: /^\/api\/skill-ids\/[^/]+$/, bodyless: true },
   { methods: ["PUT"], path: /^\/api\/skill-ids\/[^/]+\/content$/, multipart: true },
-  { methods: ["PUT"], path: /^\/api\/skill-ids\/[^/]+\/(?:enabled|shares|system|owner|admin)$/, json: true },
+  { methods: ["PUT"], path: /^\/api\/skill-ids\/[^/]+\/(?:shares|system|owner|admin)$/, json: true },
   { methods: ["GET"], path: /^\/api\/skill-ids\/[^/]+\/(?:default|versions)$/ },
   { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/default$/, bodyless: true },
   { methods: ["POST"], path: /^\/api\/skill-ids\/[^/]+\/versions\/[^/]+\/restore$/, bodyless: true },
@@ -414,7 +422,8 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
   }
   if (agentKind === "query") url.searchParams.set("agent", agent!);
   if (agentKind === "body") request = withJson(request, { ...body, agentId: agent });
-  if (rule?.json) {
+  const multipart = rule?.multipart && (!rule.json || /^multipart\/form-data\s*;/i.test(request.headers.get("content-type") ?? ""));
+  if (rule?.json && !multipart) {
     // Same strict start checks as the MCP add: a trusted Origin and a JSON body inside the 1 MiB bound.
     const denied = browserStartError(request);
     if (denied) return denied;
@@ -422,7 +431,7 @@ export async function relayConfiguration(request: Request, gateways: RemoteGatew
     if (isResponse(input)) return input;
     request = withJson(request, input);
   }
-  if (rule?.multipart) {
+  if (multipart) {
     const denied = originError(request);
     if (denied) return denied;
     const upload = await skillUpload(request);

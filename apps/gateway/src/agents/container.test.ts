@@ -266,7 +266,7 @@ describe("buildVolumeMounts", () => {
     });
   });
 
-  it("keeps AGENTS.md, agent.yaml and existing mcp.json read-only in a writable workspace", () => {
+  it("keeps agent configuration and creator ownership read-only in a writable workspace", () => {
     const root = tmpDir();
     const workspace = path.join(root, "workspace");
     fs.mkdirSync(workspace, { recursive: true });
@@ -288,6 +288,8 @@ describe("buildVolumeMounts", () => {
       );
 
     expect(build(true).some((mount) => mount.target === "/workspace/mcp.json")).toBe(false);
+    expect(build(true).some((mount) => mount.target === "/workspace/.created-by.json")).toBe(false);
+    fs.writeFileSync(path.join(workspace, ".created-by.json"), '{"userId":"mira"}');
     fs.writeFileSync(path.join(workspace, "mcp.json"), '{"mcpServers":{}}');
 
     expect(build(true)).toEqual(
@@ -300,6 +302,11 @@ describe("buildVolumeMounts", () => {
         {
           source: path.join(workspace, "agent.yaml"),
           target: "/workspace/agent.yaml",
+          readonly: true,
+        },
+        {
+          source: path.join(workspace, ".created-by.json"),
+          target: "/workspace/.created-by.json",
           readonly: true,
         },
         {

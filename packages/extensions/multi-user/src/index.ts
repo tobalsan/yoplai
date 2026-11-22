@@ -185,6 +185,7 @@ export const multiUserExtension: Extension = {
       connectPrompt: createConnectPromptStore(db),
       access,
       getAgent: ctx.getAgent,
+      getAgentOwner: ctx.getAgentOwner,
       notifyAgentListChanged: ctx.notifyAgentListChanged,
       audit: ctx.audit,
       logger: ctx.logger,

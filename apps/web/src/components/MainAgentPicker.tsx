@@ -21,6 +21,7 @@ export function MainAgentPicker(props: {
   agents: Agent[];
   initialAgentId?: string;
   recordDismissal?: boolean;
+  beforePick?: (proceed: () => void) => void;
   onPick: (agent: Agent) => void;
   onClose: () => void;
 }) {
@@ -73,11 +74,10 @@ export function MainAgentPicker(props: {
       setSaving(false);
     }
   };
-  const choose = async () => {
+  const saveChoice = async (agent: Agent) => {
     if (saving()) return;
     setSaving(true);
     setError("");
-    const agent = focused();
     try {
       await saveMainAgentPreference({ mainAgentId: agent.id });
       showToast(`${agent.name} is your main agent`, "success");
@@ -87,6 +87,13 @@ export function MainAgentPicker(props: {
     } finally {
       setSaving(false);
     }
+  };
+
+  const choose = () => {
+    const agent = focused();
+    const proceed = () => void saveChoice(agent);
+    if (props.beforePick) props.beforePick(proceed);
+    else proceed();
   };
 
   return (

@@ -224,7 +224,7 @@ export function buildVolumeMounts(
   // Keep existing operator instructions and agent/MCP config read-only
   // within a writable workspace.
   if (sandbox?.workspaceWritable) {
-    for (const name of ["AGENTS.md", "agent.yaml", "mcp.json"]) {
+    for (const name of ["AGENTS.md", "agent.yaml", "mcp.json", ".created-by.json"]) {
       const filePath = path.join(workspace, name);
       if (fs.existsSync(filePath)) {
         addMount(mounts, filePath, `/workspace/${name}`, true);

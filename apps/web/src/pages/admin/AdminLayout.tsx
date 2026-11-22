@@ -29,13 +29,14 @@ function adminTabs(gateway?: string) {
       visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role),
     },
     { href: "/admin/skills", label: "Skills", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
+    { href: "/admin/agent-management", label: "Agent management", visible: !!capabilities.multiUser && isSuperadmin(capabilities.user?.role) },
     { href: "/admin/quota", label: "Quota", visible: !capabilities.multiUser || isSuperadmin(capabilities.user?.role) },
   ].filter((tab) => tab.visible).map((tab) => ({ ...tab, to: tab.href }));
 }
 
 export default function AdminLayout(props: {
   title: string;
-  description: string;
+  description?: string;
   /** The linked gateway that the page works on. Absent for the local gateway. */
   gateway?: string;
   children?: JSX.Element;
@@ -48,7 +49,7 @@ export default function AdminLayout(props: {
           <div>
             <p class="admin-page-eyebrow">Admin</p>
             <h1>{props.title}</h1>
-            <p>{props.description}</p>
+            <Show when={props.description}><p>{props.description}</p></Show>
           </div>
         </header>
         <Show when={adminTabs(props.gateway).length > 1}>

@@ -17,6 +17,7 @@ import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { SessionSearch } from "./components/SessionSearch";
 import { TurnNotifier } from "./components/TurnNotifier";
 import { LeftNavShell } from "./components/LeftNavShell";
+import { NewAgent } from "./pages/NewAgent";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { MainAgentHome } from "./pages/MainAgentHome";
 import { EditAgent } from "./pages/EditAgent";
@@ -67,6 +68,7 @@ const LazyAdminUsersPage = lazy(() => import("./pages/admin/Users"));
 const LazyAdminExtensionsPage = lazy(() => import("./pages/admin/Extensions"));
 const LazyAdminMcpServersPage = lazy(() => import("./pages/admin/McpServers"));
 const LazyAdminQuotaPage = lazy(() => import("./pages/admin/Quota"));
+const LazyAgentManagementPage = lazy(() => import("./pages/admin/AgentManagement"));
 const LazyAdminSkillsPage = lazy(() => import("./pages/admin/Skills"));
 
 function Layout(props: { children?: JSX.Element }) {
@@ -332,6 +334,7 @@ export default function App() {
       />
       <Route path={["/skills", "/skills/:id"]} component={() => <GuardedRoute><LeftNavShell><Skills /></LeftNavShell></GuardedRoute>} />
       <Route path="/admin/skills" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminSkillsPage /></Suspense></LeftNavShell></GuardedRoute>} />
+      <Route path="/admin/agent-management" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAgentManagementPage /></Suspense></LeftNavShell></GuardedRoute>} />
       <Route path="/admin/quota" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminQuotaPage /></Suspense></LeftNavShell></GuardedRoute>} />
       <Route
         path="/teams"
@@ -341,6 +344,7 @@ export default function App() {
           </GuardedRoute>
         )}
       />
+      <Route path="/agents/new" component={() => <GuardedRoute><LeftNavShell><NewAgent /></LeftNavShell></GuardedRoute>} />
       <Route
         path="/agents/:agentId/edit"
         component={() => (

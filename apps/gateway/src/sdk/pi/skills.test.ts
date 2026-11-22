@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { filterDisabledWorkspaceSkills } from "@yoplai/shared/node/skills";
 import { createManagedSkillsStaging, getBuiltInSkillsDir } from "./skills.js";
 import { SkillStore } from "../../skills/store.js";
 import { SkillAccessPolicy } from "../../skills/access.js";
@@ -12,12 +13,16 @@ let home: string;
 beforeEach(async () => { home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-skill-loader-")); });
 afterEach(async () => { await fs.rm(home, { recursive: true, force: true }); });
 
-async function loadedSkills(paths: string[]) {
+async function loadedSkills(paths: string[], disabled?: string[]) {
   const loader = new DefaultResourceLoader({
     cwd: home, agentDir: home,
     settingsManager: SettingsManager.inMemory({}),
     noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
     additionalSkillPaths: paths,
+    skillsOverride: (result) => ({
+      ...result,
+      skills: filterDisabledWorkspaceSkills(result.skills, path.join(home, "skills"), disabled),
+    }),
   });
   await loader.reload();
   return loader.getSkills().skills;
@@ -28,26 +33,29 @@ describe("Pi managed skills loading", () => {
     const skills = await loadedSkills([getBuiltInSkillsDir()]);
     expect(skills.map((skill) => skill.name)).toEqual(expect.arrayContaining(["dashboard", "skill-creator"]));
   });
-  it("loads the requester’s enabled skills on the next run and excludes them for another requester", async () => {
+  it("loads personal skills only for the selected user and agent, ignoring the legacy list", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: personal-writing\ndescription: Personal writing guidance\n---\nUse short sentences." }] });
-    await store.setEnabled("alice", skill.id, true);
+    await fs.writeFile(path.join(store.root, "users/alice/state.json"), JSON.stringify({ enabled: [skill.id] }));
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
-    async function loadFor(userId: string) {
-      const selected = await resolveRunSkills(store, { agentId: "assistant", userId, multiUser: true, policy });
+    async function loadFor(userId: string, agentId = "assistant") {
+      const selected = await resolveRunSkills(store, { agentId, userId, multiUser: true, policy });
       const staging = await createManagedSkillsStaging(selected.skills);
       try { return await loadedSkills([staging.directory]); }
       finally { await staging.cleanup(); }
     }
+    expect((await loadFor("alice")).map((item) => item.name)).not.toContain("personal-writing");
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     expect((await loadFor("alice")).map((item) => item.name)).toContain("personal-writing");
+    expect((await loadFor("alice", "different")).map((item) => item.name)).not.toContain("personal-writing");
     expect((await loadFor("bob")).map((item) => item.name)).not.toContain("personal-writing");
-    await store.setEnabled("alice", skill.id, false);
+    await store.setAgentSkills("alice", "assistant", []);
     expect((await loadFor("alice")).map((item) => item.name)).not.toContain("personal-writing");
   });
   it("keeps a superadmin’s private-skill inspection access out of runtime selection", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: private-alice\ndescription: Alice only\n---\nPrivate guidance." }] });
-    await store.setEnabled("root", skill.id, true);
+    await store.setAgentSkills("root", "assistant", [skill.id]);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: id === "root" ? "superadmin" : "user" }) });
     const selected = await resolveRunSkills(store, { agentId: "assistant", userId: "root", multiUser: true, policy });
     const staging = await createManagedSkillsStaging(selected.skills);
@@ -57,7 +65,7 @@ describe("Pi managed skills loading", () => {
   it("uses the local owner for userless single-user jobs and defaults only for multi-user Team runs", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: "---\nname: local-writing\ndescription: Local guidance\n---\nLocal only." }] });
-    await store.setEnabled("local", skill.id, true);
+    await store.setAgentSkills("local", "assistant", [skill.id]);
     const defaultDir = path.join(home, "skill-library/default/standard-writing");
     await fs.mkdir(defaultDir, { recursive: true });
     await fs.writeFile(path.join(defaultDir, "SKILL.md"), "---\nname: standard-writing\ndescription: Standard guidance\n---\nStandard.");
@@ -89,7 +97,7 @@ describe("Pi managed skills loading", () => {
     }
     expect(await names("hr")).toContain("hr-writing");
     expect(await names("assistant")).not.toContain("hr-writing");
-    await expect(store.setEnabled("alice", "default:hr-writing", false)).rejects.toThrow("skill_locked");
+    await expect(store.setAgentSkills("alice", "hr", ["default:hr-writing"])).rejects.toThrow("skill_locked");
     await fs.mkdir(path.join(home, "skill-library/users/alice"), { recursive: true });
     await fs.writeFile(path.join(home, "skill-library/users/alice/state.json"), JSON.stringify({ enabled: [], disabledDefaults: ["hr-writing"] }));
     expect(await names("hr")).toContain("hr-writing");
@@ -100,7 +108,7 @@ describe("Pi managed skills loading", () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: shared-writing\ndescription: Shared guidance\n---\nShared." }] });
     await store.shares(skill.id, [{ kind: "user", id: "bob", mode: "read" }]);
-    await store.setEnabled("bob", skill.id, true);
+    await store.setAgentSkills("bob", "assistant", [skill.id]);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
     async function names() {
       const selected = await resolveRunSkills(store, { agentId: "assistant", userId: "bob", multiUser: true, policy });
@@ -116,7 +124,7 @@ describe("Pi managed skills loading", () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: moderated-writing\ndescription: Moderated guidance\n---\nModerated." }] });
     await store.shares(skill.id, [{ kind: "all", mode: "read" }]);
-    await store.setEnabled("alice", skill.id, true);
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     await store.setAdminDisabled(skill.id, true);
     await store.shares(skill.id, []);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
@@ -128,7 +136,7 @@ describe("Pi managed skills loading", () => {
   it("reports managed name collisions and lets an existing workspace skill shadow the winner", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: collision-writing\ndescription: Alice guidance\n---\nAlice." }] });
-    await store.setEnabled("alice", skill.id, true);
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     const directory = path.join(home, "skill-library/default/collision-writing");
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(path.join(directory, "SKILL.md"), "---\nname: collision-writing\ndescription: Default guidance\n---\nDefault.");
@@ -144,4 +152,24 @@ describe("Pi managed skills loading", () => {
       expect((await loadedSkills([path.dirname(legacy), staging.directory])).find((item) => item.name === "collision-writing")?.description).toBe("Workspace guidance");
     } finally { await staging.cleanup(); }
   });
+});
+
+it("filters a disabled workspace skill reached through a Pi symlink and keeps other skills", async () => {
+  const workspace = path.join(home, "skills");
+  const localPi = path.join(home, ".pi", "skills");
+  await fs.mkdir(localPi, { recursive: true });
+  for (const [dir, name] of [[workspace, "workspace-guide"], [workspace, "other-guide"], [localPi, "pi-guide"]]) {
+    const directory = path.join(dir, name);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: Example guide\n---\nExample.`);
+  }
+  await fs.symlink(path.join(workspace, "workspace-guide"), path.join(localPi, "workspace-guide"), "dir");
+  const names = async (paths: string[], disabled?: string[]) => (await loadedSkills(paths, disabled)).map((skill) => skill.name);
+  expect(await names([])).toEqual(expect.arrayContaining(["workspace-guide", "pi-guide"]));
+  for (const paths of [[], [workspace]]) {
+    const selected = await names(paths, ["workspace-guide", "pi-guide"]);
+    expect(selected).not.toContain("workspace-guide");
+    expect(selected).toContain("pi-guide");
+    if (paths.length) expect(selected).toContain("other-guide");
+  }
 });

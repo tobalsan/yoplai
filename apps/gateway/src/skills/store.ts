@@ -204,14 +204,17 @@ export class SkillStore {
       return row;
     });
   }
-  async setEnabled(userId: string, id: string, enabled: boolean): Promise<void> {
+  async setAgentSkills(userId: string, agentId: string, ids: string[]): Promise<void> {
     return this.mutate(async () => {
       const state = await this.getState(userId);
-      if (/^(builtin|default|agent):/.test(id)) throw new SkillError("skill_locked");
-      await this.require(id);
-      state.enabled = state.enabled.filter((item) => item !== id);
-      if (enabled) state.enabled.push(id);
-      await writeJsonAtomic(this.stateFile(userId), state);
+      const enabled = [...new Set(ids)];
+      for (const id of enabled) {
+        if (/^(builtin|default|agent):/.test(id)) throw new SkillError("skill_locked");
+        await this.require(id);
+      }
+      const agents = { ...state.agents, [agentId]: enabled };
+      if (enabled.length === 0) delete agents[agentId];
+      await writeJsonAtomic(this.stateFile(userId), { ...state, agents });
     });
   }
   async versions(id: string): Promise<{ id: string; createdAt: number }[]> {
@@ -239,7 +242,11 @@ export class SkillStore {
       await fs.rm(this.versionsDirectory(row), { recursive: true, force: true });
       for (const userId of await this.userDirectories()) {
         const state = await this.getState(userId);
-        if (state.enabled.includes(id)) await writeJsonAtomic(this.stateFile(userId), { ...state, enabled: state.enabled.filter((item) => item !== id) });
+        const agents = state.agents && Object.fromEntries(Object.entries(state.agents)
+          .map(([agentId, ids]) => [agentId, ids.filter((item) => item !== id)]));
+        if (state.enabled.includes(id) || Object.values(state.agents ?? {}).some((ids) => ids.includes(id))) {
+          await writeJsonAtomic(this.stateFile(userId), { ...state, enabled: state.enabled.filter((item) => item !== id), agents });
+        }
       }
     });
   }
@@ -249,7 +256,7 @@ export class SkillStore {
   }
   async enableCount(id: string): Promise<number> {
     let count = 0;
-    for (const userId of await this.userDirectories()) if ((await this.getState(userId)).enabled.includes(id)) count++;
+    for (const userId of await this.userDirectories()) if (Object.values((await this.getState(userId)).agents ?? {}).some((ids) => ids.includes(id))) count++;
     return count;
   }
   async setAdminDisabled(id: string, disabledByAdmin: boolean): Promise<SkillRow> {

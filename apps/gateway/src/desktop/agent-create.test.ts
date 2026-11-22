@@ -150,7 +150,7 @@ it("starts empty and serves the new agent and avatar before the create returns",
   const created = await create({ ...body(), purpose: "Sort tasks." });
   expect(created.status).toBe(201);
   expect(await created.json()).toEqual({ id: "ai-chief-of-staff", instructions: "template" });
-  expect(await list()).toEqual([expect.objectContaining({ id: "ai-chief-of-staff", name: "AI Chief of Staff", description: "Sort tasks.", avatar: "/api/agents/ai-chief-of-staff/avatar", model })]);
+  expect(await list()).toEqual([expect.objectContaining({ id: "ai-chief-of-staff", name: "AI Chief of Staff", description: "Sort tasks.", avatar: expect.stringMatching(/^\/api\/agents\/ai-chief-of-staff\/avatar\?v=/), model })]);
   const avatar = await request("/api/agents/ai-chief-of-staff/avatar");
   expect(avatar.headers.get("content-type")).toBe("image/webp");
   expect(Buffer.from(await avatar.arrayBuffer()).equals(await fs.readFile(path.join(avatars, "default-3.webp")))).toBe(true);

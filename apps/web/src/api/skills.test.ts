@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeSkillId } from "@yoplai/shared/skill-id-wire";
 import {
   checkSkillDefault, deleteSkill, fetchSkill, fetchSkillVersions, makeSkillDefault, restoreSkillVersion, saveSkillShares, setSkillAdminDisabled,
-  setSkillEnabled, setSkillSystem, SkillRequestError, transferSkillOwner, uploadSkill,
+  setSkillSystem, SkillRequestError, transferSkillOwner, uploadSkill,
 } from "./skills";
 
 const ids = ["plain", "agent:hr:category/folder-name", "100%25 literal/%2F", "Ünï/日本語:x@east", "import", "../import", "agent:ams@east:a/b"];
@@ -21,7 +21,6 @@ afterEach(() => { vi.unstubAllGlobals(); });
 const file = () => new File(["x"], "SKILL.md");
 const helpers: Array<[string, (id: string, gateway?: string) => Promise<unknown>, string, string]> = [
   ["fetchSkill", (id, g) => fetchSkill(id, g), "GET", ""],
-  ["setSkillEnabled", (id, g) => setSkillEnabled(id, true, g), "PUT", "/enabled"],
   ["uploadSkill (replace)", (id, g) => uploadSkill([file()], false, id, g), "PUT", "/content"],
   ["saveSkillShares", (id, g) => saveSkillShares(id, [], g), "PUT", "/shares"],
   ["deleteSkill", (id, g) => deleteSkill(id, g), "DELETE", ""],
@@ -75,7 +74,7 @@ describe("old peer errors", () => {
   it("reports an explicit upgrade error for a plain 404 or a refused relay route on an alias request, once", async () => {
     for (const mock of [answer(404, "404 Not Found"), answer(405, JSON.stringify({ error: "relay_route_not_allowed" }), "application/json"), answer(405, "no")]) {
       vi.stubGlobal("fetch", mock);
-      const failure = await failureOf(() => setSkillEnabled("agent:hr:a/b", true, "east"));
+      const failure = await failureOf(() => saveSkillShares("agent:hr:a/b", [], "east"));
       expect(failure).toBeInstanceOf(SkillRequestError);
       expect(failure.code).toBe("remote_skill_route_unsupported");
       expect(failure.message).toContain("Upgrade both gateways");

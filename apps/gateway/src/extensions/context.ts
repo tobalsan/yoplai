@@ -1,3 +1,4 @@
+import { readAgentOwner } from "../agent-management/files.js";
 import fs from "node:fs/promises";
 import { mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -194,6 +195,10 @@ export function createExtensionContext(
         projectId: "membership",
       }),
     getAgent,
+    getAgentOwner: (id) => {
+      const agent = getAgent(id);
+      return agent && readAgentOwner(resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace));
+    },
     getAgents,
     isAgentActive,
     isAgentStreaming: (agentId: string) =>

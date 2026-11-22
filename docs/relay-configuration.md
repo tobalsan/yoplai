@@ -62,7 +62,12 @@ Existing chat and media routes keep their contracts.
 | POST | `/mcp/catalog/remove?server=...`, `/mcp/catalog/icon/refresh?server=...` | Gateway prefix. No body. |
 | GET | `/skills`, `/skills/recipients`, `/skills/import-token`, `/skills/:id`, `/skills/:id/default`, `/skills/:id/versions`, `/admin/skills` | Gateway prefix. The ID is opaque. |
 | POST | `/skills`, `PUT /skills/:id/content` | Gateway prefix. Multipart, with the whole envelope inside 25 MiB. |
-| PUT | `/skills/:id/{enabled,shares,system,owner,admin}` | Gateway prefix. JSON inside the 1 MiB bound. |
+| GET | `/agent-management/{permissions,models}` | Gateway prefix. Uses the selected gateway's policy and credentials. |
+| POST | `/agent-management/agents` | Gateway prefix. JSON or multipart with an image. |
+| GET, PATCH | `/agents/:id/settings` | Agent path. Write uses JSON or multipart with an image. |
+| PUT | `/agents/:id/settings/{agent-skills,user-skills}` | Agent path. Turns skills on or off for that agent. |
+| PUT, DELETE | `/agents/:id/settings/avatar` | Agent path. Saves an image or restores a default face. |
+| PUT | `/skills/:id/{shares,system,owner,admin}` | Gateway prefix. JSON inside the 1 MiB bound. |
 | GET, PUT, POST, DELETE | `/skill-ids/:wireId` and its actions (see "Skill ID alias") | Gateway prefix. The same body rules as the legacy route. |
 | POST, DELETE | `/skills/import-token`, `/skills/import-token/:tokenId`, `/skills/:id/default`, `/skills/:id/versions/:versionId/restore`, `DELETE /skills/:id` | Gateway prefix. No body. |
 
@@ -286,7 +291,7 @@ Local agents keep the redirect flow. A remote agent uses `lib/oauth-popup-flow.t
 
 - Every remote object helper of the web app uses `/api/skill-ids/:wireId` on a linked gateway. The local gateway and the legacy `/api/skills/:id` routes stay as they were. Browser links, stored IDs, and returned IDs stay canonical. A page link is `/skills/<encodeURIComponent(id)>?gateway=<name>`.
 - `wireId` is `v1_` and the canonical unpadded base64url of the complete UTF-8 skill ID. The codec is `packages/shared/src/skill-id-wire.ts` (`@yoplai/shared/skill-id-wire`). It rejects padding, percent escapes, other versions, malformed UTF-8, an empty ID, and any form that is not the canonical encoding. It keeps case, Unicode (also a leading or embedded U+FEFF), slash, percent, colon, and `@` exactly. It never decodes an ID again, and it never reads a gateway from an ID.
-- The alias routes are `GET` and `DELETE /skill-ids/:wireId`, `PUT /skill-ids/:wireId/content` (multipart), `PUT /skill-ids/:wireId/{enabled,shares,system,owner,admin}` (JSON), `GET` and `POST /skill-ids/:wireId/default`, `GET /skill-ids/:wireId/versions`, and `POST /skill-ids/:wireId/versions/:versionId/restore`. Version IDs are not skill IDs and keep their wire form. The alias has no collection route, no import route, no import-token route, and no other action.
+- The alias routes are `GET` and `DELETE /skill-ids/:wireId`, `PUT /skill-ids/:wireId/content` (multipart), `PUT /skill-ids/:wireId/{shares,system,owner,admin}` (JSON), `GET` and `POST /skill-ids/:wireId/default`, `GET /skill-ids/:wireId/versions`, and `POST /skill-ids/:wireId/versions/:versionId/restore`. Version IDs are not skill IDs and keep their wire form. The alias has no collection route, no import route, no import-token route, and no other action.
 - The relay checks the wire ID before it reads a body or forwards. A bad ID gives 400 `invalid_skill_id`. The relay body rules of the legacy routes (Origin, 1 MiB JSON, 25 MiB multipart envelope, bodyless writes) apply to the alias. The generic separator guard and the upstream origin checks do not change.
 - The remote checks the raw wire segment of the request path before any URL decoding, so a percent escape in the prefix or the payload gives 400 `invalid_skill_id`. The legacy `:id` route keeps its own decoding.
 - On the remote, the same handlers and owner policies serve both route families. One accessor reads the ID, and the decoded ID is only a store key and a policy input. It never becomes a path, a URL, or a gateway name. A skill ID `import` names an object and never the import handler. An import token is refused on the alias like on every other route.

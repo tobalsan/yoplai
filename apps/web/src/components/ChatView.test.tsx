@@ -87,6 +87,7 @@ const {
 vi.mock("@solidjs/router", () => ({
   A: (props: Record<string, unknown>) => <a {...props} />,
   useNavigate: () => navigateMock,
+  useBeforeLeave: () => undefined,
   useLocation: () => ({
     get state() { return routeState.state; },
     get pathname() { return `/chat/${encodeURIComponent(routeState.agentId)}${routeState.view ? `/${routeState.view}` : ""}`; },
@@ -222,8 +223,8 @@ function renderView() {
 async function openAgentSettingsHref(container: HTMLElement): Promise<string | null | undefined> {
   await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
   queryByRole(container, "button", { name: "Chat settings" })!.click();
-  await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Agent settings" })).not.toBeNull());
-  return queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href");
+  await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Extensions and schedules" })).not.toBeNull());
+  return queryByRole(container, "menuitem", { name: "Extensions and schedules" })?.getAttribute("href");
 }
 
 describe("ChatView abort handling", () => {
@@ -312,9 +313,72 @@ describe("ChatView abort handling", () => {
     vi.unstubAllGlobals();
   });
 
+  it("offers personal skills in read-only settings and guards a new chat before creating it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => path.endsWith("/settings")
+      ? Response.json({
+          name: "Agent", canEditAgent: false, hasCustomAvatar: false,
+          skills: { global: [], agent: [], user: [{ id: "writing", name: "Writing preferences", description: "", enabled: false }] },
+        })
+      : Response.json({})));
+    const { container } = renderView();
+    getByRole(container, "button", { name: "Agent settings" }).click();
+    await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
+    const settings = getByRole(container, "dialog", { name: "Agent settings" });
+    await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
+    expect(queryByRole(settings, "textbox", { name: "System prompt" })).toBeNull();
+    expect((getByRole(settings, "button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    getByRole(settings, "switch", { name: "Writing preferences" }).click();
+    getByRole(container, "button", { name: "Start a new chat" }).click();
+    expect(startNewChatMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(getByRole(document.body, "button", { name: "Keep editing" })));
+    getByRole(document.body, "button", { name: "Keep editing" }).click();
+    expect(startNewChatMock).not.toHaveBeenCalled();
+    expect(getByRole(settings, "switch", { name: "Writing preferences" }).getAttribute("aria-checked")).toBe("true");
+    getByRole(container, "button", { name: "Start a new chat" }).click();
+    getByRole(getByRole(document.body, "alertdialog", { name: "Discard unsaved changes?" }), "button", { name: "Discard" }).click();
+    expect(startNewChatMock).toHaveBeenCalledOnce();
+    expect(queryByRole(container, "dialog", { name: "Agent settings" })).toBeNull();
+  });
+
   it("names the online status dot", async () => {
     const { container } = renderView();
     await waitFor(() => expect(getByRole(container, "img", { name: "Online" })).toBeTruthy());
+  });
+
+  it("finishes saving personal skills before refreshing the changed agent", async () => {
+    let reply!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { reply = resolve; });
+    const fetchSettings = vi.fn(async (path: string) => {
+      if (path.endsWith("/user-skills")) return pending;
+      if (path.endsWith("/settings")) return Response.json({
+        name: "Agent", canEditAgent: true, hasCustomAvatar: false,
+        model: { provider: "openai", model: "gpt-5" },
+        skills: { global: [], agent: [], user: [{ id: "writing", name: "Writing preferences", description: "", enabled: false }] },
+      });
+      if (path.endsWith("/models")) return Response.json({ models: [] });
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchSettings);
+    const { container } = renderView();
+    getByRole(container, "button", { name: "Agent settings" }).click();
+    await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
+    const settings = getByRole(container, "dialog", { name: "Agent settings" });
+    await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
+    fireEvent.input(getByRole(settings, "textbox", { name: "Name" }), { target: { value: "Draft Companion" } });
+    const detailReads = fetchAgentMock.mock.calls.length;
+    fetchAgentMock.mockRejectedValueOnce(new Error("Detail temporarily offline"));
+    getByRole(settings, "switch", { name: "Writing preferences" }).click();
+    getByRole(settings, "button", { name: "Save" }).click();
+    await waitFor(() => expect(fetchSettings.mock.calls.some(([path]) => path.endsWith("/user-skills"))).toBe(true));
+    expect(fetchAgentMock).toHaveBeenCalledTimes(detailReads);
+    getByRole(settings, "button", { name: "Close agent settings" }).click();
+    getByRole(container, "button", { name: "Start a new chat" }).click();
+    expect(queryByRole(document.body, "alertdialog")).toBeNull();
+    expect(startNewChatMock).not.toHaveBeenCalled();
+    reply(Response.json({ ok: true }));
+    await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).toBeNull());
+    expect(fetchAgentMock).toHaveBeenCalledTimes(detailReads + 1);
+    expect(getByRole(container, "button", { name: "Agent settings" })).toBeTruthy();
   });
 
   it("starts fresh before opening a dashboard and keeps it through the first message and session resolution", async () => {
@@ -739,7 +803,7 @@ describe("ChatView abort handling", () => {
     button.click();
     expect(queryByRole(container, "menu")).not.toBeNull();
     expect(queryByRole(container, "menuitem", { name: "Set as default agent" })).not.toBeNull();
-    expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/agent-1/edit");
+    expect(queryByRole(container, "menuitem", { name: "Extensions and schedules" })?.getAttribute("href")).toBe("/agents/agent-1/edit");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(queryByRole(container, "menu")).toBeNull();
     button.click();
@@ -1498,7 +1562,7 @@ describe("ChatView abort handling", () => {
     const { container, dispose } = renderView();
     await waitFor(() => expect(queryByRole(container, "button", { name: "Chat settings" })).not.toBeNull());
     queryByRole(container, "button", { name: "Chat settings" })!.click();
-    await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Agent settings" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit"));
+    await waitFor(() => expect(queryByRole(container, "menuitem", { name: "Extensions and schedules" })?.getAttribute("href")).toBe("/agents/pom%40ams/edit"));
     dispose();
   });
 
@@ -1568,7 +1632,7 @@ describe("ChatView abort handling", () => {
     vi.useFakeTimers();
     try {
       queryByRole(container, "menuitem", { name: "Share link" })!.click();
-      expect(queryByRole(container, "menuitem", { name: "Agent settings" })).not.toBeNull();
+      expect(queryByRole(container, "menuitem", { name: "Extensions and schedules" })).not.toBeNull();
       const composer = queryByRole(container, "textbox") as HTMLTextAreaElement;
       composer.value = "A new request during sharing";
       fireEvent.input(composer);
