@@ -366,7 +366,8 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(checkbox().checked).toBe(false));
     expect(queryByRole(settings, "button", { name: /^Fallback model:/ })).toBeNull();
     checkbox().click();
-    expect(getByRole(settings, "button", { name: /^Fallback model:/ })).toBeTruthy();
+    const picker = getByRole(settings, "button", { name: "Fallback model: Select a model" });
+    expect(picker.textContent?.trim()).toBe("Select a model");
     expect(save().disabled).toBe(true);
     expect(discard().disabled).toBe(false);
     discard().click();

@@ -39,9 +39,9 @@ export function ModelPicker(props: { label?: string; models: Model[]; selected?:
   });
   return <SearchPicker label={props.label ?? "Model"} searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
     selected={props.selected && modelKey(props.selected)}
-    selectionLabel={props.selected && [displayName(props.selected), family(props.selected.provider),
-      props.selected.free && "Free", props.selected.ready && "Ready"].filter(Boolean).join(" ")}
-    summary={<Show when={props.selected}>{(model) => <ModelSummary model={model()} provider />}</Show>}
+    selectionLabel={props.selected ? [displayName(props.selected), family(props.selected.provider),
+      props.selected.free && "Free", props.selected.ready && "Ready"].filter(Boolean).join(" ") : undefined}
+    summary={props.selected ? <ModelSummary model={props.selected} provider /> : undefined}
     onSelect={props.onSelect}
     groups={(query, expanded) => {
       const tokens = normalize(query).split(" ").filter(Boolean);
