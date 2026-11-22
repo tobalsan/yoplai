@@ -29,12 +29,9 @@ describe("config validation", () => {
     expect(result.success).toBe(true);
   });
 
-  it("validates a minimal v3 root config with pool globs", () => {
-    const result = GatewayRootConfigSchema.safeParse({
-      version: 3,
-      pool: "./pool/*",
-    });
-    expect(result.success).toBe(true);
+  it("accepts and strips the legacy pool key from the root config", () => {
+    const config = GatewayRootConfigSchema.parse({ version: 3, pool: "./pool/*" });
+    expect(config).not.toHaveProperty("pool");
   });
 
   it("allows omitted agents for empty installs", () => {
@@ -184,25 +181,26 @@ describe("config validation", () => {
     ]);
   });
 
-  it("discovers pool agents from a pool glob", async () => {
+  it("ignores legacy pool config, warns once, and discovers agents when available", async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
-    const home = path.join(tmpDir, "home");
-    await fs.mkdir(home, { recursive: true });
-    await writeAgent(path.join(home, "pool", "foo"), "foo");
-    await writeAgent(path.join(home, "pool", "bar"), "bar");
-    await fs.mkdir(path.join(home, "pool", ".git"), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, "agents"));
+    await writeAgent(path.join(tmpDir, "pool", "retired"), "retired");
     await fs.writeFile(
-      path.join(home, "yoplai.json"),
+      path.join(tmpDir, "yoplai.json"),
       JSON.stringify({ version: 3, pool: "pool/*" })
     );
-    vi.stubEnv("YOPLAI_HOME", home);
-    const { loadConfig } = await import("./index.js");
-    expect(loadConfig().pool?.map((agent) => agent.id)).toEqual([
-      "bar",
-      "foo",
-    ]);
-    expect(loadConfig().agents).toEqual([]);
-    expect(loadConfig().forkedAgents).toBe(true);
+    vi.stubEnv("YOPLAI_HOME", tmpDir);
+    const { loadConfig, reloadConfig } = await import("./index.js");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(loadConfig().agents).toEqual([]);
+      await writeAgent(path.join(tmpDir, "agents", "local"), "local");
+      expect(reloadConfig().agents.map((agent) => agent.id)).toEqual(["local"]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/pool.*ignored/i));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("defaults missing agents config to $YOPLAI_HOME/agents", async () => {
@@ -218,8 +216,6 @@ describe("config validation", () => {
     const { loadConfig } = await import("./index.js");
     const config = loadConfig();
     expect(config.agents.map((agent) => agent.id)).toEqual(["local"]);
-    expect(config.pool).toBeUndefined();
-    expect(config.forkedAgents).toBe(false);
   });
 
   it("fails clearly when default agents folder is missing", async () => {
@@ -233,20 +229,5 @@ describe("config validation", () => {
     vi.stubEnv("YOPLAI_HOME", home);
     const { loadConfig } = await import("./index.js");
     expect(() => loadConfig()).toThrow(/no valid agents found/);
-  });
-
-  it("fails clearly when pool is configured but empty", async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-config-"));
-    const home = path.join(tmpDir, "home");
-    await fs.mkdir(path.join(home, "pool"), { recursive: true });
-    await fs.writeFile(
-      path.join(home, "yoplai.json"),
-      JSON.stringify({ version: 3, pool: "pool/*" })
-    );
-    vi.stubEnv("YOPLAI_HOME", home);
-    const { loadConfig } = await import("./index.js");
-    expect(() => loadConfig()).toThrow(
-      /pool is configured but no valid agents/
-    );
   });
 });

@@ -24,7 +24,7 @@ export function createConnectionRoutes(options: {
   const oauth = options.oauth ?? getOAuthService();
   const store = options.store ?? new CredentialStore();
   const findAgent = (value: GatewayConfig, id: string): AgentConfig | undefined =>
-    value.agents.find((agent) => agent.id === id) ?? value.pool?.find((agent) => agent.id === id);
+    value.agents.find((agent) => agent.id === id);
 
   router.use("/agents/:id/connections/*", async (c, next) => {
     const multiUser = options.isMultiUser();

@@ -64,7 +64,6 @@ vi.mock(
       isAgentActive: () => true,
       loadConfig: () => ({
         agents: [],
-        forkedAgents: true,
         extensions: {
           multiUser: {
             enabled: true,
@@ -1362,7 +1361,6 @@ describe("multi-user api core", () => {
       multiUser: true,
       authMethods: { google: false, emailAndPassword: true },
       enableCronMonitoring: false,
-      forkedAgents: true,
       desktopSetup: false,
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
       user: {

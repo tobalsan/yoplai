@@ -14,7 +14,6 @@ vi.mock("../api/top-extensions", () => ({
   fetchTopExtensions: vi.fn().mockResolvedValue({ extensions: [], mcp: [], system: { extensions: [], mcp: [] } }),
 }));
 vi.mock("../api", () => ({
-  fetchPool: vi.fn().mockResolvedValue([]),
   fetchAgents: fetchAgentsMock,
   fetchAgentDashboards: vi.fn().mockResolvedValue([]),
 }));
@@ -38,7 +37,6 @@ vi.mock("../api/schedules", () => ({ fetchSchedules: vi.fn().mockResolvedValue([
 vi.mock("../api/teams", () => ({
   fetchTeams: vi.fn().mockResolvedValue([]),
   fetchForks: vi.fn().mockResolvedValue([]),
-  fetchPoolActions: vi.fn().mockResolvedValue([]),
   setForkTeams: vi.fn(),
   setForkVisibility: vi.fn(),
 }));
@@ -51,7 +49,7 @@ let container: HTMLElement;
 let dispose: () => void;
 
 beforeEach(() => {
-  setCapabilitiesForTests({ forkedAgents: false });
+  setCapabilitiesForTests({ multiUser: false });
   useSessionMock.mockReturnValue(() => ({ isPending: false, data: { user: { id: "alice", role: "superadmin" } } }));
   container = document.createElement("div");
   document.body.appendChild(container);

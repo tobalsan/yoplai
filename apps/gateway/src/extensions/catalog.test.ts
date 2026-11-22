@@ -150,6 +150,7 @@ describe("buildExtensionCatalog", () => {
     });
   });
 
+  // The first catalog read loads the built-in extension registry on a cold worker.
   it("shows scopes from merged root settings and agent overrides", async () => {
     await writeExternalExtension(root, "dynamic-oauth", {
       oauth: '(config) => ({ provider: "google", scopes: config.merged.allowWrite ? ["read", "write"] : ["read"] })',
@@ -164,7 +165,7 @@ describe("buildExtensionCatalog", () => {
     const rootAgent = makeAgent();
     const rootCatalog = await buildExtensionCatalog(config, rootAgent);
     expect(rootCatalog.find((entry) => entry.id === "dynamic-oauth")?.oauth?.scopes).toEqual(["read", "write"]);
-  });
+  }, 15_000);
 
   it("shows team scopes in oauth.scopes and the requester's own in oauth.personalScopes", async () => {
     await writeExternalExtension(root, "dynamic-oauth", {

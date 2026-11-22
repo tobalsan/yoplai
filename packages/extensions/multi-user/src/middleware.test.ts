@@ -268,6 +268,7 @@ describe("multi-user middleware", () => {
 
   it("enforces agent assignments for non-admin users", async () => {
     setRuntime({
+      forks: { getForkByAgentId: () => ({ forkAgentId: "agent-1" }) },
       auth: {
         api: {
           getSession: vi.fn(async () => ({
@@ -288,7 +289,6 @@ describe("multi-user middleware", () => {
           get: vi.fn(() => undefined),
         })),
       },
-      getPoolAgentIds: () => ["agent-1"],
       access: {
         canUserChatAgent: vi.fn(() => false),
       },
@@ -484,6 +484,7 @@ describe("multi-user middleware", () => {
 
   it("enforces agent assignments for bearer auth on unassigned agents", async () => {
     setRuntime({
+      forks: { getForkByAgentId: () => ({ forkAgentId: "agent-1" }) },
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -505,7 +506,6 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
-      getPoolAgentIds: () => ["agent-1"],
       access: {
         canUserChatAgent: vi.fn(() => false),
       },
@@ -531,6 +531,7 @@ describe("multi-user middleware", () => {
   it("allows bearer auth on an agent the resolver grants", async () => {
     const canUserChatAgent = vi.fn(() => true);
     setRuntime({
+      forks: { getForkByAgentId: () => ({ forkAgentId: "agent-1" }) },
       auth: {
         api: {
           getSession: vi.fn(async () => null),
@@ -552,7 +553,6 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
-      getPoolAgentIds: () => ["agent-1"],
       access: { canUserChatAgent },
     });
 
@@ -599,7 +599,6 @@ describe("multi-user middleware", () => {
           })),
         })),
       },
-      getPoolAgentIds: () => ["agent-1"],
       access: { canUserChatAgent },
     });
 
@@ -960,33 +959,25 @@ function createAgentAccessFixture() {
   ensureTeamMembersTable(db);
   ensureAgentForksTable(db);
   migrateAssignmentsToTeams(db);
-  const forks = createForkStore({
-    db,
-    getPoolAgent: () => null,
-    getForksDir: () => {
-      throw new Error("This fixture must not create forks on disk");
-    },
-  });
+  const forks = createForkStore({ db, agentExists: (id) => id === "legacy" || id === "plain" });
   const membership = createMembershipStore(db);
-  const poolAgentIds: string[] = [];
   setRuntime({
     db,
     forks,
     membership,
     access: createAccessResolver({ membership, forks }),
-    getPoolAgentIds: () => poolAgentIds,
   });
-  return { forks, poolAgentIds };
+  return { forks };
 }
 
 describe("agent access policy", () => {
-  it("treats a no-pool plain agent as Public", async () => {
+  it("treats a plain agent with no access record as Public", async () => {
     createAgentAccessFixture();
     const { canUserUseAgent } = await import("./runtime-state.js");
     expect(canUserUseAgent("outsider", "plain")).toBe(true);
   });
 
-  it.each(["user", "admin"])("grants %s access to a no-pool plain agent", async (role) => {
+  it.each(["user", "admin"])("grants %s access to a plain agent with no access record", async (role) => {
     createAgentAccessFixture();
     const { hasAgentAccess } = await import("./middleware.js");
     expect(await hasAgentAccess({
@@ -995,20 +986,18 @@ describe("agent access policy", () => {
     }, "plain")).toBe(true);
   });
 
-  it.each([false, true])("preserves Private and Public fork access with pool mode %s", async (poolMode) => {
-    const { forks, poolAgentIds } = createAgentAccessFixture();
-    if (poolMode) poolAgentIds.push("legacy");
+  it("preserves Private and Public access for a legacy agent", async () => {
+    const { forks } = createAgentAccessFixture();
     const { canUserUseAgent } = await import("./runtime-state.js");
     expect(canUserUseAgent("member", "legacy")).toBe(true);
     expect(canUserUseAgent("outsider", "legacy")).toBe(false);
 
-    forks.setPublic("legacy", true);
+    forks.setPublic("legacy", true, "admin-1");
     expect(canUserUseAgent("outsider", "legacy")).toBe(true);
   });
 
-  it.each([false, true])("keeps the agent gate scoped to recorded fork access with pool mode %s", async (poolMode) => {
-    const { forks, poolAgentIds } = createAgentAccessFixture();
-    if (poolMode) poolAgentIds.push("legacy");
+  it("uses team access and visibility at the agent gate", async () => {
+    const { forks } = createAgentAccessFixture();
     const { hasAgentAccess } = await import("./middleware.js");
     const context = (id: string, role: string) => ({
       user: { id, role, approved: true },
@@ -1020,34 +1009,11 @@ describe("agent access policy", () => {
     }
     expect(await hasAgentAccess(context("outsider", "superadmin"), "legacy")).toBe(true);
 
-    forks.setPublic("legacy", true);
+    forks.setPublic("legacy", true, "admin-1");
     for (const role of ["user", "admin"]) {
       expect(await hasAgentAccess(context("outsider", role), "legacy")).toBe(true);
     }
   });
 
-  it("uses the live pool catalog when plain-agent access changes", async () => {
-    const { poolAgentIds } = createAgentAccessFixture();
-    const { canUserUseAgent } = await import("./runtime-state.js");
-    expect(canUserUseAgent("outsider", "plain")).toBe(true);
-    poolAgentIds.push("template");
-    expect(canUserUseAgent("outsider", "plain")).toBe(false);
-    poolAgentIds.pop();
-    expect(canUserUseAgent("outsider", "plain")).toBe(true);
-  });
 
-  it("limits the admin template exception to unforked agents in the pool", async () => {
-    const { poolAgentIds } = createAgentAccessFixture();
-    poolAgentIds.push("template", "legacy");
-    const { hasAgentAccess } = await import("./middleware.js");
-    const { canUserUseAgent } = await import("./runtime-state.js");
-    const admin = {
-      user: { id: "outsider", role: "admin", approved: true },
-      session: { id: "session-1", userId: "outsider" },
-    };
-    expect(await hasAgentAccess(admin, "template")).toBe(true);
-    expect(await hasAgentAccess(admin, "legacy")).toBe(false);
-    expect(await hasAgentAccess(admin, "plain")).toBe(false);
-    expect(canUserUseAgent("outsider", "template")).toBe(false);
-  });
 });

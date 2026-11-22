@@ -21,7 +21,7 @@ const agent = "assistant%40east";
 const PROVIDER_URL = "https://provider.example.test/authorize?state=abc";
 
 const remoteCapabilities = {
-  version: 2, extensions: { scheduler: true, mcp: true }, agents: ["assistant"], multiUser: true, forkedAgents: false,
+  version: 2, extensions: { scheduler: true, mcp: true }, agents: ["assistant"], multiUser: true,
   enableCronMonitoring: true, user: { id: "remote-alice", name: "Alice", email: "alice@example.test", role: "admin" },
 };
 
@@ -80,6 +80,10 @@ beforeEach(() => {
   ] });
   gateways.on("GET", `${east}/api/capabilities`, { json: remoteCapabilities });
   gateways.on("GET", `${west}/api/capabilities`, { json: remoteCapabilities });
+  for (const host of [east, west]) {
+    gateways.on("GET", `${host}/api/teams`, { json: { teams: [] } });
+    gateways.on("GET", `${host}/api/admin/forks`, { json: { forks: [] } });
+  }
   // The configured gateways. "quiet" has no visible agent, and it still appears in every selector.
   gateways.on("GET", "/api/relay/gateways", { json: { gateways: [{ name: "east" }, { name: "west" }, { name: "quiet" }] } });
   gateways.on("GET", `${east}/api/top-extensions`, { json: { extensions: [], mcp: [], system: { extensions: [], mcp: [] } } });
@@ -161,24 +165,21 @@ describe("Edit page of a remote agent", () => {
     expect(gateways.requests.map((request) => request.url)).toEqual(["/api/agents"]);
   });
 
-  describe("pool and team controls of a remote gateway", () => {
-    const fork = { sourcePoolId: "assistant", forkAgentId: "assistant-fork", teamId: null, createdBy: "u", createdAt: "x", assignedBy: null, assignedAt: null, public: false, assignment: { mode: "list", teamIds: [] } };
+  describe("agent access controls on a remote gateway", () => {
+    const fork = { sourcePoolId: "assistant", forkAgentId: "assistant", teamId: null, createdBy: "u", createdAt: "x", assignedBy: null, assignedAt: null, public: false, assignment: { mode: "list", teamIds: [] } };
     const team = { id: "t1", name: "Team One", description: null, color: "#000", icon: "x", allUsers: false, private: false, memberCount: 1, canManage: true, createdBy: "u", createdAt: "x" };
 
     beforeEach(() => {
-      gateways.on("GET", `${east}/api/capabilities`, { json: { ...remoteCapabilities, forkedAgents: true, user: { ...remoteCapabilities.user, role: "superadmin" } } });
-      gateways.on("GET", `${east}/api/pool`, { json: [{ id: "assistant", name: "Pool Assistant" }] });
+      gateways.on("GET", `${east}/api/capabilities`, { json: { ...remoteCapabilities, user: { ...remoteCapabilities.user, role: "superadmin" } } });
       gateways.on("GET", `${east}/api/teams`, { json: { teams: [team] } });
       gateways.on("GET", `${east}/api/admin/forks`, { json: { forks: [fork] } });
-      gateways.on("GET", `${east}/api/agents/assistant-fork%40east/extensions`, { json: { extensions: [] } });
-      gateways.on("GET", new RegExp(`^${east}/api/mcp/servers\\?agent=assistant-fork%40east`), { json: { canConfigureTeam: true, servers: [] } });
     });
 
-    it("loads the pool, teams, and forks of the gateway and saves a team assignment and visibility there with the raw pool ID", async () => {
+    it("saves teams and visibility using the raw ID on the agent’s gateway", async () => {
       gateways.on("PUT", `${east}/api/admin/forks/assistant/teams`, { json: { fork: { ...fork, assignment: { mode: "list", teamIds: ["t1"] } } } });
       gateways.on("PATCH", `${east}/api/admin/forks/assistant/visibility`, { json: { fork: { ...fork, public: true } } });
       mount(`/agents/${agent}/edit`);
-      await vi.waitFor(() => expect(text()).toContain("Pool Assistant"));
+      await vi.waitFor(() => expect(text()).toContain("East Assistant"));
       await vi.waitFor(() => expect(button("Team One")).toBeDefined());
       button("Team One")!.click();
       await tick();
@@ -187,13 +188,12 @@ describe("Edit page of a remote agent", () => {
       await vi.waitFor(() => expect(container.querySelector<HTMLButtonElement>('button[aria-label="Agent visibility"]')).not.toBeNull());
       container.querySelector<HTMLButtonElement>('button[aria-label="Agent visibility"]')!.click();
       await vi.waitFor(() => expect(gateways.log()).toContain(`PATCH ${east}/api/admin/forks/assistant/visibility`));
-      // The extension catalog of the runnable fork loads with the qualified fork ID.
-      expect(gateways.log()).toContain(`GET ${east}/api/agents/assistant-fork%40east/extensions`);
+      expect(gateways.log()).toContain(`GET ${east}/api/agents/${agent}/extensions`);
       expect(gateways.localConfigurationRequests()).toEqual([]);
     });
 
-    it("shows no blank page when the pool of the gateway fails, and uses the agent of the merged list", async () => {
-      gateways.on("GET", `${east}/api/pool`, { status: 502, json: { error: "gateway_offline" } });
+    it("keeps agent settings available when the gateway’s access records cannot load", async () => {
+      gateways.on("GET", `${east}/api/admin/forks`, { status: 502, json: { error: "gateway_offline" } });
       mount(`/agents/${agent}/edit`);
       await vi.waitFor(() => expect(text()).toContain("East Assistant"));
       expect(text()).toContain("Back to agents");

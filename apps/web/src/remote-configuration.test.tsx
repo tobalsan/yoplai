@@ -23,7 +23,6 @@ const remoteCapabilities = {
   extensions: { scheduler: true, webhooks: true },
   agents: ["assistant"],
   multiUser: true,
-  forkedAgents: false,
   enableCronMonitoring: true,
   user: { id: "remote-alice", name: "Alice", role: "admin" },
 };

@@ -8,8 +8,7 @@ import { WebSocket } from "ws";
 import type {
   MultiUserRuntime,
 } from "../../../../packages/extensions/multi-user/src/runtime-state.js";
-import type { PoolAgentRef } from "../../../../packages/extensions/multi-user/src/forks.js";
-import { writeTestAgent, writeTestV3Config } from "../test-utils/v3-config.js";
+import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 // Every REST run/read surface addressed to a single agent must reject a user
 // without team access and allow one who has it. Authorization runs through the
@@ -65,17 +64,11 @@ describe("REST per-agent access gating (multi-user)", () => {
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
 
-    for (const id of ["allowed-agent", "blocked-agent", "pool-template"]) {
-      await writeTestAgent(path.join(tmpDir, "pool"), { id });
-    }
     await writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [
         { id: "allowed-agent", name: "Allowed Agent" },
         { id: "blocked-agent", name: "Blocked Agent" },
-        { id: "pool-template", name: "Pool Template" },
       ],
-      // A configured pool turns on forkedAgents (per-user agent visibility).
-      extraConfig: { pool: ["allowed-agent", "blocked-agent", "pool-template"].map((id) => path.join(tmpDir, "pool", "agents", id)) },
       extensions: {
         multiUser: {
           enabled: true,
@@ -127,7 +120,6 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const { createPoolCatalogResolver } = await import("../../../../packages/extensions/multi-user/src/catalog.js");
     const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
@@ -145,18 +137,10 @@ describe("REST per-agent access gating (multi-user)", () => {
     for (const [id, name] of [["team-red", "Red"], ["team-blue", "Blue"]]) {
       db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(id, name, "root");
     }
-    const poolAgents = new Map<string, PoolAgentRef>();
-    for (const id of ["allowed-agent", "blocked-agent", "pool-template"]) {
-      poolAgents.set(id, { id, workspaceDir: path.join(tmpDir, "pool", "agents", id) });
-    }
-    const forks = createForkStore({
-      db,
-      getForksDir: () => path.join(tmpDir, "forks"),
-      getPoolAgent: (poolId) => poolAgents.get(poolId) ?? null,
-    });
+    const forks = createForkStore({ db, agentExists: (id) => id === "allowed-agent" || id === "blocked-agent" });
     const membership = createMembershipStore(db);
     // allowed-agent belongs to team-red (alice, red-admin); blocked-agent to
-    // team-blue (nobody we authenticate as); pool-template is never forked.
+    // team-blue (nobody we authenticate as).
     forks.setTeams("allowed-agent", { mode: "list", teamIds: ["team-red"] }, "root");
     forks.setTeams("blocked-agent", { mode: "list", teamIds: ["team-blue"] }, "root");
     membership.setMembers("team-red", { mode: "list", userIds: ["alice", "red-admin"] }, "root");
@@ -167,10 +151,8 @@ describe("REST per-agent access gating (multi-user)", () => {
       forks,
       membership,
       access,
-      catalog: createPoolCatalogResolver({ forks, access, isAgentRunnable: () => true, getTeamName: () => null }),
       onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
-      getPoolAgentIds: () => [...poolAgents.keys()],
     } as unknown as MultiUserRuntime);
     clearRuntime = () => {
       setMultiUserRuntime(null);
@@ -336,10 +318,6 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await get("/api/agents/allowed-agent", authHeader("root", "superadmin"))).toBe(200);
   });
 
-  it("lets admins inspect an unforked pool template but not users", async () => {
-    expect(await get("/api/agents/pool-template", authHeader("boss", "admin"))).toBe(200);
-    expect(await get("/api/agents/pool-template", authHeader("mallory"))).toBe(403);
-  });
 
   it("filters the aggregate agent list by team membership", async () => {
     const ids = async (user: string, role?: string) => {
@@ -509,8 +487,8 @@ describe("REST per-agent access gating (multi-user)", () => {
     expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({ mainAgentId: "allowed-agent", accessible: true, pickerDismissedAt: null });
   });
 
-  it("rejects unforked pool templates as main agents even for superadmins", async () => {
-    const response = await fetch(`http://127.0.0.1:${port}/api/me/main-agent`, { method: "PUT", headers: { ...authHeader("root", "superadmin"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "pool-template" }) });
+  it("rejects an unknown main agent even for superadmins", async () => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/main-agent`, { method: "PUT", headers: { ...authHeader("root", "superadmin"), "content-type": "application/json" }, body: JSON.stringify({ mainAgentId: "unknown-agent" }) });
     expect(response.status).toBe(403);
   });
 
@@ -634,7 +612,7 @@ describe("REST per-agent access gating (multi-user)", () => {
   });
 });
 
-describe("agent access without a pool (mixed migrated and plain agents)", () => {
+describe("access for migrated and plain agents", () => {
   let tmpDir: string;
   let previousEnv: Pick<NodeJS.ProcessEnv, "YOPLAI_HOME" | "HOME" | "USERPROFILE">;
   let server: ReturnType<typeof import("./index.js").startServer>;
@@ -705,10 +683,10 @@ describe("agent access without a pool (mixed migrated and plain agents)", () => 
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const forks = createForkStore({ db, getForksDir: () => path.join(process.env.YOPLAI_HOME!, "agents"), getPoolAgent: () => null });
+    const forks = createForkStore({ db, agentExists: (id) => config.agents.some((agent) => agent.id === id) });
     const membership = createMembershipStore(db);
     const { setMultiUserRuntime } = await import("../../../../packages/extensions/multi-user/src/runtime-state.js");
-    setMultiUserRuntime({ auth, db, forks, membership, access: createAccessResolver({ forks, membership }), getPoolAgentIds: () => [] } as unknown as MultiUserRuntime);
+    setMultiUserRuntime({ auth, db, forks, membership, access: createAccessResolver({ forks, membership }) } as unknown as MultiUserRuntime);
     clearRuntime = () => { setMultiUserRuntime(null); db.close(); };
     const { startServer } = await import("./index.js");
     server = startServer(0, "127.0.0.1");
@@ -756,7 +734,7 @@ describe("agent access without a pool (mixed migrated and plain agents)", () => 
     });
   }
 
-  it("lists exactly the agents each user can open in a mixed no-pool instance", async () => {
+  it("lists exactly the agents each user can open in a mixed instance", async () => {
     for (const [name, expected] of [
       ["alice", ["legacy-agent", "plain-agent"]],
       ["mallory", ["plain-agent"]],
@@ -895,7 +873,7 @@ describe("agent access without a pool (mixed migrated and plain agents)", () => 
     }
   });
 
-  it("delivers subscribed updates to accessible no-pool agents", async () => {
+  it("delivers subscribed updates to accessible agents", async () => {
     const { agentEventBus } = await import("../agents/index.js");
     for (const [name, agent] of [["mallory", "plain-agent"], ["boss", "plain-agent"], ["alice", "legacy-agent"]]) {
       const ws = await connect(name);

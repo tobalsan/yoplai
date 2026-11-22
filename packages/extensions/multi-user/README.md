@@ -19,9 +19,8 @@ email/password), and a session secret.
 - Google profile photos refresh on each sign-in without replacing locally edited names or emails. Photos appear in the sidebar, teams, user pickers, sharing dialogs and admin user list; missing or failed images show initials.
 - A superadmin role (auto-assigned to the first registered user) plus an
   `approved` flag gating non-admin access.
-- Team membership, pool-agent forks, and team-based agent access. Users and
-  admins see and run Public forks and Private forks assigned to their teams; only
-  superadmins bypass that check. Admins manage agents owned by their teams and
+- Team membership and agent access. Users and admins see and run Public agents
+  and Private agents linked to their teams. Superadmins see and run every agent. Admins manage agents owned by their teams and
   teams they belong to; only superadmins create or delete teams.
 - The `createAuthMiddleware` mounted on `/api/*`, plus `requireAdmin` and
   `requireAgentAccess` middleware used by other extensions.
@@ -53,12 +52,10 @@ $YOPLAI_HOME/
 Custom tables:
 
 - `teams` and `team_members` own many-to-many user membership.
-- `agent_forks` links one source pool agent to one stable runnable fork; `agent_fork_teams`
-  records its explicit team links. The fork boolean `public` grants chat access independently
-  of ownership. A one-shot upgrade migrates legacy All teams forks to Public and clears
-  their old team links; later Private changes survive restart.
-  Deleting an explicit team link leaves the fork teamless only when it was its last link,
-  rather than deleting its workspace.
+- `agent_forks` stores agent access records and `agent_fork_teams` stores their
+  team links. A one-shot upgrade migrates legacy All teams rows to Public and
+  clears their old links. Later changes to visibility persist across restarts.
+  Removing a team link changes access to the agent and leaves the workspace intact.
 - `agent_assignments` is retained only for compatibility. A one-shot,
   transaction-backed migration converts legacy assignments into teams,
   memberships, and fork links; authorization no longer reads the allowlist.
@@ -127,13 +124,11 @@ credentials/OAuth, or pause/resume/delete Team scheduled jobs. Public grants no
 management permission. Personal connections and member-level operations remain
 available to users who can chat the agent.
 
-When no agent pool is configured, agents without a fork record are treated as
-Public for access: every approved user and admin can list and use them, including
-HTTP/WebSocket chat, avatars and capability self-enable. Existing fork records,
-including same-id forks migrated from legacy assignments, keep their own Public
-or linked-team rules; inaccessible agents are hidden from the list. Pool behavior,
-approval checks and management permissions stay unchanged. An ordinary admin
-cannot manage team credentials on a plain agent without an owning fork team.
+Agents with no access record are Public by default. The first team assignment
+creates a Private record. An admin can add their own team to a Public agent,
+and a superadmin can set visibility before the first assignment. A Private agent
+with no links can be managed by a superadmin. Existing records, including
+migrated legacy assignments, continue to govern chat and list access.
 
 The **All users** team flag remains a locked, live membership rule for all current
 and future users. The legacy team `private` API field remains inert and is hidden
@@ -157,8 +152,7 @@ GET    /api/me                          # current user + legacy assignment ids
 DELETE /api/user/token/:id              # revoke an API key (audited)
 GET    /api/teams                       # globally visible team catalog
 GET    /api/teams/:id/members           # team member profiles
-GET    /api/teams/:id/agents            # team fork links
-GET    /api/pool-actions                # caller-specific pool card actions
+GET    /api/teams/:id/agents            # team agent links
 GET    /api/admin/users                 # list users
 GET    /api/admin/users/no-team         # users without any live team
 PATCH  /api/admin/users/:id             # approve / set role
@@ -168,14 +162,16 @@ DELETE /api/admin/teams/:id             # delete team
 PUT    /api/admin/teams/:id/members     # { mode: "all" } or { mode: "list", userIds }
 POST   /api/admin/teams/:id/members/:userId # single-user add, no body
 DELETE /api/admin/teams/:id/members/:userId
-GET    /api/admin/forks                 # list fork provenance
+GET    /api/admin/forks                 # list agent access records
 PUT    /api/admin/forks/:poolId/teams   # { mode: "list", teamIds }; mode all rejected
 PATCH  /api/admin/forks/:poolId/visibility # { public: boolean }
 DELETE /api/admin/teams/:teamId/agents/:poolId
 ```
 
+The legacy route parameter `:poolId` takes the agent ID.
+
 Non-admin callers get `403` from any `/api/admin/*` route. `/api/me`, team
-reads, pool actions, and `DELETE /api/user/token/:id` require any authenticated
+reads, and `DELETE /api/user/token/:id` require any authenticated
 user. Agent chat authorization derives from Public visibility or team membership;
 agent management requires owning-team admin membership or superadmin. Visibility
 and membership changes are audited and notify connected clients.

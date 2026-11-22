@@ -48,7 +48,7 @@ async function pickSlug(parent: string, name: string): Promise<string> {
   const config = loadConfig(getConfigPath());
   const taken = new Set([
     ...(await fs.readdir(parent)).map((entry) => entry.toLowerCase()),
-    ...[...config.agents, ...(config.pool ?? [])].map((agent) => agent.id.toLowerCase()),
+    ...config.agents.map((agent) => agent.id.toLowerCase()),
     ...desktopDiscoveryCaseAliases(parent),
   ]);
   for (let i = 1; ; i++) {

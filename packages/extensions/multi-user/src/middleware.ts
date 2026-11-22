@@ -554,19 +554,6 @@ export async function hasAgentAccess(
   // Only superadmins bypass agent access rules.
   if (hasSuperadminRole(authContext)) return true;
 
-  const runtime = getMultiUserRuntime();
-  if (!runtime) return true;
-
-  // Admins may inspect unforked pool templates so they can assign them to
-  // their own teams; forks stay team-scoped.
-  if (
-    hasAdminRole(authContext) &&
-    runtime.getPoolAgentIds().includes(agentId) &&
-    !runtime.forks.getForkByAgentId(agentId)
-  ) {
-    return true;
-  }
-
   return canUserUseAgent(authContext.user.id, agentId);
 }
 

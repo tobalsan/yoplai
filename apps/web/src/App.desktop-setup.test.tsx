@@ -6,6 +6,13 @@ import App from "./App";
 import { FIRST_GREETING } from "./desktop-setup/first-chat";
 import { loadCapabilities, resetCapabilitiesForTests } from "./lib/capabilities";
 
+vi.mock("./auth/client", () => ({
+  useSession: () => () => ({ data: null, isPending: false }),
+  signIn: vi.fn(),
+  signUp: vi.fn(),
+  signOut: vi.fn(),
+}));
+
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let mode: boolean | undefined;

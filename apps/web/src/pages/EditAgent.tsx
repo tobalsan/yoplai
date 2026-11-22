@@ -14,14 +14,14 @@ import {
 import { A, useLocation, useParams } from "@solidjs/router";
 import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
-import { gatewayApiPath, gatewayKey, qualifiedAgentId, qualifyAgentRoute, rawAgentId, type GatewayName } from "../api/gateway";
+import { gatewayKey, qualifyAgentRoute, rawAgentId, type GatewayName } from "../api/gateway";
 import { useAgentTarget } from "../lib/agent-target";
 import { RequesterFailure } from "../lib/page-visit";
 import { useRequester } from "../lib/requester";
 import { createResourceKey } from "../lib/resource-key";
 import { createOAuthPopupFlow, type OAuthVerdict } from "../lib/oauth-popup-flow";
 import { fetchMcpStatus, type McpServerStatus } from "../api/connections";
-import { fetchAgentDashboards, fetchAgents, fetchPool } from "../api";
+import { fetchAgentDashboards, fetchAgents } from "../api";
 import type { AgentDashboard } from "../api/agents";
 import {
   detailsPath,
@@ -30,7 +30,6 @@ import {
 } from "../api/extensions";
 import {
   fetchForks,
-  fetchPoolActions,
   fetchTeams,
   setForkTeams,
   setForkVisibility,
@@ -80,23 +79,18 @@ function dashboardSections(dashboards: AgentDashboard[]) {
   return { top, sub };
 }
 
-// Team assignment for the edit page: assign a never-forked pool agent to a
-// team, or move an already-forked agent between teams. Reuses the same
-// admin-guarded fork APIs the catalog cards used before this control moved here.
 function TeamAssignment(props: {
-  poolId: string;
+  agentId: string;
   agentName: string;
   teams: Team[];
   fork: AgentFork | undefined;
-  /** Admins may only (un)assign their own teams. */
   superadmin: boolean;
-  /** Linked gateway that owns the pool. Absent for the local pool. */
+  canManageVisibility: boolean;
   gateway?: GatewayName;
   onChanged: () => void;
+  onVisibilityChanged: () => unknown;
 }) {
-  // The page mounts a new control for each gateway and pool. This control reads that identity once,
-  // and an answer after it is gone changes nothing.
-  const bound = { poolId: props.poolId, gateway: props.gateway };
+  const bound = { agentId: props.agentId, gateway: props.gateway };
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const [selected, setSelected] = createSignal<string[]>(props.fork?.assignment.teamIds ?? []);
@@ -116,7 +110,7 @@ function TeamAssignment(props: {
       // Admins send only their own teams; the server keeps other teams' links.
       const own = new Set(props.teams.map((team) => team.id));
       const teamIds = props.superadmin ? selected() : selected().filter((id) => own.has(id));
-      await setForkTeams(bound.poolId, { mode: "list", teamIds }, bound.gateway);
+      await setForkTeams(bound.agentId, { mode: "list", teamIds }, bound.gateway);
       if (!disposed) props.onChanged();
     } catch (cause) {
       if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to assign.");
@@ -147,12 +141,15 @@ function TeamAssignment(props: {
     <section class="edit-agent-team">
       <div class="edit-agent-team-head">
         <h2 class="edit-agent-section-title">Teams</h2>
-        <Show when={dirty()}>
-          <div class="edit-agent-team-actions">
+        <div class="edit-agent-team-actions">
+          <Show when={props.superadmin || props.fork}>
+            <AgentVisibility agentId={props.agentId} public={props.fork?.public ?? true} canManage={props.canManageVisibility} gateway={props.gateway} onChanged={props.onVisibilityChanged} />
+          </Show>
+          <Show when={dirty()}>
             <button type="button" class="edit-agent-team-cancel" disabled={busy()} onClick={reset}>Cancel</button>
             <button type="button" class="edit-agent-team-button" disabled={busy()} onClick={save}>Save</button>
-          </div>
-        </Show>
+          </Show>
+        </div>
       </div>
       <div class="edit-agent-team-pills">
         <For each={props.teams}>{(team) => (
@@ -188,21 +185,19 @@ function TeamAssignment(props: {
   );
 }
 
-function ForkVisibility(props: { fork: AgentFork; canManage: boolean; gateway?: GatewayName; onChanged: () => unknown }) {
-  // One control per gateway and pool. It reads its identity once, and an answer after it is gone changes nothing.
-  const bound = { gateway: props.gateway };
+function AgentVisibility(props: { agentId: string; public: boolean; canManage: boolean; gateway?: GatewayName; onChanged: () => unknown }) {
+  const bound = { agentId: props.agentId, gateway: props.gateway };
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const toggle = async () => {
     if (busy() || !props.canManage) return;
-    const poolId = props.fork.sourcePoolId;
-    const isPublic = props.fork.public;
+    const isPublic = props.public;
     setBusy(true);
     setError(undefined);
     try {
-      await setForkVisibility(poolId, !isPublic, bound.gateway);
+      await setForkVisibility(bound.agentId, !isPublic, bound.gateway);
       if (!disposed) await props.onChanged();
     } catch (cause) {
       if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to update visibility.");
@@ -211,18 +206,18 @@ function ForkVisibility(props: { fork: AgentFork; canManage: boolean; gateway?: 
     }
   };
   const tooltip = () => {
-    const access = props.fork.public
+    const access = props.public
       ? "Public: every user can chat with this agent."
       : "Private: only members of the assigned teams can chat with this agent.";
-    return props.canManage ? `${access} Click to make it ${props.fork.public ? "private" : "public"}.` : access;
+    return props.canManage ? `${access} Click to make it ${props.public ? "private" : "public"}.` : access;
   };
   return (
     <>
       {/* The title sits on a wrapper because disabled buttons do not always show it. */}
       <span class="edit-agent-visibility" title={tooltip()}>
-        <button type="button" class="edit-agent-visibility-toggle" aria-label="Agent visibility" aria-pressed={props.fork.public} disabled={busy() || !props.canManage} onClick={() => void toggle()}>
-          <i class={props.fork.public ? "fa-solid fa-globe" : "fa-solid fa-lock"} aria-hidden="true" />
-          {busy() ? "Saving…" : props.fork.public ? "Public" : "Private"}
+        <button type="button" class="edit-agent-visibility-toggle" aria-label="Agent visibility" aria-pressed={props.public} disabled={busy() || !props.canManage} onClick={() => void toggle()}>
+          <i class={props.public ? "fa-solid fa-globe" : "fa-solid fa-lock"} aria-hidden="true" />
+          {busy() ? "Saving…" : props.public ? "Public" : "Private"}
         </button>
       </span>
       <Show when={error()}>{(message) => <p role="alert" class="edit-agent-team-error edit-agent-visibility-error">{message()}</p>}</Show>
@@ -251,59 +246,29 @@ export function EditAgent() {
   const isSuperadmin = createMemo(() => requester().isSuperadmin);
   // A page is ready when its gateway is resolved and the requester context of that gateway is loaded.
   const contextReady = () => targetReady() && requester().ready;
-  const forkedAgents = () => requester().forkedAgents;
-  // Pool rows carry raw remote IDs. Chat agent rows carry qualified IDs.
   const rawId = () => rawAgentId(params.agentId, gateway());
-  const poolKey = () => (forkedAgents() ? rawId() : params.agentId);
-  const qualify = (id: string | undefined) => (id === undefined ? undefined : qualifiedAgentId(id, gateway()));
-
-  const [agents] = createResource(
-    createResourceKey(() => (contextReady() ? { gateway: gateway(), pool: forkedAgents() } : null)),
-    ({ gateway: host, pool }) => (pool ? fetchPool(host) : fetchAgents())
-  );
-  const [activeAgents] = createResource(
-    createResourceKey(() => (contextReady() ? { pool: forkedAgents() } : null)),
-    ({ pool }) => (pool ? fetchAgents() : Promise.resolve([]))
-  );
-  // Reading a failed resource throws, so a failed remote read must show as "no data", not a blank page.
-  const poolAgent = createMemo(() =>
-    (agents.error ? [] : agents() ?? []).find((candidate) => candidate.id === poolKey())
-  );
-  const activeAgent = createMemo(() =>
-    (activeAgents.error ? [] : activeAgents() ?? []).find((candidate) => candidate.id === params.agentId)
-  );
+  const [agents] = createResource(() => contextReady(), fetchAgents);
   const agent = createMemo(() =>
-    poolAgent() ?? (!agents.loading ? activeAgent() : undefined)
+    (agents.error ? [] : agents() ?? []).find((candidate) => candidate.id === params.agentId)
   );
 
-  const [teams] = createResource(
-    createResourceKey(() => (contextReady() ? { gateway: gateway(), admin: isAdmin() && forkedAgents() } : null)),
-    ({ gateway: host, admin }) => (admin ? fetchTeams(host) : Promise.resolve([] as Team[]))
+  const accessKey = createResourceKey(() =>
+    contextReady() && requester().multiUser && isAdmin() ? { gateway: gateway() } : null
   );
-  const [forks, { refetch: refetchForks }] = createResource(
-    createResourceKey(() => (contextReady() ? { gateway: gateway(), admin: isAdmin() && forkedAgents() } : null)),
-    ({ gateway: host, admin }) => (admin ? fetchForks(host) : Promise.resolve([] as AgentFork[]))
-  );
-  const teamList = () => (teams.error ? [] : teams() ?? []);
-  const fork = createMemo(() =>
-    (forks.error ? [] : forks() ?? []).find((entry) => entry.sourcePoolId === rawId() || entry.forkAgentId === rawId())
-  );
+  const [teams] = createResource(accessKey, ({ gateway: host }) => fetchTeams(host));
+  const [forks, { refetch: refetchForks }] = createResource(accessKey, async ({ gateway: host }) => ({
+    gateway: host,
+    rows: await fetchForks(host),
+  }));
+  const accessRows = () => {
+    const result = forks.error ? undefined : forks();
+    return result?.gateway === gateway() ? result?.rows : undefined;
+  };
+  const teamList = () => (teams.loading || teams.error ? [] : teams() ?? []);
+  const fork = createMemo(() => accessRows()?.find((entry) => entry.forkAgentId === rawId()));
   const canManageFork = createMemo(() => isSuperadmin() || Boolean(fork()?.assignment.teamIds.some((id) => teamList().some((team) => team.id === id && team.canManage))));
-  const [poolActions] = createResource(
-    createResourceKey(() => (contextReady() ? { gateway: gateway(), enabled: forkedAgents() && !isSuperadmin() } : null)),
-    ({ gateway: host, enabled }) => (enabled ? fetchPoolActions(host) : Promise.resolve([]))
-  );
-  const dashboardAgentId = createMemo(() =>
-    forkedAgents()
-      ? poolAgent()
-        ? (isSuperadmin() ? qualify(fork()?.forkAgentId) : undefined) ?? qualify((poolActions.error ? undefined : poolActions())?.find((entry) =>
-            entry.poolId === rawId() && entry.action === "chat"
-          )?.chatAgentId ?? undefined)
-        : !agents.loading ? activeAgent()?.id : undefined
-      : params.agentId
-  );
-  // Resource keys hold the gateway, so equal object IDs on two gateways never share data.
-  const agentKey = createResourceKey(() => { const id = dashboardAgentId(); return id === undefined || !contextReady() ? null : { id, gateway: gateway() }; });
+  const dashboardAgentId = () => params.agentId;
+  const agentKey = createResourceKey(() => contextReady() ? { id: dashboardAgentId(), gateway: gateway() } : null);
   const [tab, setTab] = createSignal<"extensions" | "connections" | "dashboards" | "schedules">("extensions");
   createEffect(() => {
     if (new URLSearchParams(location.search).get("tab") === "schedules") setTab("schedules");
@@ -332,10 +297,7 @@ export function EditAgent() {
   });
 
   const [extensions, { refetch: refetchExtensions }] = createResource(
-    createResourceKey(() => {
-      const id = contextReady() ? (dashboardAgentId() ?? (isAdmin() ? params.agentId : null)) : null;
-      return id ? { id, gateway: gateway() } : null;
-    }),
+    agentKey,
     (key) => fetchAgentExtensions(key.id, key.gateway)
   );
   const refreshInstalled = (event: Event) => {
@@ -608,7 +570,7 @@ export function EditAgent() {
   });
   createEffect(() => {
     if (!contextReady()) return;
-    const agentResolved = !agents.loading && !forks.loading && !poolActions.loading;
+    const agentResolved = !agents.loading;
     const settled = (state: string) => state === "ready" || state === "errored" || (agentResolved && state === "unresolved");
     if (settled(extensions.state) && settled(mcpServers.state) && settled(topExtensions.state)) setExtensionListLoaded(true);
   });
@@ -675,7 +637,7 @@ export function EditAgent() {
           <RequesterFailure requester={requester} class="error">Could not read your permissions on {gateway()}. Controls that need them stay off.</RequesterFailure>
         </Show>
 
-        <Show when={contextReady() && !agents.loading && !activeAgents.loading && !agent()}>
+        <Show when={contextReady() && !agents.loading && !agent()}>
           <div class="error">Agent not found.</div>
         </Show>
 
@@ -689,8 +651,7 @@ export function EditAgent() {
                       <span class="avatar-emoji">{avatar()}</span>
                     ) : (
                       <img
-                        // A pool avatar path names the remote gateway. It loads through the relay.
-                        src={gateway() !== undefined && forkedAgents() && avatar().startsWith("/api/") ? gatewayApiPath(gateway(), avatar()) : avatar()}
+                        src={avatar()}
                         alt={current().name}
                         class="avatar-img"
                       />
@@ -699,12 +660,7 @@ export function EditAgent() {
                 )}
               </Show>
               <div class="edit-agent-identity">
-                <div class="edit-agent-name-row">
-                  <h1 class="edit-agent-name">{current().name}</h1>
-                  <Show when={isAdmin() && forkedAgents() && fork()}>
-                    {(currentFork) => <Show when={gatewayKey(gateway(), currentFork().sourcePoolId)} keyed>{(_id) => <ForkVisibility fork={currentFork()} canManage={canManageFork()} gateway={gateway()} onChanged={refetchForks} />}</Show>}
-                  </Show>
-                </div>
+                <h1 class="edit-agent-name">{current().name}</h1>
                 <Show when={current().role}>
                   <div class="edit-agent-role">{current().role}</div>
                 </Show>
@@ -713,20 +669,22 @@ export function EditAgent() {
           )}
         </Show>
 
-        <Show when={isAdmin() && forkedAgents() && poolAgent() && (isSuperadmin() || !fork() || fork()!.public || canManageFork())}>
+        <Show when={accessKey() && accessRows() && agent() && (!fork() || fork()?.public || canManageFork())}>
           <Show when={gatewayKey(gateway(), rawId())} keyed>
             {(_id) => (
               <TeamAssignment
-                poolId={rawId()}
+                agentId={rawId()}
                 agentName={agent()?.name ?? params.agentId}
                 teams={teamList().filter((team) => team.canManage)}
                 superadmin={isSuperadmin()}
+                canManageVisibility={canManageFork()}
                 gateway={gateway()}
                 fork={fork()}
                 onChanged={() => {
                   void refetchForks();
                   void refetchExtensions();
                 }}
+                onVisibilityChanged={refetchForks}
               />
             )}
           </Show>
@@ -821,7 +779,7 @@ export function EditAgent() {
             <div class="edit-agent-ext-head">
               <h2 class="edit-agent-section-title">Extensions</h2>
               <Show when={mcpAvailable() && canConfigureMcpTeam()}>
-                <button type="button" class="mcp-ext-add-button" disabled={!dashboardAgentId()} title={!dashboardAgentId() ? "An agent fork is required first" : undefined} onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
+                <button type="button" class="mcp-ext-add-button" onClick={() => { setMcpError(undefined); setAddOpen(true); }}>Add custom extension</button>
               </Show>
             </div>
             <Show when={!addOpen() ? mcpError() : undefined}>{(message) => <p role="alert" class="mcp-ext-error">{message()}</p>}</Show>
@@ -1105,13 +1063,6 @@ export function EditAgent() {
           color: var(--text-tertiary);
         }
 
-        .edit-agent-name-row {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 6px 12px;
-        }
-
         .edit-agent-visibility-error {
           flex-basis: 100%;
         }
@@ -1140,6 +1091,7 @@ export function EditAgent() {
 
         .edit-agent-team-actions {
           display: flex;
+          flex-wrap: wrap;
           align-items: center;
           gap: 10px;
         }

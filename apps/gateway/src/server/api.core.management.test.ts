@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
   dir: "",
   config: {} as GatewayConfig,
   rawConfig: undefined as GatewayConfig | undefined,
-  runtime: null as Pick<MultiUserRuntime, "db" | "membership" | "forks" | "access" | "getPoolAgentIds"> | null,
+  runtime: null as Pick<MultiUserRuntime, "db" | "membership" | "forks" | "access"> | null,
 }));
 vi.mock("../audit/store.js", () => ({ recordSettingsChange: () => undefined, getAuditActor: async () => ({}) }));
 vi.mock("../config/index.js", () => ({
@@ -78,13 +78,13 @@ describe("public agent team configuration permissions", () => {
     membership.setMembers(team.id, { mode: "list", userIds: ["manager"] }, "super");
     const foreignTeam = teams.createTeam({ name: "Other team", createdBy: "super" });
     membership.setMembers(foreignTeam.id, { mode: "list", userIds: ["foreign"] }, "super");
-    const poolDir = path.join(state.dir, "pool/alpha");
-    fs.mkdirSync(poolDir, { recursive: true });
-    fs.writeFileSync(path.join(poolDir, "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: anthropic\n  model: claude\nextensions:\n  token:\n    enabled: true\n  oauth:\n    enabled: true\n  settings:\n    enabled: true\n");
-    const forks = createForkStore({ db, getPoolAgent: () => ({ id: "alpha", workspaceDir: poolDir }), getForksDir: () => path.join(state.dir, "agents") });
+    const agentDir = path.join(state.dir, "agents/alpha");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "agent.yaml"), "id: alpha\nname: Alpha\nmodel:\n  provider: anthropic\n  model: claude\nextensions:\n  token:\n    enabled: true\n  oauth:\n    enabled: true\n  settings:\n    enabled: true\n");
+    const forks = createForkStore({ db, agentExists: (id) => id === "alpha" });
     forks.setTeams("alpha", { mode: "list", teamIds: [team.id] }, "super");
-    forks.setPublic("alpha", true);
-    state.runtime = { db, membership, forks, access: createAccessResolver({ membership, forks }), getPoolAgentIds: () => ["alpha"] };
+    forks.setPublic("alpha", true, "super");
+    state.runtime = { db, membership, forks, access: createAccessResolver({ membership, forks }) };
     state.config = {
       agents: [{ id: "alpha", name: "Alpha", queueMode: "queue", model: { provider: "anthropic", model: "claude" }, workspace: path.join(state.dir, "agents/alpha"), extensions: { token: { enabled: true }, oauth: { enabled: true }, settings: { enabled: true } } }],
       oauth: { encryptionKey: "management-test-key", redirectBaseUrl: "http://localhost:4000", providers: { google: { clientId: "test", clientSecret: "test" } } },

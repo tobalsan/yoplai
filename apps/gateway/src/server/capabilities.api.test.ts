@@ -57,7 +57,6 @@ describe("/capabilities API", () => {
       agents: ["main"],
       multiUser: false,
       desktopSetup: false,
-      forkedAgents: false,
       enableCronMonitoring: false,
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },
     });

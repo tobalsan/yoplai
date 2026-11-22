@@ -26,7 +26,7 @@ import {
   type TeamlessUser,
 } from "../api/teams";
 import { fetchUsers, type AdminUser } from "../api/admin";
-import { fetchPool } from "../api/agents";
+import { fetchAgents } from "../api/agents";
 import { UserPicker } from "../components/UserPicker";
 import { UserAvatar } from "../components/UserAvatar";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -393,18 +393,17 @@ function TeamDetail(props: {
     () => props.team.id,
     fetchTeamAgents
   );
-  // Pool metadata gives each team agent its display name and avatar.
-  const [pool] = createResource(() => fetchPool());
-  const poolAgent = (poolId: string) => (pool.error ? undefined : pool())?.find((agent) => agent.id === poolId);
+  const [agentList] = createResource(fetchAgents);
+  const agentDetails = (id: string) => (agentList.error ? undefined : agentList())?.find((agent) => agent.id === id);
   const [agentBusy, setAgentBusy] = createSignal(false);
-  const [removeTarget, setRemoveTarget] = createSignal<{ poolId: string; name: string; lastTeam: boolean; public: boolean } | null>(null);
+  const [removeTarget, setRemoveTarget] = createSignal<{ agentId: string; name: string; lastTeam: boolean; public: boolean } | null>(null);
 
-  const handleUnassign = async (poolId: string) => {
+  const handleUnassign = async (agentId: string) => {
     if (agentBusy()) return;
     setAgentBusy(true);
     setError(null);
     try {
-      await removeForkFromTeam(poolId, props.team.id);
+      await removeForkFromTeam(agentId, props.team.id);
       await refetchAgents();
     } catch (cause) {
       setError(
@@ -662,12 +661,12 @@ function TeamDetail(props: {
                 <ul class="team-detail__list">
                   <For each={agents()}>
                     {(fork) => {
-                      const agent = () => poolAgent(fork.sourcePoolId);
+                      const agent = () => agentDetails(fork.forkAgentId);
                       const name = () => agent()?.name ?? fork.forkAgentId;
                       return (
                       <li class="team-detail__row">
                         <span class="team-detail__avatar" aria-hidden="true">
-                          <Show when={agent()?.avatar} fallback={<img src={defaultAvatarUrl(fork.sourcePoolId)} alt="" />}>
+                          <Show when={agent()?.avatar} fallback={<img src={defaultAvatarUrl(fork.forkAgentId)} alt="" />}>
                             {(avatar) => isEmoji(avatar()) ? <span>{avatar()}</span> : <img src={avatar()} alt="" />}
                           </Show>
                         </span>
@@ -686,7 +685,7 @@ function TeamDetail(props: {
                             aria-label={`Remove ${name()} from team`}
                             title="Remove from team"
                             disabled={agentBusy()}
-                            onClick={() => setRemoveTarget({ poolId: fork.sourcePoolId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1, public: fork.public })}
+                            onClick={() => setRemoveTarget({ agentId: fork.forkAgentId, name: name(), lastTeam: fork.assignment.teamIds.length <= 1, public: fork.public })}
                           >
                             <i class="fa-solid fa-xmark" aria-hidden="true" />
                           </button>
@@ -729,7 +728,7 @@ function TeamDetail(props: {
             confirmLabel="Remove"
             danger
             onConfirm={async () => {
-              await handleUnassign(target().poolId);
+              await handleUnassign(target().agentId);
               setRemoveTarget(null);
             }}
             onCancel={() => setRemoveTarget(null)}

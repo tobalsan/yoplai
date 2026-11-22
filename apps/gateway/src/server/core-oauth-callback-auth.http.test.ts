@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { MultiUserRuntime } from "../../../../packages/extensions/multi-user/src/runtime-state.js";
-import { writeTestAgent, writeTestV3Config } from "../test-utils/v3-config.js";
+import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 // The real gateway server, the real multi-user authentication middleware, the real agent gate, the real core OAuth
 // routes, the real provider registration, the real service, the real token exchange, and the real encrypted store run
@@ -35,11 +35,9 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
     process.env.YOPLAI_HOME = path.join(tmpDir, ".yoplai");
     process.env.HOME = tmpDir;
     process.env.USERPROFILE = tmpDir;
-    await writeTestAgent(path.join(tmpDir, "pool"), { id: "allowed-agent" });
-    await writeTestAgent(path.join(tmpDir, "pool"), { id: "other-agent" });
     const writeConfig = (redirectBaseUrl: string) => writeTestV3Config(path.join(tmpDir, ".yoplai"), {
       agents: [{ id: "allowed-agent", name: "Allowed Agent" }, { id: "other-agent", name: "Other Agent" }],
-      extraConfig: { pool: ["allowed-agent", "other-agent"].map((id) => path.join(tmpDir, "pool", "agents", id)), oauth: { redirectBaseUrl, encryptionKey: "synthetic-encryption-key-for-tests", providers: { fixture: { clientId: "synthetic-client", clientSecret: "synthetic-secret" }, second: { clientId: "synthetic-client", clientSecret: "synthetic-secret" } } } },
+      extraConfig: { oauth: { redirectBaseUrl, encryptionKey: "synthetic-encryption-key-for-tests", providers: { fixture: { clientId: "synthetic-client", clientSecret: "synthetic-secret" }, second: { clientId: "synthetic-client", clientSecret: "synthetic-secret" } } } },
       extensions: { multiUser: { enabled: true, emailAndPassword: { enabled: true }, sessionSecret: "x".repeat(32) } },
     });
     await writeConfig("http://127.0.0.1:1");
@@ -93,7 +91,6 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const { createPoolCatalogResolver } = await import("../../../../packages/extensions/multi-user/src/catalog.js");
     const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
@@ -107,8 +104,7 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
     dbMod.ensureUserOnboardingTable(db);
     dbMod.ensureUserAgentConnectPromptTable(db);
     db.prepare("INSERT INTO teams (id, name, createdBy) VALUES ('team-red', 'Red', 'root')").run();
-    const poolAgents = new Map(["allowed-agent", "other-agent"].map((id) => [id, { id, workspaceDir: path.join(tmpDir, "pool", "agents", id) }]));
-    const forks = createForkStore({ db, getForksDir: () => path.join(tmpDir, "forks"), getPoolAgent: (id) => poolAgents.get(id) ?? null });
+    const forks = createForkStore({ db, agentExists: (id) => id === "allowed-agent" || id === "other-agent" });
     const membership = createMembershipStore(db);
     forks.setTeams("allowed-agent", { mode: "list", teamIds: ["team-red"] }, "root");
     forks.setTeams("other-agent", { mode: "list", teamIds: ["team-red"] }, "root");
@@ -117,10 +113,8 @@ describe("core OAuth callback past the outer authentication gate (real socket)",
     const access = createAccessResolver({ membership, forks });
     setMultiUserRuntime({
       db, forks, membership, access,
-      catalog: createPoolCatalogResolver({ forks, access, isAgentRunnable: () => true, getTeamName: () => null }),
       onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
-      getPoolAgentIds: () => [...poolAgents.keys()],
       auth: { api: { getSession: async ({ headers }: { headers: Headers }) => {
         const id = headers.get(SESSION_HEADER);
         return id ? { user: { id, role: (db.prepare("SELECT role FROM user WHERE id = ?").get(id) as { role?: string } | undefined)?.role ?? "user", approved: true }, session: { id: `session-${id}`, userId: id } } : null;

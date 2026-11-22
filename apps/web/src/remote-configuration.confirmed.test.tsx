@@ -17,7 +17,7 @@ const east = relayPrefix("east");
 const agent = "assistant%40east";
 
 const caps = (overrides: Record<string, unknown> = {}) => ({
-  version: 2, extensions: { scheduler: true }, agents: ["assistant"], multiUser: true, forkedAgents: false, enableCronMonitoring: true,
+  version: 2, extensions: { scheduler: true }, agents: ["assistant"], multiUser: true, enableCronMonitoring: true,
   user: { id: "remote-alice", name: "Alice", email: "alice@example.test", role: "admin" }, ...overrides,
 });
 const webhooksEntry = (): ExtensionCatalogEntry => ({

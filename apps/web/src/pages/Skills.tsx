@@ -5,7 +5,6 @@ import type { GatewayName } from "../api/gateway";
 import { missingGatewayText, useGatewayChoice } from "../lib/gateway-choice";
 import { useRequester } from "../lib/requester";
 import { GatewaySelect } from "../components/GatewaySelect";
-import { capabilities } from "../lib/capabilities";
 import { showToast } from "../lib/toast";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -172,7 +171,7 @@ function SkillsView(props: { gateway?: GatewayName; id?: string }) {
     if (gateway !== undefined) return;
     setAdding(false); setBusy("create"); setError("");
     try {
-      const options = await fetchMainAgentOptions(capabilities.forkedAgents === true);
+      const options = await fetchMainAgentOptions();
       if (disposed) return;
       const agents = options.agents.filter((agent) => (agent.sdk ?? "pi") === "pi");
       if (options.preference.accessible && agents.some((agent) => agent.id === options.preference.mainAgentId)) createChat(options.preference.mainAgentId!);

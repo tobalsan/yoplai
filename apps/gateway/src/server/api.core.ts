@@ -354,7 +354,7 @@ api.get("/admin/model-quota", async (c) => {
 
 async function listTopExtensionCandidates() {
   const config = loadConfig();
-  const sampleAgent = config.agents[0] ?? config.pool?.[0] ?? ({ id: "_", name: "_", workspace: CONFIG_DIR } as AgentConfig);
+  const sampleAgent = config.agents[0] ?? ({ id: "_", name: "_", workspace: CONFIG_DIR } as AgentConfig);
   const catalog = await buildExtensionCatalog(config, sampleAgent, { configurable: false });
   const extensions = catalog.map((entry) => ({
     id: entry.id,
@@ -451,11 +451,11 @@ function hasOAuthConnection(
   }
 }
 
-async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig, configurable = true) {
+async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agent: AgentConfig) {
   const rawConfig = getRawLoadedConfig();
   const auth = await getRequestAuthContext(c);
   const canConfigureTeam = await canConfigureTeamExtensions(c, agent.id);
-  const catalog = await buildExtensionCatalog(config, agent, { configurable, rawConfig, ...(auth ? { requesterUserId: auth.user.id } : {}) });
+  const catalog = await buildExtensionCatalog(config, agent, { configurable: true, rawConfig, ...(auth ? { requesterUserId: auth.user.id } : {}) });
   return catalog.map((catalogEntry) => {
     const entry = {
       ...catalogEntry,
@@ -470,23 +470,6 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
     const personalConfigValues = Object.fromEntries(Object.entries(personal ?? {}).filter(([field]) => !fields.includes(field)));
     return { ...entry, personalSecretFields: fields.filter((field) => !!personal?.[field]), personalConfigValues };
   });
-}
-
-function findExtensionCatalogAgent(
-  config: GatewayConfig,
-  agentId: string
-): { agent: AgentConfig; configurable: boolean } | undefined {
-  const directAgent = config.agents.find(
-    (candidate) => candidate.id === agentId
-  );
-  if (directAgent) return { agent: directAgent, configurable: true };
-
-  const poolAgent = config.pool?.find((candidate) => candidate.id === agentId);
-  if (!poolAgent) return undefined;
-  const agentWithoutTemplateExtensions = { ...poolAgent };
-  delete (agentWithoutTemplateExtensions as { extensions?: unknown })
-    .extensions;
-  return { agent: agentWithoutTemplateExtensions, configurable: false };
 }
 
 function findWritableExtensionAgent(
@@ -510,19 +493,7 @@ async function getVisibleAgents(c: Context) {
 }
 
 async function getEligibleMainAgents(c: Context) {
-  const agents = await getVisibleAgents(c);
-  if (!isExtensionLoaded("multiUser") || !loadConfig().forkedAgents) return eligibleMainAgents(agents);
-  const auth = await getRequestAuthContext(c);
-  const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
-  const runtime = getMultiUserRuntime();
-  if (!auth || !runtime) return [];
-  const role = auth.user.role;
-  const actions = runtime.catalog.resolvePoolActions(runtime.getPoolAgentIds(), {
-    id: auth.session.userId,
-    isStaff: hasAdminRole(role),
-    isSuperadmin: Array.isArray(role) ? role.includes("superadmin") : role === "superadmin",
-  });
-  return eligibleMainAgents(agents, actions);
+  return eligibleMainAgents(await getVisibleAgents(c));
 }
 
 function contentDispositionFilename(filename: string): string {
@@ -692,7 +663,6 @@ api.get("/capabilities", async (c) => {
     ...((await isGatewayLinkReady()) ? { gatewayLink: { version: 1, method: "loopback-pkce" } } : {}),
     // Only a gateway with the relay on reports it. `available` is false while the listener cannot receive the callback.
     ...(isRelayEnabled() ? { relayLink: { available: getLinkCallbackPort() !== undefined } } : {}),
-    forkedAgents: config.forkedAgents ?? false,
     enableCronMonitoring: config.enableCronMonitoring ?? false,
     dashboardEmbed: {
       version: DASHBOARD_EMBED_VERSION,
@@ -726,13 +696,12 @@ api.get("/capabilities", async (c) => {
 /** Resolve avatar for API response: relative paths become /api/agents/:id/avatar */
 function resolveAvatarForApi(
   avatar: string | undefined,
-  agentId: string,
-  routeBase: "agents" | "pool" = "agents"
+  agentId: string
 ): string | undefined {
   if (!avatar) return undefined;
   if (/^\p{Emoji}/u.test(avatar) && avatar.length <= 4) return avatar;
   if (/^https?:\/\//i.test(avatar)) return avatar;
-  return `/api/${routeBase}/${agentId}/avatar`;
+  return `/api/agents/${agentId}/avatar`;
 }
 
 async function resolveExistingSessionHistoryFile(params: {
@@ -779,32 +748,6 @@ api.get("/agents", async (c) => {
       authMode: a.auth?.mode,
       queueMode: a.queueMode ?? "queue",
       isDefaultProjectManager: a.id === visibleDefaultId,
-    }))
-  );
-});
-
-// GET /api/pool - list all pool agents (no per-user filtering)
-api.get("/pool", async (c) => {
-  const config = loadConfig();
-  if (!config.forkedAgents) {
-    return c.json({ error: "Pool is not configured" }, 404);
-  }
-  const agents = config.pool ?? [];
-  const includePrivateMeta = await canViewAgentPrivateMeta(c);
-  return c.json(
-    agents.map((a) => ({
-      id: a.id,
-      name: a.name,
-      description: a.description,
-      role: a.role,
-      avatar: resolveAvatarForApi(a.avatar, a.id, "pool"),
-      ...(includePrivateMeta ? { model: a.model } : {}),
-      sdk: a.sdk ?? "pi",
-      ...(includePrivateMeta && a.workspace
-        ? { workspace: resolveWorkspaceDir(a.workspace) }
-        : {}),
-      authMode: a.auth?.mode,
-      queueMode: a.queueMode ?? "queue",
     }))
   );
 });
@@ -1063,17 +1006,17 @@ api.get("/agents/:id/suggestions", async (c) => {
 // required secrets, and config-surface tier. Read-only.
 api.get("/agents/:id/extensions", async (c) => {
   const agentId = c.req.param("id");
-  // In multi-user mode, staff and same-team members may configure a fork.
+  // In multi-user mode, authorized users may access an agent's extension catalog.
   // Others get 403 without leaking whether the agent exists.
   if (!(await canConfigureAgentExtensions(c, agentId))) {
     return c.json({ error: "forbidden" }, 403);
   }
   const config = loadConfig();
-  const resolved = findExtensionCatalogAgent(config, agentId);
-  if (!resolved) {
+  const agent = findWritableExtensionAgent(config, agentId);
+  if (!agent) {
     return c.json({ error: "Agent not found" }, 404);
   }
-  const extensions = await requesterExtensionCatalog(c, config, resolved.agent, resolved.configurable);
+  const extensions = await requesterExtensionCatalog(c, config, agent);
   return c.json({ agentId, extensions });
 });
 
@@ -1406,41 +1349,6 @@ api.get("/agents/:id/avatar", async (c) => {
   const agentId = c.req.param("id");
   const agent = getAgent(agentId);
   if (!agent || !isAgentActive(agentId) || !agent.avatar || !agent.workspace) {
-    return c.json({ error: "Not found" }, 404);
-  }
-  const wsDir = resolveWorkspaceDir(agent.workspace);
-  const filePath = path.resolve(wsDir, agent.avatar);
-  // Prevent path traversal outside workspace
-  if (!filePath.startsWith(wsDir)) {
-    return c.json({ error: "Invalid path" }, 400);
-  }
-  try {
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) return c.json({ error: "Not found" }, 404);
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".webp": "image/webp",
-    };
-    const contentType = mimeMap[ext] ?? "application/octet-stream";
-    const stream = createReadStream(filePath);
-    c.header("Content-Type", contentType);
-    c.header("Cache-Control", "public, max-age=3600");
-    return c.body(Readable.toWeb(stream) as unknown as ReadableStream);
-  } catch {
-    return c.json({ error: "Not found" }, 404);
-  }
-});
-
-// GET /api/pool/:id/avatar - serve avatar image from workspace for a pool agent
-api.get("/pool/:id/avatar", async (c) => {
-  const agentId = c.req.param("id");
-  const agent = (loadConfig().pool ?? []).find((a) => a.id === agentId);
-  if (!agent || !agent.avatar || !agent.workspace) {
     return c.json({ error: "Not found" }, 404);
   }
   const wsDir = resolveWorkspaceDir(agent.workspace);

@@ -909,10 +909,9 @@ describe("AgentSidebar", () => {
     dispose();
   });
 
-  it("shows Teams only in multi-user forked-agent mode", () => {
+  it("shows Teams in multi-user mode", () => {
     setCapabilitiesForTests({
       multiUser: true,
-      forkedAgents: true,
       extensions: {},
     });
     const container = document.createElement("div");

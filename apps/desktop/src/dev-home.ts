@@ -44,8 +44,7 @@ export function seedDevHome({ home, mode }: DevHome, env: NodeJS.ProcessEnv, war
     fs.writeFileSync(path.join(home, CONFIG_NAMES[0]), `${JSON.stringify(SEED_CONFIG, null, 2)}\n`, { flag: "wx" });
   }
   const rules = config?.agents;
-  const discoversAgents = rules === undefined ? config?.pool === undefined
-    : [rules].flat().some((rule) => typeof rule === "string" && rule.trim());
+  const discoversAgents = rules === undefined || [rules].flat().some((rule) => typeof rule === "string" && rule.trim());
   if (!discoversAgents) {
     warn(`[desktop] No agent discovery rules in ${configPath}. Setup cannot add agents.`);
   }

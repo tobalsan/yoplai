@@ -85,6 +85,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Manage team access and Public or Private visibility directly on an agent. Existing agent access records continue to apply, and startup ignores the legacy agent pool key with a warning.
 - Reduce the macOS app and disk image sizes.
 - The desktop splash and setup use the macOS appearance by default. If you select Light or Dark, they use that choice on the next start. The desktop keeps the purpose chips scrollable without a scroll bar.
 - `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home; set `YOPLAI_DESKTOP_DEV_PARENT` to choose its parent folder.

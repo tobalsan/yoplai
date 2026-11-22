@@ -19,7 +19,7 @@ An exact local agent ID wins without the prefix.
 The relay carries a raw remote agent ID as one HTTP path segment, so the ID must not be empty, `.`, or `..`, and must hold no `/`, `\`, `%`, `?`, `#`, or control character. Other characters, including `@`, work. The relay lists no remote agent with another ID and treats no suffix on such an ID as a gateway. The rule lives in `packages/shared/src/agent-id-wire.ts`.
 An explicit prefix accepts a raw remote agent ID, even when a local agent has that raw ID.
 The prefix rejects a suffixed agent that selects another gateway or matches an exact local ID.
-Object IDs, pool IDs, team IDs, server names, and arbitrary body strings stay unchanged.
+Object IDs, raw agent IDs in access routes, team IDs, server names, and arbitrary body strings stay unchanged.
 Object requests need the prefix on every request, including later actions and refreshes.
 
 ## Allowed configuration routes
@@ -52,7 +52,7 @@ Existing chat and media routes keep their contracts.
 | PATCH | `/dashboards/:id/sharing` | Gateway prefix |
 | POST | `/dashboards/:id/claim` | Gateway prefix |
 | DELETE | `/dashboards/:id` | Gateway prefix |
-| GET | `/pool`, `/pool/:id/avatar`, `/pool-actions`, `/teams`, `/admin/forks` | Gateway prefix |
+| GET | `/teams`, `/admin/forks` | Gateway prefix |
 | PUT | `/admin/forks/:poolId/teams` | Gateway prefix |
 | PATCH | `/admin/forks/:poolId/visibility` | Gateway prefix |
 | DELETE | `/admin/teams/:teamId/agents/:poolId` | Gateway prefix |
@@ -85,7 +85,6 @@ The relay returns `gateway_offline` with status 502 when the remote fetch fails.
 | `user.name`, `user.email` | Public profile values of that remote requester. |
 | `user.role` | The remote role or role array. Missing data grants no administrative rights. |
 | `extensions` | Extension IDs that the remote loads. |
-| `forkedAgents` | The remote uses the pool and fork model. |
 | `enableCronMonitoring` | The remote permits schedule monitoring views. |
 | `agents` | Raw remote agent IDs visible to this requester. |
 
@@ -97,7 +96,7 @@ The remote remains the authority when a request returns 401 or 403.
 
 Agent catalog rows use suffixed `id`, `gateway`, and avatar paths.
 Known response fields named `agentId` use the gateway suffix, including dashboard result containers.
-Pool IDs and fork fields remain remote values. Capability `agents` also remain raw remote IDs.
+Access routes take raw remote agent IDs, and access records keep their compatibility fields. Capability `agents` also lists raw remote IDs.
 The page retains the selected gateway separately from each object.
 It never replaces global local capabilities or the local session.
 
@@ -227,15 +226,15 @@ The pages in `apps/web` use the routes above. They add no new transport route.
   A name without `@` is local and needs no list. A name with `@` is remote only when the list names a `gateway` for that exact ID. The ID suffix alone never selects a gateway.
   When the list fails or does not hold the ID, the page shows "This agent is unavailable" with Retry and makes no configuration call. It never falls back to a local call.
 - Every API function takes an optional `gateway` argument (`api/gateway.ts`). With a name, the URL is `/api/relay/gateways/<name>` plus the normal path. The qualified agent ID stays in the path or query, and the relay checks that it belongs to that gateway.
-  Object IDs (job, run, dashboard, pool, team, MCP server) stay unchanged. Caches and resource keys include the gateway, so equal IDs on two gateways never share data.
+  Object IDs (job, run, dashboard, team, MCP server) stay unchanged. Caches and resource keys include the gateway, so equal IDs on two gateways never share data.
   Pages read route params with `decodeRouteParam`, because the router keeps the raw path segment.
-- `lib/requester.ts` gives the requester of the gateway. A local page uses the local session and capabilities. A remote page reads `GET .../api/capabilities` of its gateway: the remote user ID, role, `multiUser`, `forkedAgents`, `enableCronMonitoring`, and extension flags.
+- `lib/requester.ts` gives the requester of the gateway. A local page uses the local session and capabilities. A remote page reads `GET .../api/capabilities` of its gateway: the remote user ID, role, `multiUser`, `enableCronMonitoring`, and extension flags.
   A failed read is "unknown" and grants no rights. Pages also use remote `canConfigureTeam`, `canEditLabels`, `editable`, and dashboard ownership fields.
 - Navigation keeps the context in the qualified agent ID: extension cards, MCP cards, schedule and run links, Back links, and the settings link of a chat. A remote catalog names the raw remote agent in `configRoutePath`, and `connectPath` of a schedule alert.
   The page moves those paths to the qualified agent (`qualifyAgentRoute`), or falls back to the details or Edit page.
 - Global pages need an explicit gateway. `/dashboards?gateway=<name>` selects one linked gateway. The selector lists the gateways of the loaded agents and the one in the address. The local list is the default. A gateway change drops dialogs, pins in flight, and late answers of the old gateway.
   A remote dashboard row opens `/remote-dashboards/<name>/<id>`, and Chat opens `/chat/<agentId>@<name>?dashboard=<id>` (with `session` when the row has one). The remote `link` and `chatHref` values are never local targets.
-- The Edit page of a remote agent reads Top flags from its gateway (`GET .../api/top-extensions`), the pool, teams, forks, and pool actions of its gateway, and saves team and visibility changes there. Pool IDs and fork fields stay remote values.
+- The Edit page of a remote agent reads Top flags from its gateway (`GET .../api/top-extensions`), teams and agent access records from its gateway, and saves team and visibility changes there using the raw agent ID.
   Pool avatar paths load through the relay prefix. The local Top flags and the local session never apply to a remote agent.
 - The webhook config route (`/agents/:agentId/extensions/webhooks`) is always mounted. It checks the extension on the gateway of the agent, and opens the generic details page when that gateway does not load it.
 - Schedule alerts are kept per gateway (`lib/schedule-alerts.ts`). A chat with a remote agent also loads the alerts of that gateway.

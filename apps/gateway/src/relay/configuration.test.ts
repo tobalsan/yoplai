@@ -72,9 +72,9 @@ const mutations: Array<[string, string, unknown?]> = [
   ["PATCH", `${prefix()}/api/dashboards/object@east/sharing`, { shares: [{ kind: "user", id: "user@east", mode: "read" }] }],
   ["POST", `${prefix()}/api/dashboards/object@east/claim`, {}],
   ["DELETE", `${prefix()}/api/dashboards/object@east`],
-  ["PUT", `${prefix()}/api/admin/forks/pool@east/teams`, { teamIds: ["team@east"] }],
-  ["PATCH", `${prefix()}/api/admin/forks/pool@east/visibility`, { public: false }],
-  ["DELETE", `${prefix()}/api/admin/teams/team@east/agents/pool@east`],
+  ["PUT", `${prefix()}/api/admin/forks/writer@east/teams`, { teamIds: ["team@east"] }],
+  ["PATCH", `${prefix()}/api/admin/forks/writer@east/visibility`, { public: false }],
+  ["DELETE", `${prefix()}/api/admin/teams/team@east/agents/writer@east`],
   ["DELETE", `${prefix()}/api/surface-links/link-1`],
 ];
 
@@ -108,7 +108,7 @@ describe("configuration transport", () => {
     expect(localCalls).toEqual([]);
   });
 
-  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/pool", "/api/pool/pool/avatar", "/api/pool-actions", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/admin/top-extensions", "/api/capabilities", "/api/surface-links"])("reads %s from the selected gateway", async (path) => {
+  it.each(["/api/agents", "/api/mcp/catalog", "/api/schedule-alerts", "/api/dashboards", "/api/dashboards/recipients", "/api/teams", "/api/admin/forks", "/api/top-extensions", "/api/admin/top-extensions", "/api/capabilities", "/api/surface-links"])("reads %s from the selected gateway", async (path) => {
     for (const name of ["east", "west"]) {
       expect((await app.request(`${prefix(name)}${path}`)).status).toBe(200);
       expect(records.at(-1)?.url.origin).toBe(`https://${name}.test`);
@@ -208,7 +208,7 @@ describe("configuration transport", () => {
 
   it("strips caller identity and preserves remote permission errors", async () => {
     answer = () => Response.json({ error: "team_requires_admin" }, { status: 403, headers: { "set-cookie": "secret=one" } });
-    const response = await app.request(`${prefix()}/api/admin/forks/pool/visibility`, {
+    const response = await app.request(`${prefix()}/api/admin/forks/writer/visibility`, {
       method: "PATCH", headers: { origin, authorization: "Bearer page-token", cookie: "page=one", host: "evil.test", "x-yoplai-auth-context": "admin", "x-yoplai-user-id": "admin", "x-forwarded-host": "evil.test", forwarded: "for=evil.test", referer: `${origin}/agents`, "content-type": "application/json" }, body: "{}",
     });
     expect(response.status).toBe(403);
@@ -219,7 +219,7 @@ describe("configuration transport", () => {
   });
 
   it("returns the remote requester, not the local requester", async () => {
-    answer = (url) => Response.json({ multiUser: true, user: { id: `${url.hostname}-owner`, role: "user", name: "Remote owner", email: "owner@test.invalid" }, forkedAgents: true, extensions: { mcp: true } });
+    answer = (url) => Response.json({ multiUser: true, user: { id: `${url.hostname}-owner`, role: "user", name: "Remote owner", email: "owner@test.invalid" }, extensions: { mcp: true } });
     const response = await app.request(`${prefix()}/api/capabilities`, { headers: { "x-yoplai-auth-context": "local-superadmin" } });
     expect((await response.json()).user).toEqual({ id: "east.test-owner", role: "user", name: "Remote owner", email: "owner@test.invalid" });
     expect(records[0].headers.has("x-yoplai-auth-context")).toBe(false);

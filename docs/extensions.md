@@ -202,9 +202,9 @@ Gateway creates `$YOPLAI_HOME/auth.db`. First registered user becomes an approve
 
 New users receive no explicit team membership at sign-up; legacy `autoJoinPublicTeams` config keys are accepted and ignored. All users teams retain live membership. Public agents are available to every approved user, including users with no team; Private agents require membership in a linked team (superadmins bypass this). Agent team links decide management independently of visibility: only a superadmin or an admin in a linked team may change visibility, assignments, team credentials/OAuth, or pause/resume/delete Team jobs. Legacy All teams assignments migrate once to teamless Public agents; writes accept only explicit team lists. The team Private field remains in the API but is inert and hidden in the UI. Staff can use Teams → No team to place newcomers into teams they manage; pending users remain blocked from all agents until approved.
 
-Roles are user/admin/superadmin. Headless clients can use `yoplai user token create|list|revoke` and bearer authentication. Full setup and pool/team behavior: [multi-user README](../packages/extensions/multi-user/README.md).
+Roles are user/admin/superadmin. Headless clients can use `yoplai user token create|list|revoke` and bearer authentication. Full setup and agent visibility and team behavior: [multi-user README](../packages/extensions/multi-user/README.md).
 
-Without a configured agent pool, an agent with no fork record is treated as Public: every approved user and admin can list and use it, including chat, avatars and capability self-enable. Agents with existing fork records (including migrated legacy assignments) keep their Public or linked-team access rules and are hidden from users who cannot open them. Pending users stay blocked; agent management and team credentials still require the existing ownership permissions.
+An agent with no access record is Public by default. Every approved user and admin can list and use it, including chat, avatars, and capability self-enable. Once a record exists, its Public flag and team links govern who lists and uses the agent. Admins manage agents through shared teams, and a superadmin can set visibility before an agent joins a team.
 
 ## Optional web routes
 

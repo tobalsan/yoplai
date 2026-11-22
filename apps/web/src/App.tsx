@@ -230,7 +230,7 @@ function AgentsRouteShell() {
 
 function TeamsRouteShell() {
   return (
-    <Show when={capabilities.forkedAgents} fallback={<AgentsRouteShell />}>
+    <Show when={capabilities.multiUser} fallback={<AgentsRouteShell />}>
       <LeftNavShell><Teams /></LeftNavShell>
     </Show>
   );

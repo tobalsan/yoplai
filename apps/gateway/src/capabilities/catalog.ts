@@ -379,7 +379,7 @@ export async function loadCapabilityCatalog(
   config: GatewayConfig,
   callingAgentId: string
 ): Promise<CapabilityEntry[]> {
-  const agents = [...config.agents, ...(config.pool ?? [])];
+  const { agents } = config;
   const mcpServers = await readMcpServerSources(agents);
   const mcpWithTools = await Promise.all(
     mcpServers.map(async (server) => ({

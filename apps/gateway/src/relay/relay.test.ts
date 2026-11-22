@@ -44,7 +44,7 @@ async function startRemoteGateway(home: string): Promise<{ child: ChildProcess; 
 
 type Recorded = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string };
 
-/** A fake remote gateway. It records each request and each WebSocket message. */
+/** A fake remote gateway that records HTTP requests and chat WebSocket traffic. */
 async function startFakeGateway(
   handler: (req: http.IncomingMessage, res: http.ServerResponse, recorded: Recorded) => void = (_req, res) => {
     res.setHeader("content-type", "application/json");
@@ -66,11 +66,12 @@ async function startFakeGateway(
   });
   const wss = new WebSocketServer({
     server,
+    path: "/ws",
     verifyClient: upgradeGate ? (_info, done) => void upgradeGate.then(() => done(true)) : undefined,
   });
   let upgradeAttempts = 0;
-  server.on("upgrade", () => {
-    upgradeAttempts += 1;
+  server.on("upgrade", (request) => {
+    if (request.url === "/ws") upgradeAttempts += 1;
   });
   wss.on("connection", (socket) => {
     sockets.push(socket);
@@ -496,8 +497,8 @@ describe("desktop relay: chat relay", () => {
       await waitFor(() => fake.socketMessages.length === 2);
       fake.sockets[0]?.close();
       await sleep(1600);
-      expect(fake.sockets).toHaveLength(1);
       ws.close();
+      expect(fake.sockets).toHaveLength(1);
     });
   });
 
@@ -704,7 +705,7 @@ describe("desktop relay: chat relay", () => {
         // A chat message to an ID that HTTP cannot carry stays local too, so the transports agree.
         const events = await chat(localBase, "a%b@ids", "hi");
         expect(events.at(-1)?.type).toBe("error");
-        expect(fake.socketMessages.filter((message) => message.type !== "hello")).toEqual([]);
+        expect(fake.socketMessages).toEqual([]);
       }
     );
   });

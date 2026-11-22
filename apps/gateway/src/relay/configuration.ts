@@ -28,7 +28,7 @@ const rules: Rule[] = [
   { methods: ["PATCH", "DELETE"], path: /^\/api\/schedules\/[^/]+\/[^/]+$/, agent: "path" },
   { methods: ["POST"], path: /^\/api\/schedules\/[^/]+\/[^/]+\/run$/, agent: "path" },
   { methods: ["GET"], path: /^\/api\/schedules\/[^/]+\/[^/]+\/runs(?:\/[^/]+\/trace)?$/, agent: "path" },
-  { methods: ["GET"], path: /^\/api\/(?:agents|mcp\/catalog|schedule-alerts|dashboards(?:\/recipients)?|pool(?:\/[^/]+\/avatar)?|pool-actions|teams|admin\/forks|top-extensions|admin\/top-extensions|capabilities)$/ },
+  { methods: ["GET"], path: /^\/api\/(?:agents|mcp\/catalog|schedule-alerts|dashboards(?:\/recipients)?|teams|admin\/forks|top-extensions|admin\/top-extensions|capabilities)$/ },
   // Global extension and MCP catalog administration. The remote checks its own superadmin policy.
   { methods: ["GET"], path: /^\/api\/admin\/extension-catalog$/ },
   { methods: ["POST"], path: /^\/api\/admin\/extension-catalog\/refresh$/, bodyless: true },
