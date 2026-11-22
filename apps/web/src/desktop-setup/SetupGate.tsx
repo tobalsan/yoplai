@@ -11,6 +11,7 @@ const Setup = createContext<{
   models: () => Model[] | undefined;
   save: (update: SetupUpdate, when?: () => boolean) => Promise<void>;
   refresh: () => Promise<boolean>;
+  refreshModels: () => unknown;
 }>();
 export const useOptionalSetup = () => useContext(Setup);
 export const useSetup = () => useOptionalSetup()!;
@@ -35,7 +36,7 @@ export function SetupGate(props: { children: JSX.Element }) {
     }
   });
   const exited = () => enabled() && !onSetup() && state()?.wizardExited === true;
-  const [models] = createResource(exited, () => readModels().catch(() => undefined));
+  const [models, { refetch: refetchModels }] = createResource(exited, () => readModels().catch(() => undefined));
   let pending = Promise.resolve();
   const enqueue = (action: () => Promise<void>) => {
     const result = pending.then(async () => { if (enabled()) await action(); });
@@ -64,6 +65,7 @@ export function SetupGate(props: { children: JSX.Element }) {
       if (!when || when()) mutate(await saveSetup(update));
     }),
     refresh,
+    refreshModels: () => exited() ? refetchModels() : undefined,
   }}>
     <Show when={enabled() && !state.loading && !state()}>
       <main><p role="alert">Yoplai could not read the setup state.</p>

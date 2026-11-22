@@ -149,15 +149,6 @@
   .setup-model-line { flex-wrap: wrap; }
 }
 
-.setup-picker-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.setup-picker-name strong, .setup-picker-name small { display: block; overflow: hidden; text-overflow: ellipsis; }
-.setup-picker-name strong { font-size: 14px; font-weight: 600; }
-.setup-picker-name small, .setup-picker-count { font-size: 12px; color: var(--setup-muted); }
-.setup-picker-count { font-variant-numeric: tabular-nums; }
-.setup-picker-ready { width: 7px; aspect-ratio: 1; border-radius: 50%; background: currentColor; flex: none; }
-.setup-picker-free { padding: 1px 6px; color: var(--text-primary); border: 1px solid var(--text-secondary); border-radius: 99px; font-size: 11px; font-weight: 600; }
-.setup-picker-action { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-
 .setup-key-form { width: 100%; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setup-key-form .setup-actions { grid-column: 1 / -1; }
 @media (max-width: 550px) {

@@ -22,7 +22,7 @@ it("keeps provider rows in the same order when Pi becomes ready", async () => {
     owned: [], attempts: [], apiKeyProviders: [],
   }));
   vi.mocked(readModels).mockImplementation(async () => enabled ? [{
-    provider: "anthropic", model: "claude-haiku", name: "Claude Haiku", source: "pi", default: true, ready: false, free: false,
+    provider: "anthropic", model: "claude-haiku", name: "Claude Haiku", source: "pi", credentialType: "oauth", default: true, ready: false, free: false,
   }] : []);
   vi.mocked(request).mockImplementation(async () => { enabled = true; return { enabled }; });
   const root = document.body.appendChild(document.createElement("div"));

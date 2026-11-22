@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
-import { ModelPicker } from "./ModelPicker";
-import { errorText, modelKey, request, type Model } from "./api";
+import { ManagedModelPicker } from "./ManagedModelPicker";
+import type { ModelChoice } from "../api/agent-management";
+import { errorText, modelKey, request, resolveModelChoice, type Model } from "./api";
 
 const names = ["Jarvis", "Samantha", "YoplaiBot", "AI Chief of Staff"];
 const randomName = () => names[Math.floor(Math.random() * names.length)];
@@ -14,7 +15,7 @@ const suggestions = [
 ];
 const rank = (source: string) => source === "owned" ? 0 : source === "environment" ? 2 : 1;
 
-type Draft = { sessionId?: string; turnId?: string; requestId: string; name: string; purpose: string; avatar: number; model: { provider: string; model: string } };
+type Draft = { sessionId?: string; turnId?: string; requestId: string; name: string; purpose: string; avatar: number; model: ModelChoice };
 
 const draftKey = "yoplai:desktop-setup-draft";
 export const clearAgentDraft = () => sessionStorage.removeItem(draftKey);
@@ -27,13 +28,14 @@ export function readAgentDraft(): Draft | undefined {
   } catch { return undefined; }
 }
 
-export function FirstAgent(props: { models: Model[]; onCreated: (id: string, sessionId: string, turnId: string) => Promise<void>; onBusy: (busy: boolean) => void }) {
+export function FirstAgent(props: { models: Model[]; onCreated: (id: string, sessionId: string, turnId: string) => Promise<void>; onBusy: (busy: boolean) => void; onAccessChanged: () => unknown }) {
   const saved = readAgentDraft();
   const [name, setName] = createSignal(saved?.name ?? randomName());
   const [purpose, setPurpose] = createSignal(saved?.purpose ?? "");
   const [avatar, setAvatar] = createSignal(saved?.avatar ?? Math.floor(Math.random() * 10) + 1);
   const defaultModel = [...props.models].sort((a, b) => rank(a.source) - rank(b.source)).find((model) => model.default);
-  const [selected, setSelected] = createSignal(saved ? JSON.stringify([saved.model.provider, saved.model.model]) : defaultModel ? modelKey(defaultModel) : "");
+  const initialModel = saved ? resolveModelChoice(props.models, saved.model) : defaultModel;
+  const [selected, setSelected] = createSignal(initialModel ? modelKey(initialModel) : "");
   const [creating, setCreating] = createSignal("");
   const [error, setError] = createSignal("");
   const [retry, setRetry] = createSignal<Draft | undefined>(saved);
@@ -71,7 +73,7 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string, ses
     if (!option) return;
     const chosenName = name().trim() || randomName();
     setName(chosenName);
-    void create({ requestId: crypto.randomUUID(), name: chosenName, purpose: purpose(), avatar: avatar(), model: { provider: option.provider, model: option.model } });
+    void create({ requestId: crypto.randomUUID(), name: chosenName, purpose: purpose(), avatar: avatar(), model: { provider: option.provider, model: option.model, source: option.source } });
   }}>
     <div class="setup-agent-grid">
       <div class="setup-preview">
@@ -91,7 +93,7 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string, ses
             <button type="button" class="setup-outline" aria-pressed={purpose() === text} disabled={!!creating()} onClick={() => { change(); setPurpose(text); }}>{title}</button>
           }</For></div>
         </div>
-        <ModelPicker models={props.models} selected={model()} suggested={defaultModel} disabled={!!creating()}
+        <ManagedModelPicker local models={props.models} selected={model()} unavailable={retry()?.model} disabled={!!creating()} onAccessChanged={props.onAccessChanged}
           onSelect={(value) => { change(); setSelected(value); }} />
       </div>
     </div>

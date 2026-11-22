@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Choose a model by credential source during onboarding, agent creation, and settings. In-process runs use the saved source and report when it becomes unavailable.
 - Create agents and edit their settings in web and desktop chat. Desktop can also create on a linked gateway that allows it. New multi-user agents start private to their creator.
 - Set or remove an optional fallback model in Agent settings. The empty picker prompts you to select a model.
 - Multi-user superadmins can choose who manages agents. A gateway's `agentManagement` setting overrides that choice.

@@ -4,12 +4,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { ModelSourceSchema } from "@yoplai/shared";
 import { writeFileAtomic, writeJsonAtomic } from "../util/atomic-write.js";
 
 export const creatorFile = ".created-by.json";
 const avatarFile = ".agent-avatar.json";
 export const defaultFaceSchema = z.number().int().min(1).max(10);
-export const modelChoiceSchema = z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict();
+export const modelChoiceSchema = z.object({ provider: z.string().min(1), model: z.string().min(1), source: ModelSourceSchema.optional() }).strict();
+type ModelChoice = z.infer<typeof modelChoiceSchema>;
+export function matchesModelChoice(row: ModelChoice, choice: ModelChoice) {
+  return row.provider === choice.provider && row.model === choice.model && (!choice.source || row.source === choice.source);
+}
 const generatedAvatar = /^avatar-[a-f0-9-]{36}\.(?:png|jpg|gif|webp)$/;
 const defaultAvatar = /^default-([1-9]|10)\.webp$/;
 const avatarStateSchema = z.object({

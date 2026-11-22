@@ -34,6 +34,18 @@ export function isTrustedExternalOAuthModel(model: AnyModel): boolean {
 
 type Keychain = { exists(): Promise<boolean>; read(): Promise<string> };
 const run = promisify(execFile);
+const commands = { pi: "pi", codex: "codex", "claude-code": "claude", opencode: "opencode" } as const;
+const versions = new Map<ExternalSource, Promise<string | undefined>>();
+
+function versionOf(source: ExternalSource) {
+  let pending = versions.get(source);
+  if (!pending) {
+    pending = run(commands[source], ["--version"], { timeout: 700, killSignal: "SIGKILL", maxBuffer: 4096 })
+      .then(({ stdout }) => stdout.match(/\bv?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/)?.[1], () => undefined);
+    versions.set(source, pending);
+  }
+  return pending;
+}
 function allowsSystemKeychain(): boolean {
   return os.platform() === "darwin" && (process.env.YOPLAI_DEV !== "1" || process.env.YOPLAI_DESKTOP_KEYCHAIN === "1");
 }
@@ -67,19 +79,22 @@ export async function selectExternalCredential<T extends Candidate>(
   model: AnyModel | undefined,
   mode: ExternalCredential["type"] | undefined,
   lookup: (source: ExternalSource) => T | undefined | Promise<T | undefined>,
+  onlySource?: ExternalSource,
 ) {
   const trusted = model && isTrustedExternalOAuthModel(model);
   for (const source of EXTERNAL_SOURCES) {
+    if (onlySource && source !== onlySource) continue;
     if (source === "codex" && provider !== "openai-codex" || source === "claude-code" && provider !== "anthropic") continue;
     const row = await lookup(source);
     if (row?.available && (!mode || row.type === mode) && (row.type !== "oauth" || trusted)) return { row, source };
   }
 }
 
-type ConsentState = "enabled" | "warning-accepted" | "denied";
+type ConsentState = "enabled" | "warning-accepted" | "disabled-warning-accepted" | "denied";
 type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
 const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude Code source";
+const ACCEPT_CLAUDE_WARNING = "Review the Anthropic terms to use this Claude login.";
 const PI_CLAUDE_LOGIN_EXPIRED = "Your Pi Claude login expired. Run `pi` in a terminal to sign in again.";
 const CLAUDE_CODE_SIGNED_OUT = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
 const CLAUDE_CODE_EXPIRED = "Your Claude Code login expired. Run `claude` in a terminal, then turn this source off and on again.";
@@ -139,10 +154,10 @@ function parseSource(source: ExternalSource, raw: string): Entry[] {
   return entries(data).flatMap(([provider, value]): Entry[] => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(provider)) return [];
     const cred = object(value);
-    if (source === "pi" && provider === "anthropic" && cred?.type === "oauth") {
+    if (provider === "anthropic" && cred?.type === "oauth") {
       return [oauthEntry("anthropic", cred.access, cred.expires)];
     }
-    if ((provider === "anthropic" && cred?.type === "oauth") || containsAnthropicOAuthToken(value)) {
+    if (containsAnthropicOAuthToken(value)) {
       return [{ provider, type: "oauth", supported: false, message: FILE_CLAUDE_LOGIN }];
     }
     if (!cred) return [];
@@ -150,6 +165,10 @@ function parseSource(source: ExternalSource, raw: string): Entry[] {
     if (cred.type === "oauth") return [source === "pi" ? oauthEntry(provider, cred.access, cred.expires, cred.accountId) : { provider, type: "oauth", supported: false }];
     return [];
   });
+}
+
+function isFileClaudeLogin(entry: Entry) {
+  return entry.provider === "anthropic" && entry.type === "oauth" && Boolean(entry.key);
 }
 
 export function isExternalSource(value: string): value is ExternalSource {
@@ -170,16 +189,18 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       const data = object(JSON.parse(await fs.readFile(file, "utf8")));
       return Object.fromEntries(EXTERNAL_SOURCES.flatMap((source) => {
         const state = data?.[source];
-        return state === "enabled" || state === "warning-accepted" || state === "denied" ? [[source, state]] : [];
+        return state === "enabled" || state === "warning-accepted" || state === "disabled-warning-accepted" || state === "denied" ? [[source, state]] : [];
       }));
     } catch {
       return {};
     }
   }
 
-  function update(source: ExternalSource, state?: ConsentState) {
+  function update(source: ExternalSource, change: (state?: ConsentState) => ConsentState | undefined | Promise<ConsentState | undefined>) {
     const write = pending.then(async () => {
       const data = await consent();
+      const state = await change(data[source]);
+      if (state === data[source]) return;
       if (state) data[source] = state;
       else delete data[source];
       await writeJsonAtomic(file, data);
@@ -188,28 +209,30 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     return write;
   }
 
+  async function readFileSource(source: Exclude<ExternalSource, "claude-code">) {
+    try { return parseSource(source, await fs.readFile(externalPath(source), "utf8")); }
+    catch { return []; }
+  }
+
   async function read(source: ExternalSource, enabled: Consent): Promise<Entry[]> {
     const state = enabled[source];
     if (state !== "enabled" && state !== "warning-accepted") return [];
-    if (source === "claude-code" && (state !== "warning-accepted" || keychainDenied)) return [];
+    if (source !== "claude-code") {
+      const entries = await readFileSource(source);
+      return state === "warning-accepted" ? entries : entries.map((entry) => isFileClaudeLogin(entry)
+        ? { ...entry, key: undefined, supported: false, message: ACCEPT_CLAUDE_WARNING } : entry);
+    }
+    if (state !== "warning-accepted" || keychainDenied) return [];
+    keychainRead ??= keychain.read().finally(() => { keychainRead = undefined; });
     let raw: string;
-    if (source === "claude-code") {
-      keychainRead ??= keychain.read().finally(() => { keychainRead = undefined; });
-      try {
-        raw = await keychainRead;
-      } catch {
-        if (!keychainDenied) {
-          keychainDenied = true;
-          await update(source, "denied").catch(() => undefined);
-        }
-        return [];
+    try {
+      raw = await keychainRead;
+    } catch {
+      if (!keychainDenied) {
+        keychainDenied = true;
+        await update(source, () => "denied").catch(() => undefined);
       }
-    } else {
-      try {
-        raw = await fs.readFile(externalPath(source), "utf8");
-      } catch {
-        return [];
-      }
+      return [];
     }
     try {
       return parseSource(source, raw);
@@ -241,26 +264,44 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
       };
     });
     const piClaudeMessage = source === "pi" ? rows.find((row) => row.message === PI_CLAUDE_LOGIN_EXPIRED)?.message : undefined;
+    const warningRequired = rows.some((row) => row.message === ACCEPT_CLAUDE_WARNING);
     const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : fileExpiryMessage ?? piClaudeMessage;
     return {
       source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
       ...(message ? { message } : {}),
+      ...(warningRequired ? { warningRequired: true } : {}),
+      path: source === "claude-code" ? "Keychain" : `~/${path.posix.dirname(sourcePaths[source])}`,
       providers: rows,
     };
   }
 
   return {
-    async status() {
+    async status({ includeVersion = false } = {}) {
       const enabled = await consent();
-      return Promise.all(EXTERNAL_SOURCES.map((source) => statusOf(source, enabled)));
+      return Promise.all(EXTERNAL_SOURCES.map(async (source) => {
+        const [status, version] = await Promise.all([statusOf(source, enabled), includeVersion ? versionOf(source) : undefined]);
+        return { ...status, ...(version && { version }) };
+      }));
     },
     async enable(source: ExternalSource, enabled: boolean, warningAccepted = false) {
       if (enabled && source === "claude-code" && !warningAccepted) return { warningRequired: true } as const;
       if (source === "claude-code") keychainDenied = false;
-      await update(source, enabled ? (source === "claude-code" ? "warning-accepted" : "enabled") : undefined);
+      let warningRequired = false;
+      await update(source, async (state) => {
+        const fileLogin = source === "pi" || source === "opencode";
+        const accepted = state === "warning-accepted" || state === "disabled-warning-accepted";
+        if (!enabled) return fileLogin && accepted ? "disabled-warning-accepted" : undefined;
+        if (source === "claude-code" || (fileLogin && (warningAccepted || accepted))) return "warning-accepted";
+        if (fileLogin && (await readFileSource(source)).some(isFileClaudeLogin)) {
+          warningRequired = true;
+          return state;
+        }
+        return "enabled";
+      });
+      if (warningRequired) return { warningRequired: true } as const;
       return enabled ? statusOf(source, await consent()) : { source, enabled: false };
     },
-    async resolve(provider: string, model: AnyModel | undefined, mode?: ExternalCredential["type"]): Promise<ExternalCredential | undefined> {
+    async resolve(provider: string, model: AnyModel | undefined, mode?: ExternalCredential["type"], onlySource?: ExternalSource): Promise<ExternalCredential | undefined> {
       const enabled = await consent();
       let diagnosis: string | undefined;
       const selected = await selectExternalCredential(provider, model, mode, async (source) => {
@@ -273,7 +314,7 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
           if (provider === "openai-codex" && row.key && !usable && trusted) diagnosis = CODEX_EXPIRED;
         }
         return { ...row, available: usable };
-      });
+      }, onlySource);
       if (selected?.row.key) return { type: selected.row.type, key: selected.row.key, source: selected.source };
       if (diagnosis) throw new Error(diagnosis);
       return undefined;

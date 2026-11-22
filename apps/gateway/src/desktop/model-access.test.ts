@@ -42,6 +42,27 @@ it("checks a new key alone before replacement", async () => {
   expect((await routes.request("/openai", { method: "DELETE" })).status).toBe(204);
 });
 
+it("reports known device paths and caches CLI versions when available", async () => {
+  const bin = path.join(root, "bin");
+  await fs.mkdir(bin);
+  vi.stubEnv("PATH", bin);
+  const pi = path.join(bin, "pi");
+  await fs.writeFile(pi, '#!/bin/sh\nprintf "1.6.0\\n"\n', { mode: 0o700 });
+  await fs.writeFile(path.join(bin, "codex"), "#!/bin/sh\ntrap '' TERM\n/bin/sleep 5\n", { mode: 0o700 });
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes } = createModelAccess(home);
+  const external = async () => (await (await routes.request("/")).json()).external;
+  expect(await external()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: "pi", version: "1.6.0", path: "~/.pi/agent" }),
+    expect.objectContaining({ source: "codex", path: "~/.codex" }),
+    expect.objectContaining({ source: "opencode", path: "~/.local/share/opencode" }),
+    expect.objectContaining({ source: "claude-code", path: "Keychain" }),
+  ]));
+  await fs.unlink(pi);
+  expect(await external()).toContainEqual(expect.objectContaining({ source: "pi", version: "1.6.0" }));
+  expect((await external()).find((row: { source: string }) => row.source === "codex")).not.toHaveProperty("version");
+}, 4_000);
+
 it.each(["anthropic", "openai"])("rejects Claude subscription tokens in the public %s API-key form", async (provider) => {
   const call = vi.fn(async () => new Response(null, { status: 401 }));
   vi.stubGlobal("fetch", call);

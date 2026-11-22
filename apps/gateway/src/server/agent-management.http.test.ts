@@ -16,8 +16,8 @@ vi.mock("../desktop/model-access.js", async (importOriginal) => {
       return {
         ...createModelAccess(home),
         listModels: async () => [
-          { ...model, name: "Example Model", ready: true },
-          { ...fallbackModel, name: "Backup Model", ready: true },
+          ...["owned", "environment"].map((source) => ({ ...model, source, name: "Example Model", ready: true })),
+          { ...fallbackModel, name: "Backup Model", source: "owned", ready: true },
         ],
         getAuth: async () => { throw new Error("provider unavailable"); },
       };
@@ -347,6 +347,28 @@ describe("agent management over HTTP", () => {
     expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ model, fallbackModel });
     expect((await patch({ model: fallbackModel, fallbackModel: null })).status).toBe(200);
     expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ model: fallbackModel, fallbackModel: null });
+  });
+
+  it("creates, updates and clears an agent model source through HTTP", async () => {
+    await putMode(superadmin, "admin");
+    const create = (source: string) => write("POST", "/api/agent-management/agents", superadmin, {
+      name: "Source Example", avatar: 2, model: { ...model, source }, requestId: "8d6acc10-4487-43ad-9d18-57686f4102a8",
+    });
+    expect((await create("pi")).status).toBe(400);
+    expect((await create("owned")).status).toBe(201);
+    const settings = "/api/agents/source-example/settings";
+    const readModel = async () => (await (await get(settings, superadmin)).json()).model;
+    const savedModel = async () => parse(await fs.readFile(path.join(home, "agents", "source-example", "agent.yaml"), "utf8")).model;
+    expect(await readModel()).toEqual({ ...model, source: "owned" });
+    expect(await savedModel()).toEqual({ ...model, source: "owned" });
+    const update = (choice: object) => write("PATCH", settings, superadmin, { model: choice });
+    expect((await update({ ...model, source: "pi" })).status).toBe(400);
+    expect((await update({ ...model, source: "environment" })).status).toBe(200);
+    expect(await readModel()).toEqual({ ...model, source: "environment" });
+    expect(await savedModel()).toEqual({ ...model, source: "environment" });
+    expect((await update(model)).status).toBe(200);
+    expect(await readModel()).toEqual(model);
+    expect(await savedModel()).toEqual(model);
   });
 
   // ALG-772 Testing Decisions, approved in Thinh's Groom GO, cover this HTTP seam.

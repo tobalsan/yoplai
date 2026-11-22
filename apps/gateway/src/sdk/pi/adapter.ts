@@ -469,6 +469,8 @@ export const piAdapter: SdkAdapter = {
       const authMode = params.model ? undefined : agent.auth?.mode;
       const { runtime: modelRuntime, requireModelAuth } = await createModelAuth({
         primaryProvider: effectiveModel.provider,
+        primarySource: params.model ? undefined : agent.model.source,
+        primaryModel: params.model ? undefined : agent.model.model,
         mode: authMode === "proxy" ? undefined : authMode,
       });
       const model = modelRuntime.getModel(

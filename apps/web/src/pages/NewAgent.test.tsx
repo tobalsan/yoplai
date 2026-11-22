@@ -9,11 +9,13 @@ let dispose: (() => void) | undefined;
 afterEach(() => {
   dispose?.();
   document.body.replaceChildren();
+  document.documentElement.removeAttribute("data-yoplai-desktop");
   vi.unstubAllGlobals();
 });
 
 it("protects the draft and creates with the selected gateway's model", async () => {
   history.replaceState(null, "", "/agents/new");
+  document.documentElement.setAttribute("data-yoplai-desktop", "");
   vi.stubGlobal("scrollTo", vi.fn());
   const writes: Array<{ path: string; body: unknown }> = [];
   let reply!: (response: Response) => void;
@@ -21,9 +23,10 @@ it("protects the draft and creates with the selected gateway's model", async () 
   vi.stubGlobal("fetch", async (path: string, options: RequestInit) => {
     if (path === "/api/relay/gateways") return Response.json({ gateways: [{ name: "east" }, { name: "west" }] });
     if (path.endsWith("/permissions")) return Response.json({ canCreate: !path.includes("/west/") });
+    if (path === "/api/model-access") return Response.json({ external: [], owned: [{ providerId: "openai", type: "api_key" }] });
     if (path.endsWith("/models")) {
       const linked = path.includes("/east/");
-      return Response.json({ models: [{ provider: linked ? "anthropic" : "openai", model: linked ? "reed" : "oak", name: linked ? "Reed" : "Oak", ready: true }] });
+      return Response.json({ models: [{ provider: linked ? "anthropic" : "openai", model: linked ? "reed" : "oak", name: linked ? "Reed" : "Oak", source: "owned", credentialType: "api_key", ready: true }] });
     }
     if (path.endsWith("/agents") && options.method === "POST") {
       writes.push({ path, body: JSON.parse(String(options.body)) });
@@ -52,19 +55,20 @@ it("protects the draft and creates with the selected gateway's model", async () 
   expect(queryByRole(document.body, "alertdialog")).toBeNull();
   expect(writes).toHaveLength(0);
 
-  const pickModel = async (provider: string) => {
+  const pickModel = async (provider: string, local: boolean) => {
     await waitFor(() => expect((byRole("button", /^Model:/) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(byRole("button", /^Model:/));
+    await waitFor(() => expect(Boolean(queryByRole(document.body, "button", { name: "Add model access" }))).toBe(local));
     const search = byRole("combobox", "Search models");
     fireEvent.input(search, { target: { value: provider } });
     fireEvent.keyDown(search, { key: "Enter" });
   };
-  await pickModel("openai");
+  await pickModel("openai", true);
   expect(create.disabled).toBe(false);
   expect(queryByRole(document.body, "radio", { name: "west" })).toBeNull();
   fireEvent.click(byRole("radio", "east"));
   await waitFor(() => expect(create.disabled).toBe(true));
-  await pickModel("anthropic");
+  await pickModel("anthropic", false);
   fireEvent.click(create);
   await waitFor(() => expect(writes).toHaveLength(1));
   fireEvent.keyDown(name, { key: "Escape" });
@@ -74,7 +78,7 @@ it("protects the draft and creates with the selected gateway's model", async () 
   reply(Response.json({ id: "garden-guide" }, { status: 201 }));
   await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy());
   expect(location.pathname).toBe("/chat/garden-guide%40east");
-  expect(writes).toEqual([{ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed" } }) }]);
+  expect(writes).toEqual([{ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed", source: "owned" } }) }]);
 });
 
 it("submits and retries with the same UUID on plain HTTP", async () => {
@@ -86,7 +90,7 @@ it("submits and retries with the same UUID on plain HTTP", async () => {
     if (path === "/api/relay/gateways") return Response.json({ gateways: [] });
     if (path === "/api/agent-management/permissions") return Response.json({ canCreate: true });
     if (path === "/api/agent-management/models") {
-      return Response.json({ models: [{ provider: "openai", model: "oak", name: "Oak", ready: true }] });
+      return Response.json({ models: [{ provider: "openai", model: "oak", name: "Oak", source: "owned", credentialType: "api_key", ready: true }] });
     }
     if (path === "/api/agent-management/agents" && options.method === "POST") {
       requestIds.push(JSON.parse(String(options.body)).requestId);

@@ -1,0 +1,113 @@
+.model-picker-panel {
+  flex-direction: row;
+  max-height: min(500px, var(--picker-space, 500px));
+  padding: 0;
+}
+.model-picker-rail {
+  display: flex;
+  flex: 0 0 58px;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-surface));
+  border-inline-end: 1px solid var(--border-default);
+}
+.model-picker-rail [role="tablist"] { width: 100%; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.model-picker-rail-group {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding-block: 3px;
+}
+.model-picker-rail-group + .model-picker-rail-group {
+  border-block-start: 1px solid var(--border-default);
+  margin-block-start: 4px;
+}
+.model-picker-rail-group > span { color: var(--text-secondary); font-size: 11px; }
+.model-picker-rail button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+.model-picker-rail button:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, var(--bg-surface));
+}
+.model-picker-rail button[aria-selected="true"] {
+  background: var(--text-primary);
+  color: var(--bg-surface);
+}
+.model-picker-add { flex: none; margin-block-start: 4px; }
+.model-picker-warning-dot {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+  width: 6px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+.model-source-icon { display: grid; flex: none; place-items: center; width: 24px; height: 24px; }
+.model-source-icon svg { width: 18px; height: 18px; }
+.model-picker-pane { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 6px; }
+.model-picker-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 10px;
+}
+.model-picker-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.model-picker-header small, .model-picker-name small { display: block; color: var(--text-secondary); font-size: 12px; }
+.model-picker-header button {
+  flex: none;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.model-picker-error { margin: 0 8px 8px; font-size: 12px; }
+.model-picker-pane .search-picker-search { border: 1px solid var(--border-default); border-radius: 8px; padding-block: 0; }
+.model-picker-pane .search-picker-search input { width: 100%; min-width: 0; }
+.model-picker-pane .search-picker-list { max-height: 310px; }
+.model-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-name strong, .model-picker-name small { display: block; overflow: hidden; text-overflow: ellipsis; }
+.model-picker-name strong { font-size: 14px; font-weight: 600; }
+.model-picker-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.model-picker-ready { width: 7px; aspect-ratio: 1; border-radius: 50%; background: currentColor; flex: none; }
+
+.setup-wizard.model-access-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(680px, calc(100% - 24px));
+  height: fit-content;
+  max-height: calc(100% - 24px);
+  margin: auto;
+  padding: 20px;
+  overflow-y: auto;
+  border: 1px solid var(--setup-line);
+  border-radius: 14px;
+}
+.model-access-dialog::backdrop { background: rgb(0 0 0 / 48%); }
+.model-access-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.model-access-dialog h2 { margin: 0; font-size: 20px; }
+.model-access-dialog header button { width: 32px; height: 32px; border-radius: 6px; }
+.model-access-dialog .setup-model-rows, .model-access-dialog .setup-interaction { width: 100%; margin-block-start: 12px; }
+.model-access-dialog .setup-primary { margin-block-start: 16px; }

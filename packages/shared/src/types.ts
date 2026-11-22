@@ -26,9 +26,13 @@ export type Suggestion = z.infer<typeof SuggestionSchema>;
 export const SuggestionsDocumentSchema = z.array(SuggestionSchema);
 
 // Agent model config
+export const ModelSourceSchema = z.enum(["owned", "pi", "codex", "claude-code", "opencode", "environment"]);
+export type ModelSource = z.infer<typeof ModelSourceSchema>;
+
 export const AgentModelConfigSchema = z.object({
   provider: z.string().optional(), // For display; inferred from sdk if omitted
   model: z.string(),
+  source: ModelSourceSchema.optional(),
   base_url: z.string().optional(), // API proxy URL (e.g. for Claude SDK)
   auth_token: z.string().optional(), // API auth token (overrides env)
 });

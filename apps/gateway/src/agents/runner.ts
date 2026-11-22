@@ -1,4 +1,5 @@
 import { findChatCommand } from "./chat-command.js";
+import { isUnavailableModelSourceMessage } from "../desktop/model-auth.js";
 import * as viewContext from "../mcp-apps/view-context.js";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -658,7 +659,7 @@ export async function runAgent(
     heldReply?.release().forEach((event) => lifecycle.acceptHistoryEvent(event));
     if (!aborted && !abortController.signal.aborted && !(err instanceof Error && err.name === "AbortError")) {
       const kind = classifyRunFailure(err, errMessage);
-      const text = runFailureMessage(kind, agent.language ?? "en");
+      const text = isUnavailableModelSourceMessage(errMessage) ? errMessage : runFailureMessage(kind, agent.language ?? "en");
       await lifecycle.writeFailureNotice({ kind, text });
       answerPersisted = true;
       emit({ type: "error", message: params.turnId ? text : errMessage, kind, userMessage: text });

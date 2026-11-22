@@ -1,12 +1,13 @@
 import { completeModelOnce, type createModelAuth } from "./model-auth.js";
+import type { ModelSource } from "@yoplai/shared";
 
-type AgentDraft = { name: string; purpose?: string; model: { provider: string; model: string } };
+type AgentDraft = { name: string; purpose?: string; model: { provider: string; model: string; source?: ModelSource } };
 type Instructions = { text: string; source: "model" | "template" };
 
-export function createInstructionWriter(getAuth: () => ReturnType<typeof createModelAuth>) {
+export function createInstructionWriter(getAuth: (model: AgentDraft["model"]) => ReturnType<typeof createModelAuth>) {
   return async ({ name, purpose, model }: AgentDraft): Promise<Instructions> => {
     try {
-      const { runtime } = await getAuth();
+      const { runtime } = await getAuth(model);
       const selected = runtime.getModel(model.provider, model.model);
       if (selected) {
         const prompt = [

@@ -8,6 +8,7 @@ import type {
   FullHistoryMessage,
   ImageAttachment,
   ModelMeta,
+  ModelSource,
   ModelUsage,
   ProjectItem,
   SdkId,
@@ -69,6 +70,7 @@ export type Agent = {
   model?: {
     provider: string;
     model: string;
+    source?: ModelSource;
   };
   workspace?: string;
   authMode?: "oauth" | "api_key" | "proxy";

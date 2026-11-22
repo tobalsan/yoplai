@@ -18,7 +18,7 @@ import { writeFileAtomic } from "../util/atomic-write.js";
 import { serializeByKey } from "../util/serialize.js";
 import { readManagementBody } from "./body.js";
 import {
-  AgentManagementError, defaultFaceSchema, isReservedText, modelChoiceSchema, readAgentOwner, readAvatarState,
+  AgentManagementError, defaultFaceSchema, isReservedText, matchesModelChoice, modelChoiceSchema, readAgentOwner, readAvatarState,
   stageAvatar, writeAvatarState, type UploadedAvatar,
 } from "./files.js";
 import type { agentManagementRequest } from "./request.js";
@@ -27,7 +27,7 @@ const settingsPatch = z.object({
   name: z.string().trim().min(1).max(60),
   description: z.string().trim(),
   model: modelChoiceSchema,
-  fallbackModel: modelChoiceSchema.nullable(),
+  fallbackModel: modelChoiceSchema.omit({ source: true }).nullable(),
   reasoning: ThinkLevelSchema.nullable(),
   instructions: z.string(),
   avatar: defaultFaceSchema,
@@ -106,6 +106,8 @@ async function writeSettings(agentId: string, directory: string, patch: Settings
         if (patch.model) {
           doc.setIn(["model", "provider"], patch.model.provider);
           doc.setIn(["model", "model"], patch.model.model);
+          if (patch.model.source) doc.setIn(["model", "source"], patch.model.source);
+          else doc.deleteIn(["model", "source"]);
         }
         if (patch.fallbackModel === null) {
           doc.delete("fallback_model");
@@ -181,7 +183,7 @@ export function createAgentSettingsRoutes(deps: Deps) {
       hasCustomAvatar: avatar.custom, defaultFace: avatar.face,
       ...(multiUser ? { public: runtime?.forks.getForkByAgentId(agent.id)?.public ?? true, canSetPublic } : {}),
       ...(canEditAgent ? {
-        model: { provider: agent.model.provider, model: agent.model.model },
+        model: { provider: agent.model.provider, model: agent.model.model, source: agent.model.source },
         fallbackModel: agent.fallback_model
           ? { provider: agent.fallback_model.provider, model: agent.fallback_model.model }
           : null,
@@ -208,7 +210,7 @@ export function createAgentSettingsRoutes(deps: Deps) {
       if (patch.model || patch.fallbackModel) {
         const choices = await deps.listModels();
         const available = (model: z.infer<typeof modelChoiceSchema> | null | undefined) =>
-          !model || choices.some((choice) => choice.provider === model.provider && choice.model === model.model);
+          !model || choices.some((choice) => matchesModelChoice(choice, model));
         if (!available(patch.model) || !available(patch.fallbackModel)) {
           throw new AgentManagementError("unavailable_model", 400, "Select a model from the list.");
         }
