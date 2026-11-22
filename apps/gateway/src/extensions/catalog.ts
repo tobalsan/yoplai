@@ -321,7 +321,7 @@ export async function buildExtensionCatalog(
   const configurable = options.configurable ?? true;
   const { rawConfig, requesterUserId } = options;
   const displayConfig = rawConfig === undefined ? config : rawConfig;
-  // Catalogs for pool-only agents omit template extension settings.
+  // Read raw agent settings for configurable catalog entries.
   const displayAgent = rawConfig === undefined ? agent
     : configurable ? rawConfig?.agents.find((candidate) => candidate.id === agent.id) : undefined;
   const entryOptions = { configurable, requesterUserId, displayAgent, displayConfig };
