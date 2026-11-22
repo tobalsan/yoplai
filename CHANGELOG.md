@@ -78,7 +78,8 @@ Breaking changes are marked **⚠ BREAKING**.
 - Desktop chat accepts an enabled Codex CLI login without an owned credential.
 - Desktop agent creation avoids names that differ only in letter case and works with linked agent folders.
 - Desktop setup keeps config links during migration. Restart works after you correct a config error.
-- Desktop setup skips Claude subscriptions in Pi and OpenCode files. Use Sign in with Claude or the Claude Code source.
+- Desktop setup can use the Claude login from Pi. It still skips Claude logins in OpenCode files.
+- Provider rows stay in the same order when you enable a source or sign in.
 - Desktop setup lists only providers that need no input other than the API key.
 - A desktop key check uses the same model endpoint as chat. It stops if the model config has an error or adds custom headers.
 - The desktop guard rejects IPv4 forwarding addresses in brackets.

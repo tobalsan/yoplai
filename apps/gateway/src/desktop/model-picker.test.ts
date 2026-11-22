@@ -92,6 +92,17 @@ function providerStream(events: Array<{ type?: string; [key: string]: unknown }>
   return new Response(events.map((event) => `${event.type ? `event: ${event.type}\n` : ""}data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
 
+function successfulAnthropicCall() {
+  return providerStream([
+    { type: "message_start", message: { id: "fake", type: "message", role: "assistant", content: [], stop_reason: null, model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 0 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+    { type: "message_stop" },
+  ]);
+}
+
 it("checks the default for each external source with a fake provider", async () => {
   const { createExternalSources } = await import("./external-sources.js");
   const { createModelAccess } = await import("./model-access.js");
@@ -112,14 +123,7 @@ it("checks the default for each external source with a fake provider", async () 
   for (const source of ["codex", "claude-code", "opencode", "pi"] as const) await external.enable(source, true, source === "claude-code");
   const call = vi.fn(async (input: string | Request | URL) => {
     const url = new URL(input instanceof Request ? input.url : input);
-    if (url.hostname === "api.anthropic.com") return providerStream([
-      { type: "message_start", message: { id: "fake", type: "message", role: "assistant", content: [], stop_reason: null, model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 0 } } },
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } },
-      { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
-      { type: "message_stop" },
-    ]);
+    if (url.hostname === "api.anthropic.com") return successfulAnthropicCall();
     if (url.hostname === "opencode.ai") return providerStream([
       { id: "fake", choices: [{ index: 0, delta: { role: "assistant", content: "OK" }, finish_reason: null }] },
       { id: "fake", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
@@ -185,6 +189,40 @@ it("uses the valid Pi login in chat when the enabled Codex CLI login has expired
   const result = await runtime.streamSimple(model, { messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] }).result();
   expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "OK" }));
   expect(call).toHaveBeenCalledTimes(1);
+});
+
+it("uses the current Pi Claude bearer token for each request", async () => {
+  const file = path.join(root, ".pi/agent/auth.json");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const save = (access: string) => fs.writeFile(file, JSON.stringify({
+    anthropic: { type: "oauth", access, refresh: "fake-refresh", expires: Date.now() + 60_000 },
+  }));
+  const first = "sk-ant-oat-fake-first";
+  const second = "sk-ant-oat-fake-second";
+  await save(first);
+  const { createModelAccess } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const { routes } = createModelAccess(home);
+  const enabled = await routes.request("/external/pi", { method: "POST", body: '{"enabled":true}' });
+  expect(await enabled.json()).toMatchObject({ enabled: true });
+  const { models } = await (await routes.request("/models")).json();
+  expect(models).toContainEqual(expect.objectContaining({ provider: "anthropic", model: "claude-haiku-5-5", source: "pi", default: true }));
+
+  const calls: Array<{ host: string; bearer: string | null; apiKey: string | null }> = [];
+  vi.stubGlobal("fetch", async (input: string | Request | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : input);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    calls.push({ host: url.hostname, bearer: headers.get("authorization"), apiKey: headers.get("x-api-key") });
+    return successfulAnthropicCall();
+  });
+  const { runtime, requireModelAuth } = await createModelAuth({ home });
+  const model = runtime.getModel("anthropic", "claude-haiku-5-5")!;
+  await requireModelAuth(model);
+  const prompt = () => runtime.streamSimple(model, { messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] }).result();
+  expect((await prompt()).content).toContainEqual(expect.objectContaining({ type: "text", text: "OK" }));
+  await save(second);
+  expect((await prompt()).content).toContainEqual(expect.objectContaining({ type: "text", text: "OK" }));
+  expect(calls).toEqual([first, second].map((access) => ({ host: "api.anthropic.com", bearer: `Bearer ${access}`, apiKey: null })));
 });
 
 it("probes and generates instructions at the current endpoint after opening setup", async () => {

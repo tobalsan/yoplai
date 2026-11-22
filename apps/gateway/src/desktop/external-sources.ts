@@ -80,6 +80,7 @@ type ConsentState = "enabled" | "warning-accepted" | "denied";
 type Consent = Partial<Record<ExternalSource, ConsentState>>;
 
 const FILE_CLAUDE_LOGIN = "Claude login: use Sign in with Claude or the Claude Code source";
+const PI_CLAUDE_LOGIN_EXPIRED = "Your Pi Claude login expired. Run `pi` in a terminal to sign in again.";
 const CLAUDE_CODE_SIGNED_OUT = "Claude Code is signed out. Sign in to Claude Code, or sign in with Claude here.";
 const CLAUDE_CODE_EXPIRED = "Your Claude Code login expired. Run `claude` in a terminal, then turn this source off and on again.";
 const PI_EXPIRED = "Your Pi login expired. Run `pi` in a terminal to sign in again.";
@@ -138,6 +139,9 @@ function parseSource(source: ExternalSource, raw: string): Entry[] {
   return entries(data).flatMap(([provider, value]): Entry[] => {
     if (!/^[a-z][a-z0-9-]{0,79}$/.test(provider)) return [];
     const cred = object(value);
+    if (source === "pi" && provider === "anthropic" && cred?.type === "oauth") {
+      return [oauthEntry("anthropic", cred.access, cred.expires)];
+    }
     if ((provider === "anthropic" && cred?.type === "oauth") || containsAnthropicOAuthToken(value)) {
       return [{ provider, type: "oauth", supported: false, message: FILE_CLAUDE_LOGIN }];
     }
@@ -232,10 +236,12 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
         provider, type, available: usable,
         ...(source === "claude-code" && !usable ? { message: expired ? CLAUDE_CODE_EXPIRED : CLAUDE_CODE_SIGNED_OUT }
           : expired && fileExpiryMessage ? { message: fileExpiryMessage }
+          : expired && source === "pi" && provider === "anthropic" ? { message: PI_CLAUDE_LOGIN_EXPIRED }
           : !supported ? { message: message ?? "Not supported yet" } : {}),
       };
     });
-    const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : fileExpiryMessage;
+    const piClaudeMessage = source === "pi" ? rows.find((row) => row.message === PI_CLAUDE_LOGIN_EXPIRED)?.message : undefined;
+    const message = denied ? "Access denied" : source === "claude-code" ? rows[0]?.message : fileExpiryMessage ?? piClaudeMessage;
     return {
       source, detected, enabled: !denied && (enabled[source] === "warning-accepted" || (source !== "claude-code" && enabled[source] === "enabled")), denied,
       ...(message ? { message } : {}),
