@@ -28,10 +28,10 @@ describe("Pi managed skills loading", () => {
     const skills = await loadedSkills([getBuiltInSkillsDir()]);
     expect(skills.map((skill) => skill.name)).toEqual(expect.arrayContaining(["dashboard", "skill-creator"]));
   });
-  it("loads the requester’s enabled skills on the next run and excludes them for another requester", async () => {
+  it("loads the requester’s skills turned on for the agent on the next run and excludes them for another requester", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: personal-writing\ndescription: Personal writing guidance\n---\nUse short sentences." }] });
-    await store.setEnabled("alice", skill.id, true);
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
     async function loadFor(userId: string) {
       const selected = await resolveRunSkills(store, { agentId: "assistant", userId, multiUser: true, policy });
@@ -41,13 +41,22 @@ describe("Pi managed skills loading", () => {
     }
     expect((await loadFor("alice")).map((item) => item.name)).toContain("personal-writing");
     expect((await loadFor("bob")).map((item) => item.name)).not.toContain("personal-writing");
-    await store.setEnabled("alice", skill.id, false);
+    await store.setAgentSkills("alice", "assistant", []);
     expect((await loadFor("alice")).map((item) => item.name)).not.toContain("personal-writing");
+  });
+  it("loads a user skill only for the agent where the user turned it on", async () => {
+    const store = new SkillStore(home);
+    const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: agent-scoped\ndescription: Scoped guidance\n---\nBody." }] });
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
+    const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
+    const namesFor = async (agentId: string) => (await resolveRunSkills(store, { agentId, userId: "alice", multiUser: true, policy })).skills.map((item) => item.name);
+    expect(await namesFor("assistant")).toContain("agent-scoped");
+    expect(await namesFor("other")).not.toContain("agent-scoped");
   });
   it("keeps a superadmin’s private-skill inspection access out of runtime selection", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: private-alice\ndescription: Alice only\n---\nPrivate guidance." }] });
-    await store.setEnabled("root", skill.id, true);
+    await store.setAgentSkills("root", "assistant", [skill.id]);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: id === "root" ? "superadmin" : "user" }) });
     const selected = await resolveRunSkills(store, { agentId: "assistant", userId: "root", multiUser: true, policy });
     const staging = await createManagedSkillsStaging(selected.skills);
@@ -57,7 +66,7 @@ describe("Pi managed skills loading", () => {
   it("uses the local owner for userless single-user jobs and defaults only for multi-user Team runs", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("local", { files: [{ path: "SKILL.md", content: "---\nname: local-writing\ndescription: Local guidance\n---\nLocal only." }] });
-    await store.setEnabled("local", skill.id, true);
+    await store.setAgentSkills("local", "assistant", [skill.id]);
     const defaultDir = path.join(home, "skill-library/default/standard-writing");
     await fs.mkdir(defaultDir, { recursive: true });
     await fs.writeFile(path.join(defaultDir, "SKILL.md"), "---\nname: standard-writing\ndescription: Standard guidance\n---\nStandard.");
@@ -100,7 +109,7 @@ describe("Pi managed skills loading", () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: shared-writing\ndescription: Shared guidance\n---\nShared." }] });
     await store.shares(skill.id, [{ kind: "user", id: "bob", mode: "read" }]);
-    await store.setEnabled("bob", skill.id, true);
+    await store.setAgentSkills("bob", "assistant", [skill.id]);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
     async function names() {
       const selected = await resolveRunSkills(store, { agentId: "assistant", userId: "bob", multiUser: true, policy });
@@ -116,7 +125,7 @@ describe("Pi managed skills loading", () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: moderated-writing\ndescription: Moderated guidance\n---\nModerated." }] });
     await store.shares(skill.id, [{ kind: "all", mode: "read" }]);
-    await store.setEnabled("alice", skill.id, true);
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     await store.setAdminDisabled(skill.id, true);
     await store.shares(skill.id, []);
     const policy = new SkillAccessPolicy({ multiUser: true, getEligibleAccount: (id) => ({ id, role: "user" }) });
@@ -128,7 +137,7 @@ describe("Pi managed skills loading", () => {
   it("reports managed name collisions and lets an existing workspace skill shadow the winner", async () => {
     const store = new SkillStore(home);
     const { skill } = await store.create("alice", { files: [{ path: "SKILL.md", content: "---\nname: collision-writing\ndescription: Alice guidance\n---\nAlice." }] });
-    await store.setEnabled("alice", skill.id, true);
+    await store.setAgentSkills("alice", "assistant", [skill.id]);
     const directory = path.join(home, "skill-library/default/collision-writing");
     await fs.mkdir(directory, { recursive: true });
     await fs.writeFile(path.join(directory, "SKILL.md"), "---\nname: collision-writing\ndescription: Default guidance\n---\nDefault.");

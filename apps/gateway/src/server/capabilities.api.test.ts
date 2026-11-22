@@ -57,6 +57,8 @@ describe("/capabilities API", () => {
       agents: ["main"],
       multiUser: false,
       desktopSetup: false,
+      // a local single-user gateway enables agent management by default
+      agentManagement: { create: true, edit: true },
       forkedAgents: false,
       enableCronMonitoring: false,
       dashboardEmbed: { version: 1, assetVersion: "v3", policyVersion: 1, enabled: true },

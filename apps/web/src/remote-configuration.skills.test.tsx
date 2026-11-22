@@ -36,7 +36,6 @@ const labelled = (label: string) => container.querySelector<HTMLElement>(`[aria-
 const link = (name: string) => Array.from(container.querySelectorAll<HTMLAnchorElement>("a")).find((item) => item.textContent?.includes(name));
 const select = () => container.querySelector<HTMLSelectElement>('select[aria-label="Gateway"]')!;
 const choose = (name: string) => { select().value = name; select().dispatchEvent(new Event("change", { bubbles: true })); };
-const toggle = (name: string) => container.querySelector<HTMLInputElement>(`input[aria-label="Enable ${name}"]`);
 const log = () => gateways.log();
 const writes = () => gateways.requests.filter((request) => request.method !== "GET");
 
@@ -133,80 +132,6 @@ describe("skills of a chosen gateway", () => {
     mount("/skills?gateway=east");
     await vi.waitFor(() => expect(text()).toContain("Unable to load skills."));
     expect(text()).not.toContain("No skills yet");
-  });
-
-  it("changes the enabled state through the gateway, and reads the same list again after a failed answer before another write", async () => {
-    const remote = skill("e-1", "Notes");
-    let committed = false;
-    gateways.on("GET", `${east}/api/skills`, () => ({ json: groups({ ...remote, enabled: committed }) }));
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("e-1")}/enabled`, () => { committed = true; return { status: 502, json: { error: "gateway_offline" } }; });
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("Notes")?.disabled).toBe(false));
-    const reads = () => log().filter((line) => line === `GET ${east}/api/skills`).length;
-    const before = reads();
-    let release: (() => void) | undefined;
-    gateways.on("GET", `${east}/api/skills`, () => new Promise<FakeAnswer>((resolve) => { release = () => resolve({ json: groups({ ...remote, enabled: committed }) }); }));
-    toggle("Notes")!.click();
-    await vi.waitFor(() => expect(reads()).toBeGreaterThan(before));
-    // The change is committed, but its answer failed. The controls stay off while the read is pending.
-    expect(toggle("Notes")?.disabled).toBe(true);
-    release!();
-    await vi.waitFor(() => expect(toggle("Notes")?.disabled).toBe(false));
-    expect(toggle("Notes")?.checked).toBe(true);
-    expect(writes().map((request) => `${request.method} ${request.url}`)).toEqual([`PUT ${east}/api/skill-ids/${wire("e-1")}/enabled`]);
-    expect(writes()[0].body).toEqual({ enabled: true });
-  });
-
-  it("keeps controls off with Retry when the read after a failed write fails, and recovers on a working read", async () => {
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("same-id")}/enabled`, { status: 502, json: { error: "gateway_offline" } });
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("East Skill")?.disabled).toBe(false));
-    gateways.on("GET", `${east}/api/skills`, { status: 502, json: { error: "gateway_offline" } });
-    toggle("East Skill")!.click();
-    await vi.waitFor(() => expect(text()).toContain("The remote gateway is offline."));
-    await vi.waitFor(() => expect(button("Retry")).toBeDefined());
-    expect(toggle("East Skill")).toBeNull();
-    expect(writes()).toHaveLength(1);
-    gateways.on("GET", `${east}/api/skills`, { json: groups(skill("same-id", "East Skill", { enabled: true })) });
-    button("Retry")!.click();
-    await vi.waitFor(() => expect(toggle("East Skill")?.disabled).toBe(false));
-  });
-
-  it("ignores a late answer after the page moved to Local and back to the same gateway", async () => {
-    let fail: (() => void) | undefined;
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("same-id")}/enabled`, () => new Promise<FakeAnswer>((resolve) => { fail = () => resolve({ status: 403, json: { error: "forbidden" } }); }));
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("East Skill")?.disabled).toBe(false));
-    toggle("East Skill")!.click();
-    await vi.waitFor(() => expect(fail).toBeDefined());
-    history.set({ value: "/skills" });
-    await vi.waitFor(() => expect(text()).toContain("Local Skill"));
-    history.set({ value: "/skills?gateway=east" });
-    await vi.waitFor(() => expect(toggle("East Skill")?.disabled).toBe(false));
-    const reads = () => log().filter((line) => line === `GET ${east}/api/skills`).length;
-    const before = reads();
-    fail!();
-    await tick();
-    await tick();
-    expect(text()).not.toContain("forbidden");
-    expect(toggle("East Skill")?.disabled).toBe(false);
-    expect(reads()).toBe(before);
-  });
-
-  it("starts nothing after the page closes during a write", async () => {
-    let finish: (() => void) | undefined;
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("same-id")}/enabled`, () => new Promise<FakeAnswer>((resolve) => { finish = () => resolve({ json: { ok: true } }); }));
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("East Skill")?.disabled).toBe(false));
-    toggle("East Skill")!.click();
-    await vi.waitFor(() => expect(finish).toBeDefined());
-    history.set({ value: "/review-away" });
-    await vi.waitFor(() => expect(text()).toContain("Other page"));
-    const before = gateways.requests.length;
-    finish!();
-    await tick();
-    await tick();
-    expect(gateways.requests.length).toBe(before);
   });
 
   describe("upload", () => {
@@ -880,25 +805,6 @@ describe("a remote peer without the alias", () => {
     expect(log().filter((line) => line.includes("/skill-ids/"))).toHaveLength(1);
     expect(gateways.localConfigurationRequests()).toEqual([]);
     expect(log().some((line) => line.includes("/api/skills/agent"))).toBe(false);
-  });
-
-  it("shows the upgrade error for a refused alias route of the local relay", async () => {
-    gateways.on("GET", `${east}/api/skills`, { json: groups(skill("same-id", "East Skill")) });
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("same-id")}/enabled`, { status: 405, json: { error: "relay_route_not_allowed" } });
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("East Skill")).not.toBeNull());
-    toggle("East Skill")!.click();
-    await vi.waitFor(() => expect(text()).toContain("too old for this skill action"));
-  });
-
-  it("never repeats an uncertain write on a legacy route, and reads the same gateway before another write", async () => {
-    gateways.on("PUT", `${east}/api/skill-ids/${wire("same-id")}/enabled`, new Response("404 Not Found", { status: 404, headers: { "content-type": "text/plain" } }));
-    mount("/skills?gateway=east");
-    await vi.waitFor(() => expect(toggle("East Skill")).not.toBeNull());
-    toggle("East Skill")!.click();
-    await vi.waitFor(() => expect(text()).toContain("too old for this skill action"));
-    await vi.waitFor(() => expect(log().filter((line) => line === `GET ${east}/api/skills`).length).toBeGreaterThan(1));
-    expect(writes().map((request) => request.url)).toEqual([`${east}/api/skill-ids/${wire("same-id")}/enabled`]);
   });
 
   it("keeps a real missing skill (JSON 404) apart from a missing route", async () => {

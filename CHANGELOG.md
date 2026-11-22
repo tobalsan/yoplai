@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agents can be created and edited from the web UI. **New agent** on the Agents page creates an agent with a default model and opens its chat with an **Edit agent** side panel for name, role, description, face, model, reasoning, instructions, and skills. Local gateways have it on by default. Set root `agentManagement` in `yoplai.json` (`true`, `false`, `"superadmin"`, `"admin"`, `"anyone"`) for remote and multi-user gateways. `skills.disabled` in `agent.yaml` turns workspace skills off for one agent.
+- Each user turns their own skills on for an agent in the settings panel of its chat. The panel is open to every user who can chat with the agent.
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.
 - External extension discovery ignores work folders and uses versioned imports.
 - The macOS release has a Developer ID signature and an Apple notarization ticket.
@@ -85,6 +87,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- **⚠ BREAKING** User skills are off for every agent until the user turns them on in the agent settings panel. The on/off switch on the Skills page is gone, and the old per-user enabled list no longer applies at run time.
 - Reduce the macOS app and disk image sizes.
 - The desktop splash and setup use the macOS appearance by default. If you select Light or Dark, they use that choice on the next start. The desktop keeps the purpose chips scrollable without a scroll bar.
 - `pnpm desktop` keeps state in `YOPLAI_HOME` or `~/.yoplai` and can find existing Codex CLI and Claude Code logins. Use `pnpm desktop --fresh` for a temporary home; set `YOPLAI_DESKTOP_DEV_PARENT` to choose its parent folder.

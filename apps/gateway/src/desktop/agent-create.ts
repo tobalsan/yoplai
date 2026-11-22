@@ -43,7 +43,7 @@ async function findRequest(parent: string, requestId: string): Promise<FoundAgen
   }
 }
 
-async function pickSlug(parent: string, name: string): Promise<string> {
+export async function pickSlug(parent: string, name: string): Promise<string> {
   const base = name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase().replace(/^-|-$/g, "") || "agent";
   const config = loadConfig(getConfigPath());
   const taken = new Set([
@@ -58,7 +58,7 @@ async function pickSlug(parent: string, name: string): Promise<string> {
   }
 }
 
-function avatarPath(avatar: string): string {
+export function avatarPath(avatar: string): string {
   const web = process.env.YOPLAI_WEB_DIST;
   return web ? path.join(web, "avatars", avatar) : fileURLToPath(new URL(`../../../web/public/avatars/${avatar}`, import.meta.url));
 }
@@ -81,7 +81,7 @@ async function stageAgent(finalDir: string, stagingDir: string, id: string, body
   }
 }
 
-async function withAgentsLock<T>(parent: string, task: () => Promise<T>): Promise<T> {
+export async function withAgentsLock<T>(parent: string, task: () => Promise<T>): Promise<T> {
   await fs.mkdir(parent, { recursive: true });
   // Load the lock after the gateway installs its shutdown handler.
   const { default: lockfile } = await import("proper-lockfile");

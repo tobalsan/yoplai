@@ -83,6 +83,31 @@ Mattermost, Slack and Telegram settings may also live under `extensions.mattermo
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
+### Agent management from the web UI
+
+The Agents page has **New agent**, and the chat page has an **Edit agent** side panel. The panel edits name, role, description, face, model, reasoning, instructions, and skills. The root `agentManagement` key in `yoplai.json` controls access:
+
+| Value | Meaning |
+| --- | --- |
+| unset | On for a local single-user gateway (`gateway` binds to loopback). Off for a remote, headless, or multi-user gateway. |
+| `false` | Off. |
+| `true` | On. Single-user: everyone. Multi-user: same as `"admin"`. |
+| `"superadmin"` | Multi-user: only superadmins create and edit agents. |
+| `"admin"` | Multi-user: admins and superadmins create and edit agents. |
+| `"anyone"` | Multi-user: every approved user creates agents and edits their own. Staff edit all agents. |
+
+Creating an agent also lets the user edit it. Agents that the operator made by hand have no owner, so only staff edit them in `"anyone"` mode. New agents are written to `$YOPLAI_HOME/agents/<id>/`, so `agents` must include a glob that matches that folder (for example `"agents": ["agents/*"]`). The model list shows only models with credentials (`auth.json` or a provider environment key). Pool and fork setups (`forkedAgents`) keep agent management off.
+
+The side panel is open to every user who can chat with the agent. A user without edit rights sees only the **Skills** section. Skills have three levels:
+
+| Level | Source | Default | Who changes it |
+| --- | --- | --- | --- |
+| Gateway | built-in and `skill-library/default` | Always on | Nobody (read-only) |
+| Agent workspace | `<workspace>/skills` | On | Admins and superadmins on a multi-user gateway. Anyone on a single-user gateway. The list is `skills.disabled` (skill names) in `agent.yaml`. |
+| User | the user's own and shared skills | Off | The user, for their own use of that agent. The panel saves it in the user's `skill-library/users/<id>/state.json` under `agents.<agentId>`. |
+
+The **Skills** page no longer has an on/off switch. The old per-user `enabled` list is ignored at run time.
+
 ### Updating instructions from chat
 
 Ask a Pi agent explicitly to change its instructions, for example, "From now on, always answer in French." The agent uses gateway tools to write on the host; sandbox mounts of `AGENTS.md` and `agent.yaml` remain read-only.
@@ -134,6 +159,7 @@ Core `yoplai.json` fields:
 | `apps`                               | Isolated MCP Apps origin and listener port                         |
 | `sessions.idleMinutes`               | Logical-session idle rotation; default 360                          |
 | `agentLoop`                          | Agent-to-agent loop limits (`maxAgentTurns`, `maxHops`)             |
+| `agentManagement`                    | Who can create agents and edit their config in the web UI; see [Agent management](#agent-management-from-the-web-ui) |
 | `extensions`                         | Built-in/external extension configuration                           |
 | `extensionEnvAllowlist`              | Optional array of shared env names allowed in agent extension blocks |
 | `extensionsPath`                     | External extension directory; defaults to `$YOPLAI_HOME/extensions` |

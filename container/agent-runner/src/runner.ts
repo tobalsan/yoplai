@@ -577,6 +577,13 @@ export async function runAgent(
         path.join(input.workspaceDir, "skills"),
         ...(input.managedSkillsDir ? [input.managedSkillsDir] : []),
       ],
+      ...(input.disabledSkills?.length && {
+        // Only workspace skills can be turned off per agent. Managed skills keep their own rules.
+        skillsOverride: (result) => ({
+          skills: result.skills.filter((skill) => !(skill.filePath.startsWith(path.join(input.workspaceDir, "skills") + path.sep) && input.disabledSkills!.includes(skill.name))),
+          diagnostics: result.diagnostics,
+        }),
+      }),
       systemPromptOverride: () => PI_SYSTEM_PROMPT,
       appendSystemPrompt: [
         CONTAINER_SYSTEM_PROMPT,

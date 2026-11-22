@@ -17,6 +17,7 @@ import { showToast } from "../lib/toast";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { ScheduleAlertDot } from "../components/ScheduleAlertDot";
 import { defaultAvatarUrl } from "../lib/default-avatar";
+import { createManagedAgent } from "../api/agent-management";
 
 function isEmoji(str: string): boolean {
   return /^\p{Emoji}/u.test(str) && str.length <= 4;
@@ -92,6 +93,21 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
     const entry = actionByPool().get(agentId);
     return entry?.action === "chat" ? entry.chatAgentId : null;
   };
+  const [creating, setCreating] = createSignal(false);
+  // Quick create: the gateway names the agent, picks a model and a face. The chat opens with the settings panel.
+  const quickCreate = async () => {
+    if (creating()) return;
+    setCreating(true);
+    try {
+      const { id } = await createManagedAgent({ name: "New agent" });
+      startNewChat(id);
+      navigate(`/chat/${encodeURIComponent(id)}?config=1`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not create the agent. Try again.", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
   const makeMainAgent = async (agentId: string, name: string) => {
     if (savingMain()) return;
     setSavingMain(agentId);
@@ -110,6 +126,9 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
   return (
     <div class="agent-catalog">
       <Show when={!props.hideHeading}><h1 class="catalog-heading">Agents</h1></Show>
+      <Show when={capabilities.agentManagement?.create && !capabilities.forkedAgents}>
+        <button type="button" class="catalog-new-agent" disabled={creating()} onClick={() => void quickCreate()}><i class="fa-solid fa-plus" aria-hidden="true" /> {creating() ? "Creating…" : "New agent"}</button>
+      </Show>
       <Show when={pendingMain()}>{(pending) => (
         <ConfirmDialog
           title={`Make ${pending().name} your main agent?`}
@@ -267,6 +286,23 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
           color: var(--text-primary);
           margin-bottom: 20px;
         }
+
+        .catalog-new-agent {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 16px;
+          padding: 7px 14px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: var(--bg-surface);
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .catalog-new-agent:hover:not(:disabled) { background: var(--bg-raised); }
+        .catalog-new-agent:disabled { opacity: .6; cursor: wait; }
 
         .loading, .error {
           padding: 24px;

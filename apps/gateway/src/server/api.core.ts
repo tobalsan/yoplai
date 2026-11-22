@@ -2,6 +2,9 @@ import { allowsCatalogWriteOrigin } from "./extension-catalog-policy.js";
 import { CatalogOperationError, installFromCatalog, listReleaseCatalog, removeFromCatalog } from "../extensions/release-catalog.js";
 import { ExtensionOperationBusyError, withExtensionMutation } from "../extensions/registry.js";
 import { desktopSetupAllowed } from "../desktop/guard.js";
+import { createModelAccess } from "../desktop/model-access.js";
+import { createAgentManagementRoutes, managementStatus } from "../agent-management/routes.js";
+import type { Requester } from "../agent-management/policy.js";
 import { createMcpAppRoutes, appsAvailable } from "../mcp-apps/views.js";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -681,6 +684,7 @@ api.get("/capabilities", async (c) => {
     agents: agents.map((agent) => agent.id),
     multiUser: isMultiUserEnabled,
     desktopSetup: desktopSetupAllowed(c, isMultiUserEnabled, config.ui?.port ?? 3000),
+    agentManagement: await managementStatus(agentManagementDeps, await getManagementRequester(c)).then(({ create, edit }) => ({ create, edit })),
     ...(isMultiUserEnabled
       ? {
           authMethods: {
@@ -753,6 +757,22 @@ async function resolveExistingSessionHistoryFile(params: {
 export async function dashboardSessionExists(userId: string, agentId: string, sessionId: string): Promise<boolean> {
   return !!await resolveExistingSessionHistoryFile({ userId: userId === "local" ? undefined : userId, agentId, sessionId });
 }
+
+async function getManagementRequester(c: Context): Promise<Requester | undefined> {
+  if (!isExtensionLoaded("multiUser")) return { multiUser: false, roles: [] };
+  const auth = await getRequestAuthContext(c);
+  if (!auth) return undefined;
+  const role = auth.user.role;
+  return { multiUser: true, userId: auth.user.id, roles: Array.isArray(role) ? role : role ? [role] : [] };
+}
+const agentManagementDeps = {
+  home: CONFIG_DIR,
+  getConfig: loadConfig,
+  getRequester: getManagementRequester,
+  listModels: createModelAccess(CONFIG_DIR).listModels,
+  hasAgentAccess: callerHasAgentAccess,
+};
+api.route("/", createAgentManagementRoutes(agentManagementDeps));
 
 api.route("/", createMcpAppRoutes({ getConfig: loadConfig, getRuntime: getExtensionRuntime, getUserId: getRequestUserId, resolveHistoryFile: resolveExistingSessionHistoryFile }));
 

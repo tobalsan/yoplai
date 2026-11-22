@@ -99,6 +99,7 @@ export class ContainerInputBuilder {
       },
       workspaceDir: "/workspace",
       managedSkillsDir,
+      disabledSkills: params.agent.skills?.disabled,
       sessionDir: sessionOwnerId ? `/users/${sessionOwnerId}/sessions/${params.agentId}` : "/sessions",
       ipcDir: "/workspace/ipc",
       gatewayUrl: resolveContainerGatewayUrl(config),

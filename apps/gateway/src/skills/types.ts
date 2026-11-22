@@ -6,7 +6,8 @@ export type SkillRow = {
   createdAt: number; updatedAt: number; shares: SkillShare[]; disabledByAdmin: boolean;
 };
 export type SkillDirectory = { id: string; name: string; description: string; directory: string; agents?: string[] };
-export type SkillState = { enabled: string[] };
+/** `enabled` is the old per-user switch. Runs ignore it. `agents` holds the user skills that apply to each agent. */
+export type SkillState = { enabled: string[]; agents?: Record<string, string[]> };
 export type SkillActor = { userId: string; role?: string };
 export type SkillPermissions = { canRead: boolean; canWrite: boolean; canManage: boolean };
 export class SkillError extends Error {

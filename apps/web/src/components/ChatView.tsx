@@ -15,6 +15,7 @@ import { createAppViews, chatAppViewCalls, appViewKey } from "./chat/appViews";
 import { load as loadPanelTabs } from "./chat/appViewStorage";
 import { ChatSidePanel, canSplitPanel } from "./chat/ChatSidePanel";
 import { ChatPanelTabs } from "./chat/ChatPanelTabs";
+import { AgentConfigPanel } from "./chat/AgentConfigPanel";
 import { createDashboardAnnotations, DashboardAnnotationsContext, noteTarget } from "./chat/dashboardAnnotations";
 import chatViewStyles from "./chat/ChatView.css?inline";
 import {
@@ -149,7 +150,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
   };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
-  const [agent] = createResource(() => params.agentId, fetchAgent);
+  const [agent, { refetch: refetchAgent }] = createResource(() => params.agentId, fetchAgent);
   // The gateway of a captured dashboard comes from the resolved agent, never from an ID suffix or a tool result.
   const chatGateway = () => (agent.loading || agent.error ? undefined : agent()?.gateway);
   // Settings live on the pool agent in forked mode; the chat agent is a fork.
@@ -190,6 +191,11 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
     null
   );
   const [searchParams, setSearchParams] = useSearchParams();
+  // Agent settings side panel. A new agent opens it through `?config=1`.
+  // Any user sets their own skills here, so the panel does not depend on the agent management mode.
+  const canConfigureAgent = () => !capabilities.forkedAgents && !chatGateway() && !projectId() && !agent.loading;
+  const [configOpen, setConfigOpen] = createSignal(searchParams.config === "1");
+  createEffect(on(() => params.agentId, () => setConfigOpen(searchParams.config === "1"), { defer: true }));
   const sessionKey = () => getSessionKey(params.agentId);
   const explicitSessionId = () =>
     typeof searchParams.session === "string" && searchParams.session.trim()
@@ -939,6 +945,9 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
           </svg>
           <span class="new-chat-label">New chat</span>
         </button>
+        <Show when={canConfigureAgent()}>
+          <button type="button" class="agent-settings-btn" aria-label="Edit agent" title="Edit agent" aria-pressed={configOpen()} onClick={() => setConfigOpen(!configOpen())}><i class="fa-solid fa-sliders" aria-hidden="true" /></button>
+        </Show>
         <ChatSettingsMenu agentId={params.agentId} settingsAgentId={settingsAgentId()} sessionId={session.appSessionId()} projectId={projectId()} onPick={startFreshChat} />
       </div>
   );
@@ -1236,7 +1245,12 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>
       </div>
-      <Show when={appViews.tabs().length > 0}>
+      <Show when={configOpen() && canConfigureAgent()}>
+        <ChatSidePanel>
+          <AgentConfigPanel agentId={params.agentId} onClose={() => setConfigOpen(false)} onSaved={() => void refetchAgent()} />
+        </ChatSidePanel>
+      </Show>
+      <Show when={!configOpen() && appViews.tabs().length > 0}>
         <ChatSidePanel>
           <ChatPanelTabs appViews={appViews} agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
         </ChatSidePanel>

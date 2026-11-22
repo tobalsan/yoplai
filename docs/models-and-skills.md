@@ -87,7 +87,7 @@ A Pi agent gets skills from five sources. The agent sees one list of skills, wit
 | Built-in | `apps/gateway/src/skills/` (`dashboard`, `skill-creator`) | Yoplai developers, in a release | Always on | All Pi agents | **Admin → Skills** |
 | Agent workspace | `$YOPLAI_HOME/agents/<id>/skills/` | The operator, or the agent itself | Always on | Only the agent that owns the workspace | **Skills** page, in the agent tab, read-only. In multi-user mode, a superadmin can mark the skill as System on **Admin → Skills**. A System skill is hidden from **Skills**, but the agent still loads it |
 | Default | `$YOPLAI_HOME/skill-library/default/<name>/` | The operator, on disk | Always on | All Pi agents, or the agents in `.yoplai.json` | **Admin → Skills** |
-| User | `$YOPLAI_HOME/skill-library/users/<owner>/<name>/` | Each user, on the **Skills** page or with `skill_save` | Off until the user turns it on | All Pi agents of that user | **Skills** page, in **Your skills** or **Shared with me** |
+| User | `$YOPLAI_HOME/skill-library/users/<owner>/<name>/` | Each user, on the **Skills** page or with `skill_save` | Off until the user turns it on for an agent, in the agent settings panel of its chat | One agent at a time, for that user | **Skills** page, in **Your skills** or **Shared with me** |
 
 A superadmin can move an agent workspace skill to the default skills with **Make default** on **Admin → Skills**. Yoplai moves the folder out of the workspace. Yoplai blocks the move when a built-in, default or user skill has the same name. Before the move, the dialog lists the paths outside the skill folder that the skill refers to. Other agents may not have these files.
 

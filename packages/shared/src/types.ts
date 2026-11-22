@@ -317,6 +317,12 @@ export const CodemodeLimitsSchema = z.object({
 });
 export type CodemodeLimits = z.infer<typeof CodemodeLimitsSchema>;
 
+export const AgentManagementModeSchema = z.union([z.boolean(), z.enum(["superadmin", "admin", "anyone"])]);
+export type AgentManagementMode = z.infer<typeof AgentManagementModeSchema>;
+
+/** Skills the agent does not load, by skill name. Absent = every skill that the user can reach. */
+export const AgentSkillsConfigSchema = z.object({ disabled: z.array(z.string()).optional() });
+
 // Agent config
 const AgentConfigBaseSchema = z.object({
   id: z.string(),
@@ -361,6 +367,7 @@ const AgentConfigBaseSchema = z.object({
     )
     .optional(),
   globalSkills: z.boolean().optional(), // Include ~/.agents/skills/ (default: false)
+  skills: AgentSkillsConfigSchema.optional(),
   codemode: z.boolean().optional(),
   codemodeLimits: CodemodeLimitsSchema.optional(),
   toolDeferral: ToolDeferralConfigSchema.optional(),
@@ -1391,6 +1398,12 @@ const GatewayCommonFields = {
   notifications: NotificationsConfigSchema.optional(),
   dream: DreamGatewayConfigSchema.optional(),
   env: z.record(z.string(), z.string()).optional(), // Env vars to set (only if not already set)
+  /**
+   * Who may create agents and edit their config from the web UI.
+   * Unset: on for a local single-user gateway, off otherwise.
+   * `true` = on (single-user); `"superadmin" | "admin" | "anyone"` = multi-user modes.
+   */
+  agentManagement: AgentManagementModeSchema.optional(),
 };
 
 export const GatewayRootConfigSchema = z.object({
@@ -2113,6 +2126,8 @@ export const CapabilitiesResponseSchema = z.object({
   version: z.number(),
   apps: z.object({ available: z.boolean() }).optional(),
   desktopSetup: z.boolean().optional(),
+  /** What the requester may do with agent management. Absent on an older gateway. */
+  agentManagement: z.object({ create: z.boolean(), edit: z.boolean() }).optional(),
   extensions: z.record(z.string(), z.boolean()),
   agents: z.array(z.string()),
   multiUser: z.boolean(),
@@ -3175,6 +3190,8 @@ export const ContainerInputSchema = z.object({
   imageInputSupported: z.boolean().optional(),
   workspaceDir: z.string(),
   managedSkillsDir: z.string().optional(),
+  /** Names of workspace skills that the agent turned off. */
+  disabledSkills: z.array(z.string()).optional(),
   sessionDir: z.string(),
   ipcDir: z.string(),
   gatewayUrl: z.string(),

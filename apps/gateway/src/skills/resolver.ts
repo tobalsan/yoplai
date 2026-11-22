@@ -13,7 +13,9 @@ export async function resolveRunSkills(store: SkillStore, options: { agentId: st
   const defaults = (await store.defaults()).filter((skill) => (options.ignoreAgentRestrictions || !skill.agents || skill.agents.includes(options.agentId)));
   const candidates: ResolvedRunSkills["skills"] = defaults;
   if (userId) {
-    const enabled = (await store.list()).filter((row) => state.enabled.includes(row.id) && !row.disabledByAdmin && (row.ownerId === userId || row.shares.some((share) => share.kind === "all" || share.id === userId)));
+    // User skills apply only where the user turned them on for this agent. Diagnostics (no agent) look at all of them.
+    const onForAgent = state.agents?.[options.agentId] ?? [];
+    const enabled = (await store.list()).filter((row) => (options.ignoreAgentRestrictions || onForAgent.includes(row.id)) && !row.disabledByAdmin && (row.ownerId === userId || row.shares.some((share) => share.kind === "all" || share.id === userId)));
     enabled.sort((a, b) => Number(b.ownerId === userId) - Number(a.ownerId === userId) || a.ownerId.localeCompare(b.ownerId) || a.name.localeCompare(b.name));
     for (const row of enabled) {
       if (await options.policy.canRead(row, { userId })) candidates.push({ id: row.id, name: row.name, directory: store.directory(row) });

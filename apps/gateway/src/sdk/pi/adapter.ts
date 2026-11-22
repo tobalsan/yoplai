@@ -617,10 +617,13 @@ export const piAdapter: SdkAdapter = {
           allAppendedPrompts.length > 0 ? allAppendedPrompts : undefined,
         additionalSkillPaths: [getBuiltInSkillsDir(), workspaceSkillsDir, managedSkills.directory],
         agentsFilesOverride: () => ({ agentsFiles: contextFiles }),
-        ...(!includeGlobalSkills && {
+        ...((!includeGlobalSkills || agent.skills?.disabled?.length) && {
           skillsOverride: (result) => ({
             skills: result.skills.filter(
-              (s) => !s.filePath.startsWith(globalSkillsDir)
+              (s) =>
+                (includeGlobalSkills || !s.filePath.startsWith(globalSkillsDir)) &&
+                // Only workspace skills can be turned off per agent.
+                !(s.filePath.startsWith(workspaceSkillsDir + path.sep) && (agent.skills?.disabled ?? []).includes(s.name))
             ),
             diagnostics: result.diagnostics,
           }),
