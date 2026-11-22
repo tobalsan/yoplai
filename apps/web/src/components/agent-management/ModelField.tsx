@@ -6,6 +6,7 @@ import type { ModelChoice } from "../../api/agent-management";
 import { SearchPicker } from "../SearchPicker";
 
 export function ModelField(props: {
+  label?: string;
   models: Model[];
   value?: { provider?: string; model: string };
   disabled?: boolean;
@@ -18,7 +19,7 @@ export function ModelField(props: {
     const choice = { provider: value.provider ?? "", model: value.model };
     return index().get(modelKey(choice)) ?? { ...choice, name: value.model, ready: false, source: "", default: false, free: false };
   });
-  return <ModelPicker grouped models={props.models} selected={selected()} disabled={props.disabled === true}
+  return <ModelPicker grouped label={props.label} models={props.models} selected={selected()} disabled={props.disabled === true}
     onSelect={(key) => { const model = index().get(key); if (model) props.onChange({ provider: model.provider, model: model.model }); }} />;
 }
 

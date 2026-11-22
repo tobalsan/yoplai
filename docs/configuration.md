@@ -29,7 +29,7 @@ pnpm yoplai agents migrate
 
 Use **New agent** on the Agents page to create an agent under
 `$YOPLAI_HOME/agents/<id>/`. Open **Agent settings** in its chat to change
-its identity, avatar, model, reasoning, instructions, and skills. The model
+its identity, avatar, model, reasoning, fallback model, instructions, and skills. The model
 picker and instruction writer use the gateway's existing run credentials.
 Enabling management lets eligible creators use those credentials. If the
 model cannot generate instructions, creation uses a template.

@@ -65,11 +65,14 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
 
   const [fields, setFields] = createSignal(initialFields);
   const [model, setModel] = createSignal(initial.model);
+  const [fallbackOn, setFallbackOn] = createSignal(!!initial.fallbackModel);
+  const [fallback, setFallback] = createSignal(initial.fallbackModel ?? undefined);
   const [avatar, setAvatar] = createSignal(initialAvatar);
   const [disabled, setDisabled] = createSignal(initialDisabled);
   const [selected, setSelected] = createSignal(initialUserSkills);
   const [savedFields, setSavedFields] = createSignal(initialFields);
   const [savedModel, setSavedModel] = createSignal(initial.model);
+  const [savedFallback, setSavedFallback] = createSignal(initial.fallbackModel ?? undefined);
   const [savedAvatar, setSavedAvatar] = createSignal(initialAvatar);
   const [savedDisabled, setSavedDisabled] = createSignal(initialDisabled);
   const [savedSelected, setSavedSelected] = createSignal(initialUserSkills);
@@ -96,17 +99,24 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
     const current = model();
     const last = savedModel();
     if (current?.provider && (current.provider !== last?.provider || current.model !== last?.model)) patch.model = current as ModelChoice;
+    const nextFallback = fallbackOn() ? fallback() : undefined;
+    const lastFallback = savedFallback();
+    if (!fallbackOn() && lastFallback) patch.fallbackModel = null;
+    if (nextFallback?.provider && (nextFallback.provider !== lastFallback?.provider || nextFallback.model !== lastFallback?.model)) {
+      patch.fallbackModel = { provider: nextFallback.provider, model: nextFallback.model };
+    }
     const nextAvatar = avatar();
     const previous = savedAvatar();
     if (nextAvatar.file !== previous.file || nextAvatar.existing !== previous.existing || nextAvatar.face !== previous.face) patch.avatar = nextAvatar.face;
     return patch;
   });
-  const dirty = () => !!(Object.keys(identityPatch()).length || workspaceChanged() || personalChanged());
+  const dirty = () => fallbackOn() !== !!savedFallback() || !!(Object.keys(identityPatch()).length || workspaceChanged() || personalChanged());
+  const saveDisabled = () => !dirty() || saving() || !fields().name?.trim() || (fallbackOn() && !fallback());
   createEffect(() => props.onDirty(dirty()));
 
   const save = async (event: SubmitEvent) => {
     event.preventDefault();
-    if (!dirty() || saving() || !fields().name?.trim()) return;
+    if (saveDisabled()) return;
     setSaving(true);
     props.onSaving(true);
     setError("");
@@ -118,6 +128,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
         if (disposed) return;
         setSavedFields(fields());
         setSavedModel(model());
+        setSavedFallback(fallbackOn() ? fallback() : undefined);
         setSavedAvatar(avatar());
         identitySaved = true;
       }
@@ -178,6 +189,17 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
           <ModelField models={models.error ? [] : models.latest ?? []} value={model()} disabled={models.state !== "ready" || saving()} onChange={setModel} />
           <Show when={models.error}><p role="alert" class="agent-form-error">Could not load models. <button type="button" onClick={() => void retryModels()}>Retry</button></p></Show>
           <ReasoningField value={fields().reasoning ?? null} disabled={saving()} onChange={(value: ThinkLevel | null) => edit("reasoning", value)} />
+          <label class="agent-fallback-toggle">
+            <input type="checkbox" checked={fallbackOn()} disabled={saving()} onChange={(event) => setFallbackOn(event.currentTarget.checked)} />
+            Use a fallback model
+          </label>
+          <Show when={fallbackOn()}>
+            <div>
+              <ModelField label="Fallback model" models={models.error ? [] : models.latest ?? []} value={fallback()}
+                disabled={models.state !== "ready" || saving()} onChange={setFallback} />
+              <p>Used when the main model fails, for example during an outage or a rate limit.</p>
+            </div>
+          </Show>
         </section>
         <section>
           <h3>Instructions</h3>
@@ -213,7 +235,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
       <Show when={error()}><p class="agent-form-error" role="alert">{error()}</p></Show>
       <div class="agent-form-actions">
         <Button onClick={props.onClose} disabled={!dirty() || saving()}>Discard</Button>
-        <Button type="submit" variant="primary" disabled={!dirty() || !fields().name?.trim() || saving()} loading={saving()} loadingLabel="Saving…">Save</Button>
+        <Button type="submit" variant="primary" disabled={saveDisabled()} loading={saving()} loadingLabel="Saving…">Save</Button>
       </div>
     </footer>
   </form>;
