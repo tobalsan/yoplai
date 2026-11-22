@@ -316,7 +316,8 @@ describe("ChatView abort handling", () => {
   it("offers personal skills in read-only settings and guards a new chat before creating it", async () => {
     vi.stubGlobal("fetch", vi.fn(async (path: string) => path.endsWith("/settings")
       ? Response.json({
-          name: "Agent", canEditAgent: false, hasCustomAvatar: false,
+          name: "Agent", description: "Keeps draft notes.", role: "Legacy Copy Editor",
+          canEditAgent: false, hasCustomAvatar: false,
           skills: { global: [], agent: [], user: [{ id: "writing", name: "Writing preferences", description: "", enabled: false }] },
         })
       : Response.json({})));
@@ -325,6 +326,9 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
     const settings = getByRole(container, "dialog", { name: "Agent settings" });
     await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
+    expect(queryByRole(settings, "heading", { name: "Agent" })).not.toBeNull();
+    expect(queryByText(settings, "Keeps draft notes.")).not.toBeNull();
+    expect(queryByText(settings, "Legacy Copy Editor")).toBeNull();
     expect(queryByRole(settings, "textbox", { name: "System prompt" })).toBeNull();
     expect((getByRole(settings, "button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     getByRole(settings, "switch", { name: "Writing preferences" }).click();
@@ -348,10 +352,12 @@ describe("ChatView abort handling", () => {
   it("finishes saving personal skills before refreshing the changed agent", async () => {
     let reply!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { reply = resolve; });
-    const fetchSettings = vi.fn(async (path: string) => {
+    const fetchSettings = vi.fn(async (path: string, init?: RequestInit) => {
       if (path.endsWith("/user-skills")) return pending;
+      if (path.endsWith("/settings") && init?.method === "PATCH") return Response.json({ ok: true });
       if (path.endsWith("/settings")) return Response.json({
-        name: "Agent", canEditAgent: true, hasCustomAvatar: false,
+        name: "Agent", description: "Keeps draft notes.", instructions: "Keep drafts short.",
+        canEditAgent: true, hasCustomAvatar: false,
         model: { provider: "openai", model: "gpt-5" },
         skills: { global: [], agent: [], user: [{ id: "writing", name: "Writing preferences", description: "", enabled: false }] },
       });
@@ -364,12 +370,17 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
     const settings = getByRole(container, "dialog", { name: "Agent settings" });
     await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
+    expect(queryByRole(settings, "textbox", { name: "Role" })).toBeNull();
+    expect(queryByRole(settings, "textbox", { name: "Description" })).not.toBeNull();
+    expect(queryByRole(settings, "textbox", { name: "System prompt" })).not.toBeNull();
     fireEvent.input(getByRole(settings, "textbox", { name: "Name" }), { target: { value: "Draft Companion" } });
     const detailReads = fetchAgentMock.mock.calls.length;
     fetchAgentMock.mockRejectedValueOnce(new Error("Detail temporarily offline"));
     getByRole(settings, "switch", { name: "Writing preferences" }).click();
     getByRole(settings, "button", { name: "Save" }).click();
     await waitFor(() => expect(fetchSettings.mock.calls.some(([path]) => path.endsWith("/user-skills"))).toBe(true));
+    const [, patch] = fetchSettings.mock.calls.find(([path, init]) => path.endsWith("/settings") && init?.method === "PATCH") ?? [];
+    expect(patch?.body).toBe('{"name":"Draft Companion"}');
     expect(fetchAgentMock).toHaveBeenCalledTimes(detailReads);
     getByRole(settings, "button", { name: "Close agent settings" }).click();
     getByRole(container, "button", { name: "Start a new chat" }).click();

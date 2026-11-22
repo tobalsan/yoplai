@@ -109,6 +109,10 @@ Breaking changes are marked **⚠ BREAKING**.
 - `YOPLAI_UI_HOST` sets the bind host of the web UI. `YOPLAI_GATEWAY_HOST` sets the gateway address of the Vite proxy. `pnpm desktop` sets both to `127.0.0.1` and starts the gateway with `--host 127.0.0.1`.
 - Run `pnpm desktop` to open Yoplai in a desktop window (Electron). It starts a local gateway and the web UI from repo source on free ports, and stops both when you close the window. OAuth popups open in-app. Other links open in your system browser. If start fails, the window shows the last 50 log lines and a Restart link.
 
+### Removed
+
+- Removed the agent Role field. Existing `role:` keys in `agent.yaml` are ignored.
+
 ## v0.29.1 — Image generation and resumable compaction
 
 _Released 2026-11-21._

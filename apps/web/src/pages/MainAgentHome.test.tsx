@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getByRole, queryByText } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import { Route, Router, useParams } from "@solidjs/router";
 import type { Agent } from "../api/types";
@@ -117,6 +118,19 @@ describe("main agent home", () => {
     expect(container.querySelector('[role="dialog"]')?.textContent).toContain("Pick your main agent");
     expect(container.querySelector("h1")?.textContent).toBe("Agents");
     await vi.waitFor(() => expect(document.activeElement?.textContent).toBe("Make Sage my main agent"));
+  });
+
+  it.each([
+    ["omitted", {}],
+    ["empty", { description: "" }],
+  ])("shows the main agent picker fallback when Description is %s", async (_label, fields) => {
+    const sage = { id: "sage", name: "Sage", role: "Legacy Research Lead", ...fields };
+    agents = [sage, { id: "scout", name: "Scout" }];
+    await mountHome();
+
+    const dialog = getByRole(container, "dialog", { name: "Pick your main agent" });
+    expect(queryByText(dialog, "Ready when you are.")).not.toBeNull();
+    expect(queryByText(dialog, "Legacy Research Lead")).toBeNull();
   });
 
   it("records a deliberate dismissal and offers the picker again on the next home visit", async () => {

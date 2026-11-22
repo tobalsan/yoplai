@@ -138,9 +138,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                   )}
                 </Show>
                 <div class="catalog-name">{agent.name}<RemoteAgentMark gateway={agent.gateway} /><ScheduleAlertDot agentId={agent.id} gateway={agent.gateway} /></div>
-                <Show when={agent.role}>
-                  <div class="catalog-role">{agent.role}</div>
-                </Show>
                 <Show when={agent.description}>
                   <div class="catalog-description">{agent.description}</div>
                 </Show>
@@ -312,12 +309,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
           font-size: 16px;
           font-weight: 700;
           color: var(--text-primary);
-        }
-
-        .catalog-role {
-          font-size: 13px;
-          color: var(--text-tertiary);
-          margin-top: 2px;
         }
 
         .catalog-description {

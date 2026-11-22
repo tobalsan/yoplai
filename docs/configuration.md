@@ -106,7 +106,7 @@ Common fields:
 | `name`                                | Display name                                                |
 | `system_files`                        | Ordered prompt files; `AGENTS.md` is prepended when present |
 | `sdk`                                 | `pi` (default)                                            |
-| `description`, `avatar`, `role`       | Optional UI metadata                                        |
+| `description`, `avatar`              | Optional UI metadata                                        |
 | `model.provider`                      | Provider id; required for Pi                                |
 | `model.model`                         | Model id                                                    |
 | `model.base_url`                      | Claude SDK API/proxy URL                                    |

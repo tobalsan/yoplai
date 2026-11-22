@@ -25,7 +25,6 @@ import type { agentManagementRequest } from "./request.js";
 
 const settingsPatch = z.object({
   name: z.string().trim().min(1).max(60),
-  role: z.string().trim(),
   description: z.string().trim(),
   model: modelChoiceSchema,
   reasoning: ThinkLevelSchema.nullable(),
@@ -93,14 +92,14 @@ async function readSkills(agent: AgentConfig, actor: SkillActor, multiUser: bool
 
 async function writeSettings(agentId: string, directory: string, patch: SettingsPatch, upload?: UploadedAvatar) {
   const { instructions, avatar: face } = patch;
-  const editsYaml = (["name", "role", "description", "model", "reasoning", "avatar"] as const)
+  const editsYaml = (["name", "description", "model", "reasoning", "avatar"] as const)
     .some((field) => patch[field] !== undefined);
   const nextAvatar = face === undefined ? undefined : await stageAvatar(directory, face, upload);
   let obsolete: string[] = [];
   if (editsYaml) {
     try {
       await updateAgentConfig(directory, (doc, raw) => {
-        for (const key of ["name", "role", "description"] as const) {
+        for (const key of ["name", "description"] as const) {
           if (patch[key] !== undefined) doc.set(key, patch[key]);
         }
         if (patch.model) {
@@ -171,7 +170,7 @@ export function createAgentSettingsRoutes(deps: Deps) {
     const { agent, actor, directory, multiUser, canEditAgent, canSetPublic, runtime } = await resolve(c);
     const avatar = readAvatarState(directory, agent.avatar);
     return c.json({
-      canEditAgent, name: agent.name, role: agent.role, description: agent.description,
+      canEditAgent, name: agent.name, description: agent.description,
       hasCustomAvatar: avatar.custom, defaultFace: avatar.face,
       ...(multiUser ? { public: runtime?.forks.getForkByAgentId(agent.id)?.public ?? true, canSetPublic } : {}),
       ...(canEditAgent ? {
@@ -193,7 +192,7 @@ export function createAgentSettingsRoutes(deps: Deps) {
       const patch = parsed.data;
       if (avatarOnly && (patch.avatar === undefined || Object.keys(patch).length !== 1 || (resetAvatar && upload))) throw invalid();
       if (patch.public !== undefined && !canSetPublic) throw forbidden();
-      if ([patch.name, patch.role, patch.description, patch.instructions].some(isReservedText)) {
+      if ([patch.name, patch.description, patch.instructions].some(isReservedText)) {
         throw new AgentManagementError("reserved_prefix", 400, "Remove the $env: or $secret: prefix.");
       }
       if (patch.model) {
