@@ -330,6 +330,8 @@ describe("ChatView abort handling", () => {
     expect(queryByText(settings, "Keeps draft notes.")).not.toBeNull();
     expect(queryByText(settings, "Legacy Copy Editor")).toBeNull();
     expect(queryByRole(settings, "textbox", { name: "System prompt" })).toBeNull();
+    expect(queryByRole(settings, "checkbox", { name: "Use a fallback model" })).toBeNull();
+    expect(queryByRole(settings, "button", { name: /^Fallback model:/ })).toBeNull();
     expect((getByRole(settings, "button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     getByRole(settings, "switch", { name: "Writing preferences" }).click();
     getByRole(container, "button", { name: "Start a new chat" }).click();
@@ -342,6 +344,89 @@ describe("ChatView abort handling", () => {
     getByRole(getByRole(document.body, "alertdialog", { name: "Discard unsaved changes?" }), "button", { name: "Discard" }).click();
     expect(startNewChatMock).toHaveBeenCalledOnce();
     expect(queryByRole(container, "dialog", { name: "Agent settings" })).toBeNull();
+  });
+
+  // ALG-776 Testing Decisions, approved in Thinh's Groom GO, cover this sidebar seam.
+  it("guards a checked fallback without a model as an unsaved edit", async () => {
+    const fetchSettings = vi.fn(async (path: string, _init?: RequestInit) => {
+      if (path.endsWith("/settings")) return Response.json({
+        name: "Agent", canEditAgent: true, hasCustomAvatar: false, fallbackModel: null,
+        skills: { global: [], agent: [], user: [] },
+      });
+      return Response.json({ models: [] });
+    });
+    vi.stubGlobal("fetch", fetchSettings);
+    const { container } = renderView();
+    getByRole(container, "button", { name: "Agent settings" }).click();
+    await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
+    const settings = getByRole(container, "dialog", { name: "Agent settings" });
+    const checkbox = () => getByRole(settings, "checkbox", { name: "Use a fallback model" }) as HTMLInputElement;
+    const save = () => getByRole(settings, "button", { name: "Save" }) as HTMLButtonElement;
+    const discard = () => getByRole(settings, "button", { name: "Discard" }) as HTMLButtonElement;
+    await waitFor(() => expect(checkbox().checked).toBe(false));
+    expect(queryByRole(settings, "button", { name: /^Fallback model:/ })).toBeNull();
+    checkbox().click();
+    expect(getByRole(settings, "button", { name: /^Fallback model:/ })).toBeTruthy();
+    expect(save().disabled).toBe(true);
+    expect(discard().disabled).toBe(false);
+    discard().click();
+    const prompt = getByRole(document.body, "alertdialog", { name: "Discard unsaved changes?" });
+    getByRole(prompt, "button", { name: "Keep editing" }).click();
+    checkbox().click();
+    expect(queryByRole(settings, "button", { name: /^Fallback model:/ })).toBeNull();
+    expect(discard().disabled).toBe(true);
+    expect(fetchSettings.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  });
+
+  it("saves a selected fallback and clears it when unchecked", async () => {
+    let fallbackModel: { provider: string; model: string } | null = null;
+    const fetchSettings = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/settings") && init?.method === "PATCH") {
+        const patch = JSON.parse(String(init.body));
+        if ("fallbackModel" in patch) fallbackModel = patch.fallbackModel;
+        return Response.json({ ok: true });
+      }
+      if (path.endsWith("/settings")) return Response.json({
+        name: "Agent", canEditAgent: true, hasCustomAvatar: false, fallbackModel,
+        model: { provider: "fictional-provider", model: "fictional-model" },
+        skills: { global: [], agent: [], user: [] },
+      });
+      if (path.endsWith("/models")) return Response.json({ models: [
+        { provider: "fictional-provider", model: "fictional-model", name: "Example Model", ready: true },
+        { provider: "fictional-provider", model: "fictional-backup", name: "Backup Model", ready: true },
+      ] });
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchSettings);
+    const { container } = renderView();
+    const panel = () => getByRole(container, "dialog", { name: "Agent settings" });
+    const checkbox = () => getByRole(panel(), "checkbox", { name: "Use a fallback model" }) as HTMLInputElement;
+    const open = () => getByRole(container, "button", { name: "Agent settings" }).click();
+    const save = () => getByRole(panel(), "button", { name: "Save" }).click();
+    const patches = () => fetchSettings.mock.calls
+      .filter(([url, init]) => url.endsWith("/settings") && init?.method === "PATCH")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    open();
+    await waitFor(() => expect(checkbox().checked).toBe(false));
+    checkbox().click();
+    const picker = getByRole(panel(), "button", { name: /^Fallback model:/ }) as HTMLButtonElement;
+    await waitFor(() => expect(picker.disabled).toBe(false));
+    picker.click();
+    fireEvent.input(getByRole(panel(), "combobox", { name: "Search models" }), { target: { value: "backup" } });
+    getByRole(panel(), "option", { name: /Backup Model/ }).click();
+    save();
+    await waitFor(() => expect(patches()).toEqual([{ fallbackModel: { provider: "fictional-provider", model: "fictional-backup" } }]));
+    await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).toBeNull());
+
+    open();
+    await waitFor(() => expect(checkbox().checked).toBe(true));
+    expect(getByRole(panel(), "button", { name: /^Fallback model: Backup Model/ })).toBeTruthy();
+    checkbox().click();
+    save();
+    await waitFor(() => expect(patches()).toEqual([
+      { fallbackModel: { provider: "fictional-provider", model: "fictional-backup" } },
+      { fallbackModel: null },
+    ]));
   });
 
   it("names the online status dot", async () => {

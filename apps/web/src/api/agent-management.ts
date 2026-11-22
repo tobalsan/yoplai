@@ -15,6 +15,7 @@ export type AgentSettings = {
   hasCustomAvatar: boolean;
   defaultFace?: number;
   model?: { provider?: string; model: string };
+  fallbackModel?: { provider?: string; model: string } | null;
   reasoning?: ThinkLevel | null;
   instructions?: string;
   skills: { global: Skill[]; agent: ToggleableSkill[]; user: ToggleableSkill[] };
@@ -23,6 +24,7 @@ export type AgentSettingsPatch = {
   name?: string;
   description?: string;
   model?: ModelChoice;
+  fallbackModel?: ModelChoice | null;
   reasoning?: ThinkLevel | null;
   instructions?: string;
   avatar?: number;

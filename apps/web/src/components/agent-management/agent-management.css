@@ -88,6 +88,9 @@
 .agent-settings-content section + section { margin-top: 18px; border-top: 1px solid var(--border-default); padding-top: 16px; }
 .agent-settings-content h3 { margin: 0 0 10px; font-size: 14px; }
 .agent-settings-content .agent-edit-fields h3 { margin-bottom: 0; }
+.agent-fallback-toggle { display: flex; align-items: center; gap: 8px; min-height: 28px; width: fit-content; color: var(--text-secondary); font-size: 13px; }
+.agent-fallback-toggle input { margin: 0; accent-color: var(--accent); }
+.agent-fallback-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .agent-settings-content h4 { margin: 0; font-size: 13px; }
 .agent-settings-content p { margin: 4px 0; color: var(--text-secondary); font-size: 13px; }
 .agent-settings-content .agent-system-prompt { min-height: 106px; }

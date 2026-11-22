@@ -4,16 +4,21 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 
 const model = { provider: "fictional-provider", model: "fictional-model" };
+const fallbackModel = { provider: "fictional-provider", model: "fictional-backup" };
 vi.mock("../desktop/model-access.js", async (importOriginal) => {
   const { createModelAccess } = await importOriginal<typeof import("../desktop/model-access.js")>();
   return {
     createModelAccess(home: string) {
       return {
         ...createModelAccess(home),
-        listModels: async () => [{ ...model, name: "Example Model", ready: true }],
+        listModels: async () => [
+          { ...model, name: "Example Model", ready: true },
+          { ...fallbackModel, name: "Backup Model", ready: true },
+        ],
         getAuth: async () => { throw new Error("provider unavailable"); },
       };
     },
@@ -297,6 +302,51 @@ describe("agent management over HTTP", () => {
     expect((await write("DELETE", endpoint + "/avatar", superadmin, { avatar: 3 })).status).toBe(200);
     expect(await getAvatar()).not.toBe(after);
     expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ hasCustomAvatar: false, defaultFace: 3 });
+  });
+
+  // ALG-776 Testing Decisions, approved in Thinh's Groom GO, cover this HTTP seam.
+  it("sets and clears an editor's fallback model while preserving YAML comments", async () => {
+    expect((await putMode(superadmin, "admin")).status).toBe(200);
+    const endpoint = "/api/agents/shared/settings";
+    const file = path.join(home, "agents", "shared", "agent.yaml");
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ fallbackModel: null });
+    expect((await write("PATCH", endpoint, superadmin, { fallbackModel })).status).toBe(200);
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ fallbackModel });
+    const viewer = await get(endpoint, member);
+    expect(viewer.status).toBe(200);
+    const readOnly = await viewer.json();
+    expect(readOnly).toMatchObject({ canEditAgent: false });
+    expect(readOnly).not.toHaveProperty("fallbackModel");
+    expect((await write("PATCH", endpoint, member, { fallbackModel: null })).status).toBe(403);
+    const yaml = await fs.readFile(file, "utf8");
+    expect(parse(yaml)).toMatchObject({ fallback_model: fallbackModel });
+    expect(yaml).toContain("# operator URL");
+    expect((await write("PATCH", endpoint, superadmin, { fallbackModel: null })).status).toBe(200);
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ fallbackModel: null });
+    expect(parse(await fs.readFile(file, "utf8"))).not.toHaveProperty("fallback_model");
+  });
+
+  it("rejects a fallback model without credentials", async () => {
+    expect((await putMode(superadmin, "admin")).status).toBe(200);
+    const endpoint = "/api/agents/shared/settings";
+    const response = await write("PATCH", endpoint, superadmin, {
+      fallbackModel: { provider: "fictional-provider", model: "unavailable-backup" },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "unavailable_model" });
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ fallbackModel: null });
+  });
+
+  it("rejects matching main and fallback models when either model changes", async () => {
+    expect((await putMode(superadmin, "admin")).status).toBe(200);
+    const endpoint = "/api/agents/shared/settings";
+    const patch = (body: unknown) => write("PATCH", endpoint, superadmin, body);
+    expect((await patch({ model, fallbackModel })).status).toBe(200);
+    expect((await patch({ fallbackModel: model })).status).toBe(400);
+    expect((await patch({ model: fallbackModel })).status).toBe(400);
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ model, fallbackModel });
+    expect((await patch({ model: fallbackModel, fallbackModel: null })).status).toBe(200);
+    expect(await (await get(endpoint, superadmin)).json()).toMatchObject({ model: fallbackModel, fallbackModel: null });
   });
 
   // ALG-772 Testing Decisions, approved in Thinh's Groom GO, cover this HTTP seam.

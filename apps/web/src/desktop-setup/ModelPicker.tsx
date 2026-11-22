@@ -26,7 +26,7 @@ function ModelSummary(props: { model: Model; provider?: boolean }) {
   </>;
 }
 
-export function ModelPicker(props: { models: Model[]; selected?: Model; suggested?: Model; grouped?: boolean; disabled: boolean; onSelect: (value: string) => void }) {
+export function ModelPicker(props: { label?: string; models: Model[]; selected?: Model; suggested?: Model; grouped?: boolean; disabled: boolean; onSelect: (value: string) => void }) {
   const catalog = createMemo(() => props.models.map((model) => ({
     model, family: family(model.provider), text: normalize(`${family(model.provider)} ${model.provider} ${model.name} ${model.model}`),
   })));
@@ -37,7 +37,7 @@ export function ModelPicker(props: { models: Model[]; selected?: Model; suggeste
   const row = (model: Model, group: string, showProvider = false): PickerRow => ({
     id: JSON.stringify([group, modelKey(model)]), value: modelKey(model), content: <ModelSummary model={model} provider={showProvider} />,
   });
-  return <SearchPicker label="Model" searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
+  return <SearchPicker label={props.label ?? "Model"} searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
     selected={props.selected && modelKey(props.selected)}
     selectionLabel={props.selected && [displayName(props.selected), family(props.selected.provider),
       props.selected.free && "Free", props.selected.ready && "Ready"].filter(Boolean).join(" ")}

@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Create agents and edit their settings in web and desktop chat. Desktop can also create on a linked gateway that allows it. New multi-user agents start private to their creator.
+- Set or remove an optional fallback model in Agent settings.
 - Multi-user superadmins can choose who manages agents. A gateway's `agentManagement` setting overrides that choice.
 - Admins can install, update, and remove extensions from the catalog without a gateway restart.
 - External extension discovery ignores work folders and uses versioned imports.

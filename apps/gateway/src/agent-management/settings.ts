@@ -27,6 +27,7 @@ const settingsPatch = z.object({
   name: z.string().trim().min(1).max(60),
   description: z.string().trim(),
   model: modelChoiceSchema,
+  fallbackModel: modelChoiceSchema.nullable(),
   reasoning: ThinkLevelSchema.nullable(),
   instructions: z.string(),
   avatar: defaultFaceSchema,
@@ -92,7 +93,7 @@ async function readSkills(agent: AgentConfig, actor: SkillActor, multiUser: bool
 
 async function writeSettings(agentId: string, directory: string, patch: SettingsPatch, upload?: UploadedAvatar) {
   const { instructions, avatar: face } = patch;
-  const editsYaml = (["name", "description", "model", "reasoning", "avatar"] as const)
+  const editsYaml = (["name", "description", "model", "fallbackModel", "reasoning", "avatar"] as const)
     .some((field) => patch[field] !== undefined);
   const nextAvatar = face === undefined ? undefined : await stageAvatar(directory, face, upload);
   let obsolete: string[] = [];
@@ -105,6 +106,12 @@ async function writeSettings(agentId: string, directory: string, patch: Settings
         if (patch.model) {
           doc.setIn(["model", "provider"], patch.model.provider);
           doc.setIn(["model", "model"], patch.model.model);
+        }
+        if (patch.fallbackModel === null) {
+          doc.delete("fallback_model");
+        } else if (patch.fallbackModel) {
+          doc.setIn(["fallback_model", "provider"], patch.fallbackModel.provider);
+          doc.setIn(["fallback_model", "model"], patch.fallbackModel.model);
         }
         if (patch.reasoning === null) {
           doc.delete("reasoning");
@@ -175,6 +182,9 @@ export function createAgentSettingsRoutes(deps: Deps) {
       ...(multiUser ? { public: runtime?.forks.getForkByAgentId(agent.id)?.public ?? true, canSetPublic } : {}),
       ...(canEditAgent ? {
         model: { provider: agent.model.provider, model: agent.model.model },
+        fallbackModel: agent.fallback_model
+          ? { provider: agent.fallback_model.provider, model: agent.fallback_model.model }
+          : null,
         reasoning: agent.reasoning ?? agent.thinkLevel ?? null,
         instructions: await readInstructions(directory),
       } : {}),
@@ -195,14 +205,24 @@ export function createAgentSettingsRoutes(deps: Deps) {
       if ([patch.name, patch.description, patch.instructions].some(isReservedText)) {
         throw new AgentManagementError("reserved_prefix", 400, "Remove the $env: or $secret: prefix.");
       }
-      if (patch.model) {
-        const model = patch.model;
-        if (!(await deps.listModels()).some((choice) => choice.provider === model.provider && choice.model === model.model)) {
+      if (patch.model || patch.fallbackModel) {
+        const choices = await deps.listModels();
+        const available = (model: z.infer<typeof modelChoiceSchema> | null | undefined) =>
+          !model || choices.some((choice) => choice.provider === model.provider && choice.model === model.model);
+        if (!available(patch.model) || !available(patch.fallbackModel)) {
           throw new AgentManagementError("unavailable_model", 400, "Select a model from the list.");
         }
       }
       const audit = patch.public !== undefined ? await getAuditActor(c) : undefined;
       await serializeByKey(mutations, directory, async () => {
+        if (patch.fallbackModel !== null && (patch.model || patch.fallbackModel)) {
+          const current = getAgent(agent.id) ?? agent;
+          const main = patch.model ?? current.model;
+          const fallback = patch.fallbackModel ?? current.fallback_model;
+          if (fallback && fallback.provider === main.provider && fallback.model === main.model) {
+            throw new AgentManagementError("invalid_request", 400, "Select a fallback model different from the main model.");
+          }
+        }
         await writeSettings(agent.id, directory, patch, upload);
         if (patch.public !== undefined && runtime) {
           const before = runtime.forks.getForkByAgentId(agent.id)?.public ?? true;
