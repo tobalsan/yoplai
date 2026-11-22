@@ -21,6 +21,12 @@ export function SearchPicker(props: {
   groups: (query: string, expanded: string | undefined) => PickerGroup[];
   focusOnMount?: boolean;
   onQuery?: (query: string) => void;
+  onOpen?: () => void;
+  panel?: {
+    minWidth: number;
+    class: string;
+    layout: (parts: { search: JSX.Element; results: JSX.Element; reset: () => void; close: () => void }) => JSX.Element;
+  };
   onSelect: (value: string) => void;
 }) {
   const id = createUniqueId();
@@ -46,8 +52,9 @@ export function SearchPicker(props: {
     const gap = 6;
     const below = window.innerHeight - rect.bottom - 64 - gap;
     const above = rect.top - 48 - gap;
-    panel.style.setProperty("--picker-width", `${rect.width}px`);
-    panel.style.setProperty("--picker-left", `${rect.left}px`);
+    const width = props.panel ? Math.min(Math.max(rect.width, props.panel.minWidth), window.innerWidth - 24) : rect.width;
+    panel.style.setProperty("--picker-width", `${width}px`);
+    panel.style.setProperty("--picker-left", `${props.panel ? Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)) : rect.left}px`);
     const scrollTop = list.scrollTop;
     panel.style.removeProperty("--picker-space");
     const up = panel.offsetHeight > below && above > below;
@@ -84,6 +91,7 @@ export function SearchPicker(props: {
     else if (item.bottom > viewport.bottom) list.scrollTop += item.bottom - viewport.bottom;
   };
   const start = (last = false) => {
+    props.onOpen?.();
     setQuery("");
     setExpanded(undefined);
     setStarted(true);
@@ -110,20 +118,7 @@ export function SearchPicker(props: {
     }
   };
 
-  return <div class="search-picker">
-    <label id={`${id}-label`} for={`${id}-trigger`}>{props.label}</label>
-    <button id={`${id}-trigger`} ref={trigger} type="button" class="search-picker-trigger"
-      aria-label={`${props.label}: ${props.selectionLabel ?? props.placeholder}`} aria-haspopup="listbox" aria-expanded={open()}
-      disabled={props.disabled} onClick={() => open() ? close(true) : start()}
-      onKeyDown={(event) => {
-        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-        event.preventDefault();
-        if (!open()) start(event.key === "ArrowUp");
-      }}>
-      <span class="search-picker-summary"><Show when={props.summary} fallback={<span class="search-picker-muted">{props.placeholder}</span>}>{props.summary}</Show></span>
-      <i class="fa-solid fa-chevron-down search-picker-chevron" aria-hidden="true" />
-    </button>
-    <div ref={panel} class="search-picker-panel" popover="manual" data-open={open()} aria-hidden={open() ? undefined : true} inert={!open()}>
+  const search = (
       <div class="search-picker-search">
         <i class="fa-solid fa-magnifying-glass" aria-hidden="true" />
         <input ref={input} type="text" name="search" role="combobox" aria-label={props.searchLabel} aria-expanded={open()} aria-autocomplete="list"
@@ -139,11 +134,7 @@ export function SearchPicker(props: {
           }}
           onKeyDown={(event) => {
             if (event.isComposing) return;
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              close(true);
-            } else if (event.key === "Enter") {
+            if (event.key === "Enter") {
               event.preventDefault();
               choose(rows().find((row) => row.id === active()));
             } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -156,6 +147,8 @@ export function SearchPicker(props: {
             }
           }} />
       </div>
+  );
+  const results = <>
       <div ref={list} class="search-picker-list" id={`${id}-list`} role="listbox" aria-labelledby={`${id}-label`}>
         <For each={groups()}>{(group) => <div role={group.label ? "group" : "presentation"} aria-label={group.label}>
           <Show when={group.label}><div class="search-picker-group" aria-hidden="true">{group.label}</div></Show>
@@ -169,6 +162,37 @@ export function SearchPicker(props: {
         </div>}</For>
       </div>
       <Show when={!rows().length && open()}><div class="search-picker-empty" role="status">No matches. Change the search text.</div></Show>
+  </>;
+
+  return <div class="search-picker">
+    <label id={`${id}-label`} for={`${id}-trigger`}>{props.label}</label>
+    <button id={`${id}-trigger`} ref={trigger} type="button" class="search-picker-trigger"
+      aria-label={`${props.label}: ${props.selectionLabel ?? props.placeholder}`} aria-haspopup={props.panel ? "dialog" : "listbox"} aria-expanded={open()}
+      aria-controls={props.panel ? `${id}-panel` : `${id}-list`}
+      disabled={props.disabled} onClick={() => open() ? close(true) : start()}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        event.preventDefault();
+        if (!open()) start(event.key === "ArrowUp");
+      }}>
+      <span class="search-picker-summary"><Show when={props.summary} fallback={<span class="search-picker-muted">{props.placeholder}</span>}>{props.summary}</Show></span>
+      <i class="fa-solid fa-chevron-down search-picker-chevron" aria-hidden="true" />
+    </button>
+    <div ref={panel} id={`${id}-panel`} class={`search-picker-panel ${props.panel?.class ?? ""}`} popover="manual"
+      role={props.panel ? "dialog" : undefined} aria-labelledby={props.panel ? `${id}-label` : undefined}
+      data-open={open()} aria-hidden={open() ? undefined : true} inert={!open()}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close(true);
+      }}>
+      {props.panel ? props.panel.layout({ search, results, reset: () => {
+        setQuery("");
+        position();
+        list.scrollTop = 0;
+        moveTo(selectedRow() ?? rows()[0]);
+      }, close: () => close(true) }) : <>{search}{results}</>}
     </div>
   </div>;
 }

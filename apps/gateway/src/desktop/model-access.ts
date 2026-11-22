@@ -1,8 +1,9 @@
 import { defaultModel, freeModel, modelReadiness, pickerModel } from "./model-picker.js";
 import { Hono } from "hono";
 import { z } from "zod";
+import { ModelSourceSchema, type ModelSource } from "@yoplai/shared";
 import { getExternalSources, isAnthropicOAuthToken, isExternalSource, selectExternalCredential } from "./external-sources.js";
-import { checkLiteralModelKey, completeModelOnce, createModelAuth, CUSTOM_KEY_CHECK_HEADERS, isLiteralKey, isSafeModelAccessError, readModelConfig } from "./model-auth.js";
+import { canReadExternal, checkLiteralModelKey, completeModelOnce, createModelAuth, CUSTOM_KEY_CHECK_HEADERS, environmentCredential, isLiteralKey, isSafeModelAccessError, readModelConfig } from "./model-auth.js";
 import { createOAuthAttempts, isOAuthProvider, OAUTH_HOSTS, type openDesktopBrowser } from "./oauth-attempts.js";
 
 export const CLAUDE_WARNING = "Anthropic terms do not allow a Claude subscription in third-party apps. Anthropic can limit or close your account. Use an API key to stay inside the terms.";
@@ -15,7 +16,7 @@ const codeSchema = z.object({ code: z.string().min(1).max(8192) }).strict();
 const API_KEY_LOGIN_REQUIRES_MORE_INPUT = new Set([
   "amazon-bedrock", "cloudflare-ai-gateway", "cloudflare-workers-ai", "google-vertex",
 ]);
-const modelSchema = z.object({ provider: z.string(), model: z.string() }).strict();
+const modelSchema = z.object({ provider: z.string(), model: z.string(), source: ModelSourceSchema.optional() }).strict();
 
 type ModelAccessDeps = {
   createAuth?: typeof createModelAuth;
@@ -29,7 +30,9 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
   const makeAuth = deps.createAuth ?? createModelAuth;
   const external = deps.external ?? getExternalSources(home);
   const checkKey = deps.checkKey ?? checkLiteralModelKey;
-  const getAuth = () => makeAuth({ home, readExternal: external.resolve });
+  const getAuth = (choice?: z.infer<typeof modelSchema>) => makeAuth({
+    home, readExternal: external.resolve, primaryProvider: choice?.provider, primarySource: choice?.source, primaryModel: choice?.model,
+  });
   const attempts = createOAuthAttempts(async (provider, interaction) => {
     await (await getAuth()).runtime.login(provider, "oauth", interaction);
     modelReadiness.clear("owned", provider);
@@ -42,7 +45,7 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
     const apiKeyProviders = runtime.getProviders()
       .filter((provider) => !API_KEY_LOGIN_REQUIRES_MORE_INPUT.has(provider.id) && provider.auth.apiKey?.login && defaultModel(runtime.getModels(provider.id)))
       .map(({ id, name }) => ({ id, name }));
-    return c.json({ external: await external.status(), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders, attempts: attempts.openAttempts() });
+    return c.json({ external: await external.status({ includeVersion: true }), owned, oauthProviders: Object.keys(OAUTH_HOSTS), apiKeyProviders, attempts: attempts.openAttempts() });
   });
   routes.post("/oauth/:provider", async (c) => {
     const provider = c.req.param("provider");
@@ -117,37 +120,38 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
     const body = consentSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
     const result = await external.enable(source, body.data.enabled, body.data.warningAccepted);
-    if ("warningRequired" in result) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
+    if (!("source" in result)) return c.json({ error: "warning_required", message: CLAUDE_WARNING }, 409);
     modelReadiness.clear(source);
     return c.json(result);
   });
   const modelsFor = async (runtime: Awaited<ReturnType<typeof getAuth>>["runtime"], onlyProvider?: string) => {
     const owned = await runtime.listCredentials();
-    const externalStatus = await external.status();
+    const externalStatus = canReadExternal() ? await external.status() : [];
     const groups = await Promise.all(runtime.getProviders().filter((provider) => !onlyProvider || provider.id === onlyProvider).map(async (provider) => {
       const own = owned.find((credential) => credential.providerId === provider.id);
-      const catalog = own ? await runtime.getAvailable(provider.id) : runtime.getModels(provider.id);
-      const included = catalog.filter(pickerModel);
-      const eligible = await Promise.all(included.map(async (model) => {
-        let source: string | undefined;
-        if (own) {
-          if (own.type === "oauth" ? provider.auth.oauth : provider.auth.apiKey) source = "owned";
-        } else {
-          const selected = await selectExternalCredential(provider.id, model, provider.auth.apiKey ? undefined : "oauth", (source) => {
-            const status = externalStatus.find((row) => row.source === source && row.enabled);
-            return status?.providers.find((entry) => entry.provider === provider.id);
-          });
-          source = selected?.source;
-          if (!source && runtime.getProviderAuthStatus(provider.id).configured) source = "environment";
-        }
-        return source && { provider: provider.id, model: model.id, name: model.name, source, ready: modelReadiness.isReady(source, provider.id, model.id), default: false, free: freeModel(model) };
-      }));
-      const rows = eligible.filter((row) => !!row);
-      for (const source of new Set(rows.map((row) => row.source))) {
-        const choice = defaultModel(included.filter((model) => rows.some((row) => row.source === source && row.model === model.id)));
-        const row = rows.find((row) => row.source === source && row.model === choice?.id);
-        if (row) row.default = true;
+      const catalog = runtime.getModels(provider.id).filter(pickerModel);
+      const environment = await environmentCredential(runtime, provider.id, Boolean(own));
+      const rowsFor = (source: ModelSource, credentialType: "oauth" | "api_key", models: typeof catalog, native = false) => {
+        const preferred = defaultModel(models)?.id;
+        return models.map((model) => ({
+          provider: provider.id, model: model.id, name: model.name, source, credentialType,
+          ready: modelReadiness.isReady(source, provider.id, model.id), default: model.id === preferred, free: freeModel(model),
+          ...(native && { native: true as const }),
+        }));
+      };
+      const rows: ReturnType<typeof rowsFor> = [];
+      if (own && (own.type === "oauth" ? provider.auth.oauth : provider.auth.apiKey)) {
+        rows.push(...rowsFor("owned", own.type, (await runtime.getAvailable(provider.id)).filter(pickerModel)));
       }
+      for (const status of externalStatus) {
+        const entry = status.enabled && status.providers.find((row) => row.provider === provider.id && row.available);
+        if (!entry) continue;
+        const eligible = await Promise.all(catalog.map((model) => selectExternalCredential(
+          provider.id, model, provider.auth.apiKey ? undefined : "oauth", () => entry, status.source,
+        )));
+        rows.push(...rowsFor(status.source, entry.type, catalog.filter((_, index) => eligible[index])));
+      }
+      if (environment) rows.push(...rowsFor("environment", "api_key", catalog, environment.native));
       return rows;
     }));
     return groups.flat();
@@ -157,11 +161,11 @@ export function createModelAccess(home: string, deps: ModelAccessDeps = {}) {
   routes.post("/models/check", async (c) => {
     const body = modelSchema.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: "invalid_request" }, 400);
-    const { provider, model: id } = body.data;
-    const { runtime } = await getAuth();
+    const { provider, model: id, source } = body.data;
+    const { runtime } = await getAuth(body.data);
     const model = runtime.getModel(provider, id);
     if (!model || !pickerModel(model)) return c.json({ error: "unknown_model" }, 404);
-    if (!(await modelsFor(runtime, provider)).some((row) => row.model === id)) return c.json({ error: "unknown_model" }, 404);
+    if (!(await modelsFor(runtime, provider)).some((row) => row.model === id && (!source || row.source === source))) return c.json({ error: "unknown_model" }, 404);
     try {
       const text = await completeModelOnce(runtime, model, "Reply with OK.", undefined, 16);
       if (text.trim()) return c.json({ provider, model: id, ready: true });

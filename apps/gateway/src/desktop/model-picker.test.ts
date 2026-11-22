@@ -92,6 +92,124 @@ function providerStream(events: Array<{ type?: string; [key: string]: unknown }>
   return new Response(events.map((event) => `${event.type ? `event: ${event.type}\n` : ""}data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
 
+it("lists a separate default row for the stored key and environment key of the same provider", async () => {
+  vi.stubEnv("OPENAI_API_KEY", "fake-environment-key");
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned-key" } }));
+  const { createModelAccess } = await import("./model-access.js");
+  const { models } = await (await createModelAccess(home).routes.request("/models")).json();
+  expect(models.filter((row: { provider: string; model: string }) => row.provider === "openai" && row.model === "gpt-4.1-mini")).toEqual([
+    expect.objectContaining({ source: "owned", credentialType: "api_key", default: true, ready: false }),
+    expect.objectContaining({ source: "environment", credentialType: "api_key", default: true, ready: false }),
+  ]);
+});
+
+it("checks the chosen environment row using the environment key", async () => {
+  vi.stubEnv("OPENAI_API_KEY", "fake-environment-key");
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned-key" } }));
+  const usedEnv: boolean[] = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+    usedEnv.push(new Headers(init?.headers).get("authorization") === "Bearer fake-environment-key");
+    return successfulCall();
+  });
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes } = createModelAccess(home);
+  const response = await routes.request("/models/check", {
+    method: "POST", body: '{"provider":"openai","model":"gpt-4.1-mini","source":"environment"}',
+  });
+  expect(response.status).toBe(200);
+  expect(usedEnv).toEqual([true]);
+  const { models } = await (await routes.request("/models")).json();
+  expect(models.filter((row: { provider: string; model: string }) => row.provider === "openai" && row.model === "gpt-4.1-mini")).toEqual([
+    expect.objectContaining({ source: "owned", ready: false }),
+    expect.objectContaining({ source: "environment", ready: true }),
+  ]);
+});
+
+it.each(["desktop", "web"])("uses the pinned environment key over a stored key on the %s gateway", async (mode) => {
+  vi.stubEnv("YOPLAI_DESKTOP", mode === "desktop" ? "1" : undefined);
+  vi.stubEnv("OPENAI_API_KEY", "fake-environment-key");
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned-key" } }));
+  const matches: boolean[] = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+    matches.push(new Headers(init?.headers).get("authorization") === "Bearer fake-environment-key");
+    return successfulCall();
+  });
+  const { createModelAuth } = await import("./model-auth.js");
+  const { runtime, requireModelAuth } = await createModelAuth({ home, primaryProvider: "openai", primaryModel: "gpt-4.1-mini", primarySource: "environment", mode: "api_key" });
+  const model = runtime.getModel("openai", "gpt-4.1-mini")!;
+  await requireModelAuth(model);
+  expect(await runtime.checkAuth("openai")).toMatchObject({ source: "environment" });
+  expect((await runtime.completeSimple(model, { messages: [] })).stopReason).toBe("stop");
+  expect(matches).toEqual([true]);
+});
+
+it("fails a pinned Yoplai key with an unset reference while an environment key exists", async () => {
+  vi.stubEnv("OPENAI_API_KEY", "fake-environment-key");
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "$FIXTURE_UNSET" } }));
+  const callProvider = vi.fn(async () => successfulCall());
+  vi.stubGlobal("fetch", callProvider);
+  const { createModelAuth } = await import("./model-auth.js");
+  const { runtime } = await createModelAuth({ home, primaryProvider: "openai", primaryModel: "gpt-4.1-mini", primarySource: "owned" });
+  const model = runtime.getModel("openai", "gpt-4.1-mini")!;
+  expect(await runtime.completeSimple(model, { messages: [] })).toMatchObject({
+    stopReason: "error", errorMessage: "Yoplai credential is not available. Sign in again or pick another source.",
+  });
+  expect(callProvider).not.toHaveBeenCalled();
+});
+
+it("does not substitute the ambient Cloudflare key for an unresolved Yoplai key", async () => {
+  vi.stubEnv("CLOUDFLARE_API_KEY", "fake-environment-key");
+  vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "fixture-account");
+  const provider = "cloudflare-workers-ai";
+  const id = "@cf/deepseek-ai/deepseek-v4-flash-0731";
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ [provider]: { type: "api_key", key: "$FIXTURE_UNSET" } }));
+  const callProvider = vi.fn(async () => new Response(null, { status: 401 }));
+  vi.stubGlobal("fetch", callProvider);
+  const { createModelAuth } = await import("./model-auth.js");
+  const { runtime } = await createModelAuth({ home, primaryProvider: provider, primaryModel: id, primarySource: "owned" });
+  const model = runtime.getModel(provider, id)!;
+  expect(await runtime.completeSimple(model, { messages: [] })).toMatchObject({
+    stopReason: "error", errorMessage: "Yoplai credential is not available. Sign in again or pick another source.",
+  });
+  expect(callProvider).not.toHaveBeenCalled();
+});
+
+it.each(["$FIXTURE_MODEL_KEY", "!printf fake-config-key"])("lists and uses a native models.json credential configured as %s", async (apiKey) => {
+  vi.stubEnv("FIXTURE_MODEL_KEY", "fake-config-key");
+  await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: { openai: { apiKey } } }));
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes } = createModelAccess(home);
+  const { models } = await (await routes.request("/models")).json();
+  expect(models.find((row: { provider: string; model: string }) => row.provider === "openai" && row.model === "gpt-4.1-mini")).toMatchObject({
+    source: "environment", native: true, credentialType: "api_key",
+  });
+  const matches: boolean[] = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+    matches.push(new Headers(init?.headers).get("authorization") === "Bearer fake-config-key");
+    return successfulCall();
+  });
+  const response = await routes.request("/models/check", {
+    method: "POST", body: '{"provider":"openai","model":"gpt-4.1-mini","source":"environment"}',
+  });
+  expect(response.status).toBe(200);
+  expect(matches).toEqual([true]);
+});
+
+it("does not treat the Bedrock ambient credential sentinel as a separate API key", async () => {
+  vi.stubEnv("AWS_PROFILE", "fixture-profile");
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes, getAuth } = createModelAccess(home);
+  const bedrock = async () => (await (await routes.request("/models")).json()).models.filter((row: { provider: string }) => row.provider === "amazon-bedrock");
+  expect(await bedrock()).toContainEqual(expect.objectContaining({ source: "environment", native: true }));
+  const choice = (await bedrock()).find((row: { default: boolean }) => row.default);
+  const { runtime, requireModelAuth } = await getAuth(choice);
+  const model = runtime.getModel(choice.provider, choice.model)!;
+  await expect(requireModelAuth(model)).resolves.toBeUndefined();
+  expect(await runtime.checkAuth("amazon-bedrock")).toMatchObject({ source: "environment" });
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ "amazon-bedrock": { type: "api_key", key: "fake-bedrock-key" } }));
+  expect(await bedrock()).not.toContainEqual(expect.objectContaining({ source: "environment" }));
+});
+
 function successfulAnthropicCall() {
   return providerStream([
     { type: "message_start", message: { id: "fake", type: "message", role: "assistant", content: [], stop_reason: null, model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -115,7 +233,10 @@ it("checks the default for each external source with a fake provider", async () 
   const token = `fake.${Buffer.from(JSON.stringify(payload)).toString("base64")}.sig`;
   await create(".codex/auth.json", { tokens: { access_token: token, account_id: "fake-account" } });
   await create(".local/share/opencode/auth.json", { "opencode-go": { type: "api", key: "fake-go" } });
-  await create(".pi/agent/auth.json", { openai: { type: "api_key", key: "fake-pi-openai" } });
+  await create(".pi/agent/auth.json", {
+    openai: { type: "api_key", key: "fake-pi-openai" },
+    "openai-codex": { type: "oauth", access: token, accountId: "fake-account" },
+  });
   const external = createExternalSources(home, { keychain: {
     exists: async () => true,
     read: async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fake", expiresAt: Date.now() + 60_000 } }),
@@ -141,6 +262,7 @@ it("checks the default for each external source with a fake provider", async () 
     { source: "pi", provider: "openai", model: "gpt-4.1-mini" },
   ];
   expect(await list()).toEqual(expect.arrayContaining(defaults.map((row) => expect.objectContaining({ ...row, default: true, ready: false }))));
+  expect(await list()).toContainEqual(expect.objectContaining({ source: "pi", provider: "openai-codex", model: "gpt-6-astra", credentialType: "oauth", default: true, ready: false }));
   expect(call).not.toHaveBeenCalled();
   for (const { provider, model } of defaults) {
     const res = await routes.request("/models/check", { method: "POST", body: JSON.stringify({ provider, model }) });
@@ -148,6 +270,72 @@ it("checks the default for each external source with a fake provider", async () 
   }
   expect(await list()).toEqual(expect.arrayContaining(defaults.map((row) => expect.objectContaining({ ...row, default: true, ready: true }))));
   expect(call).toHaveBeenCalledTimes(4);
+});
+
+it("lists the same Claude model for a Yoplai sign-in and Claude Code and checks each with its own login", async () => {
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ anthropic: {
+    type: "oauth", access: "sk-ant-oat-fixture-owned", refresh: "fixture-refresh", expires: Date.now() + 3_600_000,
+  } }));
+  const { createExternalSources } = await import("./external-sources.js");
+  const { createModelAccess } = await import("./model-access.js");
+  const external = createExternalSources(home, { keychain: {
+    exists: async () => true,
+    read: async () => JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat-fixture-claude-code", expiresAt: Date.now() + 60_000 } }),
+  } });
+  const { routes } = createModelAccess(home, { external });
+  const enabled = await routes.request("/external/claude-code", { method: "POST", body: '{"enabled":true,"warningAccepted":true}' });
+  expect(enabled.status).toBe(200);
+  const { models } = await (await routes.request("/models")).json();
+  const model = { provider: "anthropic", model: "claude-haiku-5-5" };
+  expect(models.filter((row: typeof model) => row.provider === model.provider && row.model === model.model)).toEqual([
+    expect.objectContaining({ source: "owned", credentialType: "oauth", default: true }),
+    expect.objectContaining({ source: "claude-code", credentialType: "oauth", default: true }),
+  ]);
+  const requests: Array<string | null> = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+    requests.push(new Headers(init?.headers).get("authorization"));
+    return successfulAnthropicCall();
+  });
+  for (const source of ["claude-code", "owned"]) {
+    const response = await routes.request("/models/check", { method: "POST", body: JSON.stringify({ ...model, source }) });
+    expect(response.status).toBe(200);
+  }
+  expect(requests).toEqual(["Bearer sk-ant-oat-fixture-claude-code", "Bearer sk-ant-oat-fixture-owned"]);
+});
+
+it("does not list previously enabled device credentials in a non-desktop gateway", async () => {
+  const file = path.join(root, ".pi/agent/auth.json");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ openai: { type: "api_key", key: "fake-device-key" } }));
+  await fs.writeFile(path.join(home, "desktop-model-sources.json"), '{"pi":"enabled"}');
+  vi.stubEnv("YOPLAI_DESKTOP", undefined);
+  const { createModelAccess } = await import("./model-access.js");
+  const response = await createModelAccess(home).routes.request("/models");
+  expect(await response.json()).toEqual({ models: [] });
+});
+
+it.each(["pi", "opencode"])("requires consent before listing the Claude subscription from %s", async (source) => {
+  const file = path.join(root, source === "pi" ? ".pi/agent/auth.json" : ".local/share/opencode/auth.json");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const { createModelAccess } = await import("./model-access.js");
+  const { routes } = createModelAccess(home);
+  const enable = (warningAccepted?: boolean) => routes.request(`/external/${source}`, {
+    method: "POST", body: JSON.stringify({ enabled: true, warningAccepted }),
+  });
+  expect((await enable()).status).toBe(200);
+  await fs.writeFile(file, JSON.stringify({ anthropic: { type: "oauth", access: "sk-ant-oat-fixture", refresh: "fixture-refresh", expires: Date.now() + 60_000 } }));
+  const { external } = await (await routes.request("/")).json();
+  expect(external).toContainEqual(expect.objectContaining({ source, enabled: true, warningRequired: true,
+    providers: [expect.objectContaining({ provider: "anthropic", available: false })] }));
+  const models = async () => (await (await routes.request("/models")).json()).models;
+  const claude = expect.objectContaining({ source, provider: "anthropic", model: "claude-haiku-5-5", credentialType: "oauth" });
+  expect(await models()).not.toContainEqual(claude);
+  const unconfirmed = await enable();
+  expect(unconfirmed.status).toBe(409);
+  expect(await unconfirmed.json()).toMatchObject({ error: "warning_required" });
+  expect((await enable(true)).status).toBe(200);
+  expect((await enable()).status).toBe(200);
+  expect(await models()).toContainEqual(claude);
 });
 
 it("uses the valid Pi login in chat when the enabled Codex CLI login has expired", async () => {
@@ -191,6 +379,48 @@ it("uses the valid Pi login in chat when the enabled Codex CLI login has expired
   expect(call).toHaveBeenCalledTimes(1);
 });
 
+it("sends the selected Pi credential and stops the model call when it expires", async () => {
+  const { createModelAccess } = await import("./model-access.js");
+  const { createModelAuth } = await import("./model-auth.js");
+  const token = (offset: number, signature: string) => {
+    const payload = { exp: Math.floor(Date.now() / 1000) + offset, "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } };
+    return `fake.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${signature}`;
+  };
+  const codex = token(3600, "codex");
+  const pi = token(3600, "pi");
+  const save = async (location: string, record: unknown) => {
+    const file = path.join(root, location);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(record));
+  };
+  const savePi = (access: string) => save(".pi/agent/auth.json", { "openai-codex": { type: "oauth", access, accountId: "fixture-account" } });
+  await save(".codex/auth.json", { tokens: { access_token: codex, account_id: "fixture-account" } });
+  await savePi(pi);
+  const { routes } = createModelAccess(home);
+  for (const source of ["codex", "pi"]) expect((await routes.request(`/external/${source}`, { method: "POST", body: '{"enabled":true}' })).status).toBe(200);
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) => {
+    const bearer = new Headers(init?.headers).get("authorization");
+    calls.push(bearer === `Bearer ${pi}` ? "pi" : bearer === `Bearer ${codex}` ? "codex" : "other");
+    return successfulCall();
+  });
+  const primaryProvider = "openai-codex";
+  const primaryModel = "gpt-6-astra";
+  const auth = await createModelAuth({ home, primaryProvider, primaryModel, primarySource: "pi", mode: "api_key" });
+  const model = auth.runtime.getModel(primaryProvider, primaryModel)!;
+  const call = () => auth.runtime.completeSimple(model, { messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] });
+  expect((await call()).stopReason).toBe("stop");
+  expect(calls).toEqual(["pi"]);
+  await savePi(token(-3600, "pi-expired"));
+  const message = "Pi CLI login is not available. Sign in again or pick another source.";
+  await expect(auth.requireModelAuth(model)).rejects.toThrow(message);
+  expect(await call()).toMatchObject({ stopReason: "error", errorMessage: message });
+  expect(calls).toEqual(["pi"]);
+  const legacy = await routes.request("/models/check", { method: "POST", body: JSON.stringify({ provider: primaryProvider, model: primaryModel }) });
+  expect(legacy.status).toBe(200);
+  expect(calls).toEqual(["pi", "codex"]);
+});
+
 it("uses the current Pi Claude bearer token for each request", async () => {
   const file = path.join(root, ".pi/agent/auth.json");
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -203,7 +433,7 @@ it("uses the current Pi Claude bearer token for each request", async () => {
   const { createModelAccess } = await import("./model-access.js");
   const { createModelAuth } = await import("./model-auth.js");
   const { routes } = createModelAccess(home);
-  const enabled = await routes.request("/external/pi", { method: "POST", body: '{"enabled":true}' });
+  const enabled = await routes.request("/external/pi", { method: "POST", body: '{"enabled":true,"warningAccepted":true}' });
   expect(await enabled.json()).toMatchObject({ enabled: true });
   const { models } = await (await routes.request("/models")).json();
   expect(models).toContainEqual(expect.objectContaining({ provider: "anthropic", model: "claude-haiku-5-5", source: "pi", default: true }));

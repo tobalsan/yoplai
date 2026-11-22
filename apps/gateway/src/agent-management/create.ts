@@ -9,7 +9,7 @@ import { reloadAfterExtensionWrite } from "../extensions/reload.js";
 import type { createInstructionWriter } from "../desktop/agent-instructions.js";
 import type { createModelAccess } from "../desktop/model-access.js";
 
-import { AgentManagementError, creatorFile, defaultFaceSchema, isReservedText, modelChoiceSchema, readAgentOwner, stageAvatar, writeAvatarState, type UploadedAvatar } from "./files.js";
+import { AgentManagementError, creatorFile, defaultFaceSchema, isReservedText, matchesModelChoice, modelChoiceSchema, readAgentOwner, stageAvatar, writeAvatarState, type UploadedAvatar } from "./files.js";
 
 const bodySchema = z.object({
   requestId: z.string().uuid().transform((id) => id.toLowerCase()),
@@ -175,7 +175,7 @@ export function createAgentWriter(
         if (found) return { agent: found, status: 200 } as const;
       }
       const models = await listModels().catch(() => { throw new AgentCreateError("model_list_failed"); });
-      if (!models.some(({ provider, model }) => provider === body.model.provider && model === body.model.model)) throw new AgentCreateError("unavailable_model");
+      if (!models.some((row) => matchesModelChoice(row, body.model))) throw new AgentCreateError("unavailable_model");
       const instructions = await writeInstructions(body);
       return await withAgentsLock(parent, async () => {
         const found = await findRequest(parent, body.requestId, options);

@@ -9,6 +9,7 @@ import { defaultAvatarNumber, defaultAvatarUrl } from "../../lib/default-avatar"
 import { Button } from "../ui/Button";
 import { AvatarField, AvatarPreview, preventFileNavigation, type AvatarDraft } from "./AvatarField";
 import { ModelField, ReasoningField } from "./ModelField";
+import { FallbackModelPicker } from "../../desktop-setup/ModelPicker";
 
 type SidebarProps = {
   agent: Agent;
@@ -98,7 +99,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
     if (next.public !== before.public) patch.public = next.public;
     const current = model();
     const last = savedModel();
-    if (current?.provider && (current.provider !== last?.provider || current.model !== last?.model)) patch.model = current as ModelChoice;
+    if (current?.provider && (current.provider !== last?.provider || current.model !== last?.model || current.source !== last?.source)) patch.model = current as ModelChoice;
     const nextFallback = fallbackOn() ? fallback() : undefined;
     const lastFallback = savedFallback();
     if (!fallbackOn() && lastFallback) patch.fallbackModel = null;
@@ -186,7 +187,8 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
       <Show when={initial.canEditAgent}>
         <section class="agent-edit-fields">
           <h3>Model and reasoning</h3>
-          <ModelField models={models.error ? [] : models.latest ?? []} value={model()} disabled={models.state !== "ready" || saving()} onChange={setModel} />
+          <ModelField models={models.error ? [] : models.latest ?? []} value={model()} authMode={props.agent.authMode}
+            disabled={models.state !== "ready" || saving()} local={!props.agent.gateway} onAccessChanged={retryModels} onChange={setModel} />
           <Show when={models.error}><p role="alert" class="agent-form-error">Could not load models. <button type="button" onClick={() => void retryModels()}>Retry</button></p></Show>
           <ReasoningField value={fields().reasoning ?? null} disabled={saving()} onChange={(value: ThinkLevel | null) => edit("reasoning", value)} />
           <label class="agent-fallback-toggle">
@@ -195,8 +197,8 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
           </label>
           <Show when={fallbackOn()}>
             <div>
-              <ModelField label="Fallback model" models={models.error ? [] : models.latest ?? []} value={fallback()}
-                disabled={models.state !== "ready" || saving()} onChange={setFallback} />
+              <FallbackModelPicker models={models.error ? [] : models.latest ?? []} value={fallback()}
+                disabled={models.state !== "ready" || saving()} onSelect={setFallback} />
               <p>Used when the main model fails, for example during an outage or a rate limit.</p>
             </div>
           </Show>

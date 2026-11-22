@@ -30,12 +30,13 @@ export default function Wizard() {
   const resume = savedStep === "choice" && !!readPendingSetupLink();
   const [remote, setRemote] = createSignal(resume);
   const [link, setLink] = createSignal(resume);
-  const [models, setModels] = createSignal<Model[]>([]);
-  const [loaded, { refetch }] = createResource(() => index() === 3 && !models().length, async () => {
+  const [models, setModels] = createSignal<Model[]>();
+  const [loaded, { refetch }] = createResource(() => index() === 3 && models() === undefined, async () => {
     try { return await readModels(); }
     catch (cause) { setError(errorText(cause)); return []; }
   });
-  const agentModels = () => models().length ? models() : loaded() ?? [];
+  const agentModels = () => models() ?? loaded() ?? [];
+  const refreshAgentModels = async () => { setModels(await readModels()); };
   const [busy, setBusy] = createSignal(false);
   const [creating, setCreating] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -156,10 +157,10 @@ export default function Wizard() {
         </Match>
         <Match when={index() === 3}>
           <h1>Create your first agent.</h1>
-          <Show when={readAgentDraft() || agentModels().length} fallback={<Show when={loaded.loading} fallback={
+          <Show when={readAgentDraft() || models() !== undefined || agentModels().length} fallback={<Show when={loaded.loading} fallback={
             <button class="setup-outline" onClick={() => { setError(""); void refetch(); }}>Reload models</button>
           }><p role="status">Loading models…</p></Show>}>
-            <FirstAgent models={agentModels()} onBusy={setCreating} onCreated={createFirstChat} />
+            <FirstAgent models={agentModels()} onBusy={setCreating} onCreated={createFirstChat} onAccessChanged={refreshAgentModels} />
           </Show>
         </Match>
       </Switch>

@@ -26,10 +26,11 @@ let setupWrites: unknown[];
 let overrides: (path: string, method: string, body: Record<string, unknown>) => Response | Promise<Response> | undefined;
 
 const models = [
-  { provider: "openrouter", model: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron Lightning", source: "owned", default: false, ready: false, free: true },
-  { provider: "google", model: "environment", name: "Environment", source: "environment", default: true, ready: false, free: false },
-  { provider: "openai-codex", model: "external", name: "External", source: "codex", default: true, ready: false, free: false },
-  { provider: "openai", model: "owned", name: "Owned", source: "owned", default: true, ready: true, free: false },
+  { provider: "openrouter", model: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron Lightning", source: "owned", credentialType: "api_key", default: false, ready: false, free: true },
+  { provider: "google", model: "environment", name: "Environment", source: "environment", credentialType: "api_key", default: true, ready: false, free: false },
+  { provider: "openai-codex", model: "external", name: "External", source: "codex", credentialType: "oauth", default: true, ready: false, free: false },
+  { provider: "openai-codex", model: "external", name: "External", source: "pi", credentialType: "oauth", default: true, ready: false, free: false },
+  { provider: "openai", model: "owned", name: "Owned", source: "owned", credentialType: "api_key", default: true, ready: true, free: false },
 ];
 const response = (body: unknown, status = 200) => Response.json(body, { status });
 const heading = (name: string) => findByRole(root, "heading", { name });
@@ -259,20 +260,16 @@ it("filters providers and returns focus after Escape or a keyboard choice", asyn
   expect(await button("Provider: Mistral", form)).toBe(document.activeElement);
 });
 
-it("shows suggested models, expands a provider, and selects a free match", async () => {
+it("shows device tabs and selects a Pi CLI login in onboarding", async () => {
   boot("/setup?step=agent");
-  await click("Model: Owned OpenAI Ready");
+  await click("Model: Owned, OpenAI · API key");
   const search = getByRole(root, "combobox", { name: "Search models" });
   expect(document.activeElement).toBe(search);
-  expect(within(getByRole(root, "group", { name: "Suggested" })).getByRole("option", { name: /Owned/ })).toBeTruthy();
-  expect(queryByRole(root, "option", { name: /Nemotron/ })).toBeNull();
-  fireEvent.click(getByRole(root, "option", { name: /OpenRouter.*Expand/ }));
-  expect(getByRole(root, "option", { name: /Nemotron Lightning.*Free/ })).toBeTruthy();
-  fireEvent.input(search, { target: { value: "openrouter 3.5 free" } });
-  expect(queryByRole(root, "group", { name: "Suggested" })).toBeNull();
   expect(within(getByRole(root, "group", { name: "OpenRouter" })).getByRole("option", { name: /Nemotron Lightning.*Free/ })).toBeTruthy();
-  fireEvent.keyDown(search, { key: "Enter" });
-  expect(await button("Model: Nemotron Lightning OpenRouter Free")).toBe(document.activeElement);
+  const device = within(getByRole(root, "group", { name: "Device" }));
+  fireEvent.click(device.getByRole("tab", { name: "Pi CLI" }));
+  fireEvent.click(getByRole(root, "option", { name: "External" }));
+  expect(await button("Model: External, Pi CLI · ChatGPT subscription")).toBe(document.activeElement);
   expect(queryByRole(root, "listbox")).toBeNull();
 });
 
@@ -294,7 +291,7 @@ it("creates the agent after retry with the same request ID and does not send a g
   await click("Inbox helper");
   expect(name.value).toBe(original);
   expect((getByRole(root, "textbox", { name: "Purpose" }) as HTMLInputElement).value).toBe("Sort my inbox and draft my replies.");
-  expect(await button("Model: Owned OpenAI Ready")).toBeTruthy();
+  expect(await button("Model: Owned, OpenAI · API key")).toBeTruthy();
   await click("Shuffle face");
   await click("Create agent");
   expect((await findByRole(root, "alert")).textContent).toBe("Remove the $env: or $secret: prefix.");
@@ -302,7 +299,7 @@ it("creates the agent after retry with the same request ID and does not send a g
   await waitFor(() => expect(location.pathname).toBe("/chat/alpha"));
   expect(new URLSearchParams(location.search).get("session")).toBe(firstChat?.sessionId);
   expect(drafts).toEqual([drafts[0], drafts[0]]);
-  expect(drafts[0]).toMatchObject({ model: { provider: "openai", model: "owned" }, name: original });
+  expect(drafts[0]).toMatchObject({ model: { provider: "openai", model: "owned", source: "owned" }, name: original });
   expect(setupWrites).toEqual([expect.objectContaining({ wizardExited: true })]);
 });
 

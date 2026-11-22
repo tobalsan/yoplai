@@ -1,26 +1,25 @@
 import { createMemo } from "solid-js";
-import type { ThinkLevel } from "@yoplai/shared/types";
-import { modelKey, type Model } from "../../desktop-setup/api";
-import { ModelPicker } from "../../desktop-setup/ModelPicker";
+import type { ModelSource, ThinkLevel } from "@yoplai/shared/types";
+import { modelKey, resolveModelChoice, type Model } from "../../desktop-setup/api";
+import { ManagedModelPicker } from "../../desktop-setup/ManagedModelPicker";
 import type { ModelChoice } from "../../api/agent-management";
+import type { Agent } from "../../api/types";
 import { SearchPicker } from "../SearchPicker";
 
 export function ModelField(props: {
-  label?: string;
   models: Model[];
-  value?: { provider?: string; model: string };
+  value?: { provider?: string; model: string; source?: ModelSource };
+  authMode?: Agent["authMode"];
   disabled?: boolean;
+  local?: boolean;
+  onAccessChanged?: () => unknown;
   onChange: (choice: ModelChoice) => void;
 }) {
   const index = createMemo(() => new Map(props.models.map((model) => [modelKey(model), model])));
-  const selected = createMemo(() => {
-    const value = props.value;
-    if (!value) return undefined;
-    const choice = { provider: value.provider ?? "", model: value.model };
-    return index().get(modelKey(choice)) ?? { ...choice, name: value.model, ready: false, source: "", default: false, free: false };
-  });
-  return <ModelPicker grouped label={props.label} models={props.models} selected={selected()} disabled={props.disabled === true}
-    onSelect={(key) => { const model = index().get(key); if (model) props.onChange({ provider: model.provider, model: model.model }); }} />;
+  const selected = createMemo(() => props.value && resolveModelChoice(props.models, props.value, props.authMode));
+  return <ManagedModelPicker models={props.models} selected={selected()} unavailable={props.value} disabled={props.disabled === true}
+    local={props.local} onAccessChanged={props.onAccessChanged}
+    onSelect={(key) => { const model = index().get(key); if (model) props.onChange({ provider: model.provider, model: model.model, source: model.source }); }} />;
 }
 
 const reasoning: ReadonlyArray<readonly [ThinkLevel | "", string]> = [

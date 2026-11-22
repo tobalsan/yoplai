@@ -7,6 +7,7 @@ import { AvatarField, preventFileNavigation, type AvatarDraft } from "../compone
 import { ModelField } from "../components/agent-management/ModelField";
 import { createDiscardPrompt } from "../components/agent-management/discard";
 import { Button } from "../components/ui/Button";
+import { resolveModelChoice } from "../desktop-setup/api";
 
 const initialFace = 1;
 
@@ -30,7 +31,7 @@ export function NewAgent() {
   createEffect(() => {
     if (models.state !== "ready") return;
     const current = model();
-    if (current && !models()?.some((choice) => choice.provider === current.provider && choice.model === current.model)) setModel(undefined);
+    if (current && !resolveModelChoice(models() ?? [], current)) setModel(undefined);
   });
   const [name, setName] = createSignal("");
   const [purpose, setPurpose] = createSignal("");
@@ -112,7 +113,8 @@ export function NewAgent() {
         <input name="purpose" maxLength={280} placeholder="Plan trips, compare options, or help with writing." value={purpose()} disabled={saving()}
           onInput={(event) => setPurpose(event.currentTarget.value)} />
       </label>
-      <ModelField models={models.error ? [] : models.latest ?? []} value={model()} disabled={models.state !== "ready" || saving()} onChange={setModel} />
+      <ModelField models={models.error ? [] : models.latest ?? []} value={model()} disabled={models.state !== "ready" || saving()}
+        local={!!gateway() && !gateway()?.name} onAccessChanged={retryModels} onChange={setModel} />
       <Show when={models.error}><p class="agent-form-error" role="alert">Could not load models. <button type="button" onClick={() => void retryModels()}>Retry</button></p></Show>
       <Show when={gateways()?.length === 0}><p class="agent-form-error" role="alert">No connected gateway allows agent creation.</p></Show>
       <Show when={error()}><p class="agent-form-error" role="alert">{error()}</p></Show>

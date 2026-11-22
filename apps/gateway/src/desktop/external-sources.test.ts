@@ -230,7 +230,7 @@ it("uses a Pi Claude login only for the trusted Anthropic model", async () => {
     exists: async () => true,
     read: async () => JSON.stringify({ claudeAiOauth: { accessToken: claudeCodeAccess, expiresAt: Date.now() + 60_000 } }),
   } });
-  const status = await external.enable("pi", true);
+  const status = await external.enable("pi", true, true);
   expect(status).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: true }] });
   expect(JSON.stringify(status)).not.toContain(access);
   expect(JSON.stringify(status)).not.toContain("fake-refresh");
@@ -255,7 +255,7 @@ it("shows the Pi Claude expiry note without hiding other Pi credentials", async 
     openai: { type: "api_key", key: "fake-pi-openai" },
   });
   const external = createExternalSources(home);
-  await external.enable("pi", true);
+  await external.enable("pi", true, true);
   const status = (await external.status()).find((row) => row.source === "pi");
   expect(status).toMatchObject({ enabled: true, message, providers: [
     { provider: "anthropic", type: "oauth", available: false, message },
@@ -266,13 +266,13 @@ it("shows the Pi Claude expiry note without hiding other Pi credentials", async 
   expect(await external.resolve("anthropic", runtime.getModel("anthropic", "claude-haiku-5-5"))).toBeUndefined();
 });
 
-it("does not offer a malformed Pi Claude login", async () => {
+it.each(["pi", "opencode"] as const)("does not offer a malformed Claude login from %s", async (source) => {
   const { createExternalSources } = await import("./external-sources.js");
   const { createModelAuth } = await import("./model-auth.js");
   const access = "fake-token-without-marker";
-  await fixture("pi", { anthropic: { type: "oauth", access, expires: Date.now() + 60_000 } });
+  await fixture(source, { anthropic: { type: "oauth", access, expires: Date.now() + 60_000 } });
   const external = createExternalSources(home);
-  const status = await external.enable("pi", true);
+  const status = await external.enable(source, true);
   expect(status).toMatchObject({ enabled: true, providers: [{ provider: "anthropic", type: "oauth", available: false }] });
   expect(status).not.toHaveProperty("message");
   expect(JSON.stringify(status)).not.toContain(access);
@@ -281,7 +281,6 @@ it("does not offer a malformed Pi Claude login", async () => {
 });
 
 it.each([
-  { source: "opencode", provider: "anthropic", entry: { type: "oauth", access: "sk-ant-oat-fake" } },
   { source: "pi", provider: "anthropic", entry: { type: "api_key", key: "sk-ant-oat-fake" } },
   { source: "pi", provider: "openai", entry: { type: "api_key", key: "sk-ant-oat-fake" } },
   { source: "opencode", provider: "anthropic", entry: { type: "api", key: "sk-ant-oat-fake" } },
@@ -371,6 +370,7 @@ it("reports an expired Claude Code login and clears the message after re-enablin
   await sources.enable("claude-code", true, true);
   expect((await sources.status()).find((row) => row.source === "claude-code")).toEqual({
     source: "claude-code", detected: true, enabled: true, denied: false,
+    path: "Keychain",
     providers: [{ provider: "anthropic", type: "oauth", available: true }],
   });
 });
@@ -406,6 +406,7 @@ it("reports an expired Pi login only when Pi has no usable credential", async ()
   await fixture("pi", { ...expired, openai: { type: "api_key", key: "fake-file-key" } });
   expect((await sources.status()).find((row) => row.source === "pi")).toEqual({
     source: "pi", detected: true, enabled: true, denied: false,
+    path: "~/.pi/agent",
     providers: [
       { provider: "openai-codex", type: "oauth", available: false },
       { provider: "openai", type: "api_key", available: true },

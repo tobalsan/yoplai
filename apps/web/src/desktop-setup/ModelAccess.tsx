@@ -16,7 +16,7 @@ const attemptPath = (attempt: Attempt) => `model-access/oauth/attempts/${encodeU
 
 export function ReadyMark() { return <span class="setup-ready">Ready</span>; }
 
-export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
+export function ModelAccess(props: { onContinue: (models: Model[]) => void; editing?: boolean; addKey?: boolean; onDetachedActionSettled?: () => void }) {
   const [error, setError] = createSignal("");
   const [attempts, setAttempts] = createSignal<Attempt[]>([]);
   let firstRead = true;
@@ -30,7 +30,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
   });
   const [busy, setBusy] = createSignal(false);
   const [confirm, setConfirm] = createSignal<{ message: string; accept: () => Promise<void>; keyForm?: true }>();
-  const [entry, setEntry] = createSignal(false);
+  const [entry, setEntry] = createSignal(props.addKey === true);
   const [provider, setProvider] = createSignal("");
   const [key, setKey] = createSignal("");
   const [codes, setCodes] = createSignal<Record<string, string>>({});
@@ -54,7 +54,10 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     if (busy()) return;
     setBusy(true);
     setError("");
-    try { await action(); } catch (cause) { fail(cause); } finally { setBusy(false); }
+    try { await action(); } catch (cause) { fail(cause); } finally {
+      setBusy(false);
+      if (disposed) props.onDetachedActionSettled?.();
+    }
   };
   const finish = async (attempt: Attempt) => {
     updateAttempt(attempt);
@@ -94,7 +97,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     }
   };
   const toggle = async (id: string, enabled: boolean, warningAccepted = false): Promise<void> => {
-    try { await request(sourcePath(id), "POST", { enabled, warningAccepted }); await reload(); }
+    try { await request(sourcePath(id), "POST", { enabled, warningAccepted }); if (!disposed) await reload(); }
     catch (cause) { confirmError(cause, "warning_required", "", () => toggle(id, enabled, true)); }
   };
   let keyRevision = 0;
@@ -143,7 +146,7 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
         return <><section class="setup-model-row" aria-label={row.name} classList={{ "setup-row-ready": ready(row.id) }}>
           <div class="setup-model-line">
             <div class="setup-row-label"><strong>{row.name}</strong>
-              <Show when={external(row.id)}><span>Found on this Mac</span></Show>
+              <Show when={external(row.id)}><span>Found on this device</span></Show>
               <Show when={row.id === "anthropic"}><small class="setup-tag">Experimental</small></Show>
             </div>
             <Show when={ready(row.id)}><ReadyMark /></Show>
@@ -151,8 +154,12 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
               <Show when={row.id === "key"} fallback={
                 <Show when={!attempt()}><button class="setup-outline" disabled={busy() || info.loading} onClick={() => void perform(() => signIn(row.id))}>Sign in</button></Show>
               }><button class="setup-outline" disabled={busy()} onClick={() => { setEntry(true); setError(""); }}>Add a key</button></Show>
-            }>{(source) => <button role="switch" aria-label={row.name} aria-checked={source().enabled} class="setup-switch" disabled={busy()}
-                onClick={() => void perform(() => toggle(row.id, !source().enabled))}><span /></button>}</Show>
+            }>{(source) => <>
+              <Show when={source().warningRequired}><button type="button" class="setup-outline" disabled={busy()}
+                onClick={() => void perform(() => toggle(row.id, true))}>Review Anthropic terms</button></Show>
+              <button type="button" role="switch" aria-label={row.name} aria-checked={source().enabled} class="setup-switch" disabled={busy()}
+                onClick={() => void perform(() => toggle(row.id, !source().enabled))}><span /></button>
+            </>}</Show>
           </div>
           <Show when={external(row.id)?.message ?? (external(row.id)?.denied ? "Access denied" : undefined)}>{(message) => <p class="setup-row-note" role="alert">{message()}</p>}</Show>
           <Show when={row.id === "claude-code"}><p class="setup-row-note">macOS can ask for Keychain access.</p></Show>
@@ -207,6 +214,6 @@ export function ModelAccess(props: { onContinue: (models: Model[]) => void }) {
     <Show when={error()}><p role="alert">{error()}</p></Show>
     <Show when={info.loading && !info()}><p role="status">Loading models…</p></Show>
     <Show when={!info.loading && !info()}><button class="setup-outline" onClick={() => void perform(async () => { await reload(); })}>Retry</button></Show>
-    <button class="setup-primary" disabled={!modelList().length || busy() || !!confirm()} onClick={() => props.onContinue(modelList())}>Continue</button>
+    <button type="button" class="setup-primary" disabled={(props.editing ? info.loading : !modelList().length) || busy() || !!confirm()} onClick={() => props.onContinue(modelList())}>{props.editing ? "Done" : "Continue"}</button>
   </>;
 }

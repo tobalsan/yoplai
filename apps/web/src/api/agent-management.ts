@@ -1,9 +1,9 @@
-import type { ThinkLevel } from "@yoplai/shared/types";
+import type { ModelSource, ThinkLevel } from "@yoplai/shared/types";
 import type { Model } from "../desktop-setup/api";
 import { apiFetch } from "./core";
 import { fetchGatewayList, gatewayApiPath, type GatewayName } from "./gateway";
 
-export type ModelChoice = Pick<Model, "provider" | "model">;
+export type ModelChoice = Pick<Model, "provider" | "model"> & { source?: ModelSource };
 type Skill = { id: string; name: string; description: string };
 export type ToggleableSkill = Skill & { enabled: boolean };
 export type AgentSettings = {
@@ -14,7 +14,7 @@ export type AgentSettings = {
   description?: string;
   hasCustomAvatar: boolean;
   defaultFace?: number;
-  model?: { provider?: string; model: string };
+  model?: { provider?: string; model: string; source?: ModelSource };
   fallbackModel?: { provider?: string; model: string } | null;
   reasoning?: ThinkLevel | null;
   instructions?: string;
@@ -24,7 +24,7 @@ export type AgentSettingsPatch = {
   name?: string;
   description?: string;
   model?: ModelChoice;
-  fallbackModel?: ModelChoice | null;
+  fallbackModel?: Pick<ModelChoice, "provider" | "model"> | null;
   reasoning?: ThinkLevel | null;
   instructions?: string;
   avatar?: number;

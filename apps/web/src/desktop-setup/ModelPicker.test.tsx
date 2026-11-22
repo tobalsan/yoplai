@@ -1,28 +1,35 @@
 // @vitest-environment jsdom
-import { fireEvent, getByRole, within } from "@testing-library/dom";
+import { fireEvent, getByRole, queryByRole, within } from "@testing-library/dom";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { expect, it } from "vitest";
 import { ModelPicker } from "./ModelPicker";
-import type { Model } from "./api";
+import { modelKey, type Model } from "./api";
 
-it("marks only the suggested row as selected when its provider family expands", () => {
-  const model: Model = {
-    provider: "anthropic", model: "claude-haiku", name: "Claude Haiku",
-    source: "owned", default: true, ready: true, free: false,
+it("chooses the same GPT model from the ChatGPT and Pi CLI tabs", () => {
+  const chatgpt: Model = {
+    provider: "openai-codex", model: "gpt-6-astra", name: "GPT-6 Astra",
+    source: "owned", credentialType: "oauth", default: true, ready: false, free: false,
   };
+  const pi: Model = { ...chatgpt, source: "pi" };
   const root = document.body.appendChild(document.createElement("div"));
-  const dispose = render(() => <ModelPicker models={[model]} selected={model} suggested={model}
-    disabled={false} onSelect={() => undefined} />, root);
+  const dispose = render(() => {
+    const [selected, setSelected] = createSignal(chatgpt);
+    return <ModelPicker models={[chatgpt, pi]} selected={selected()} disabled={false}
+      onSelect={(key) => setSelected(key === modelKey(pi) ? pi : chatgpt)} />;
+  }, root);
   try {
-    fireEvent.click(getByRole(root, "button", { name: /Model: Claude Haiku/ }));
-    const list = within(getByRole(root, "listbox", { name: "Model" }));
-    fireEvent.click(list.getByRole("option", { name: /Anthropic.*Expand/ }));
-    expect(list.getAllByRole("option", { name: /Claude Haiku/ })).toHaveLength(2);
-    expect(list.getAllByRole("option", { selected: true })).toHaveLength(1);
-    const suggested = within(list.getByRole("group", { name: "Suggested" }));
-    expect(suggested.getByRole("option", { name: /Claude Haiku/, selected: true })).toBeTruthy();
+    fireEvent.click(getByRole(root, "button", { name: /Model: GPT-6 Astra.*ChatGPT · Subscription/ }));
+    const tabs = within(getByRole(root, "tablist", { name: "Model sources" }));
+    expect(tabs.getByRole("tab", { name: "ChatGPT", selected: true })).toBeTruthy();
+    expect(tabs.queryByRole("tab", { name: "Codex CLI" })).toBeNull();
+    expect(queryByRole(root, "button", { name: "Sign out" })).toBeNull();
+    fireEvent.click(tabs.getByRole("tab", { name: "Pi CLI" }));
     fireEvent.input(getByRole(root, "combobox", { name: "Search models" }), { target: { value: "haiku" } });
-    expect(list.getAllByRole("option", { name: /Claude Haiku/, selected: true })).toHaveLength(1);
+    expect(queryByRole(root, "option", { name: "GPT-6 Astra" })).toBeNull();
+    fireEvent.input(getByRole(root, "combobox", { name: "Search models" }), { target: { value: "astra" } });
+    fireEvent.click(getByRole(root, "option", { name: "GPT-6 Astra" }));
+    expect(getByRole(root, "button", { name: /Model: GPT-6 Astra.*Pi CLI · ChatGPT subscription/ })).toBeTruthy();
   } finally {
     dispose();
     root.remove();

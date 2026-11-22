@@ -366,7 +366,8 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
     const current = agent();
     const models = setup?.models();
     return current && !current.gateway && current.model && models && !models.some((model) =>
-      model.provider === current.model?.provider && model.model === current.model.model);
+      model.provider === current.model?.provider && model.model === current.model.model &&
+      (!current.model.source || model.source === current.model.source));
   };
   const repairModel = () => setupRepairHref("model", stripBase(location.pathname) + location.search);
   const [panelStorageReady, setPanelStorageReady] = createSignal(false);

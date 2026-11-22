@@ -65,14 +65,31 @@ request passes the desktop access checks below.
 | POST | `/api/model-access/oauth/attempts/:handle/cancel` | Cancel without a body; returns the attempt |
 | POST | `/api/model-access/api-key` | Body `{ provider, key, checkOnly?, replace? }`; returns `{ provider, model, ready, saved }` |
 | POST | `/api/model-access/external/:source` | Body `{ enabled, warningAccepted? }` for `codex`, `claude-code`, `opencode`, `pi` |
-| GET | `/api/model-access/models` | `{ models: [{ provider, model, name, source, ready, default, free }] }` |
-| POST | `/api/model-access/models/check` | Body `{ provider, model }`; `{ provider, model, ready }` (`422` with `message` if not ready) |
+| GET | `/api/model-access/models` | `{ models: [{ provider, model, name, source, credentialType, native?, ready, default, free }] }` |
+| POST | `/api/model-access/models/check` | Body `{ provider, model, source? }`; `{ provider, model, ready }` (`422` with `message` if not ready) |
 | DELETE | `/api/model-access/:provider` | Remove the owned credential (`204`) |
 | POST | `/api/agents` | Create a desktop agent (same guard as the routes above) |
 
 Attempt `state` is `waiting-browser`, `waiting-code`, `done`, `failed`, or
 `cancelled`. Model access responses do not return stored keys. Use
 `checkOnly: true` to check an API key without saving it.
+
+Each model row identifies one eligible `(source, provider, model)` and reports
+the `credentialType` (`oauth` or `api_key`). `source` is one of `owned`, `pi`,
+`codex`, `claude-code`, `opencode`, or `environment`. Readiness and the default
+are tracked per source. An environment row resolved by the provider itself
+carries `native: true`. The agent management models endpoint returns the same row
+shape and includes Device rows only on a desktop gateway with relay enabled.
+
+External status entries include a `path` (a home-relative directory or `Keychain`)
+and an optional `version`. `warningRequired: true` indicates a Claude login that
+needs consent before use. The enable route returns `409 warning_required` with
+the terms message until the client resubmits with `warningAccepted: true`.
+
+Agent creation and settings accept `{ provider, model, source? }` and settings
+returns the saved `source`. An in-process Pi run uses the saved source for the
+agent's primary model. Source-less agents, per-run overrides, and fallback models
+use normal credential precedence. Container runs use their own auth runtime.
 
 These routes require `YOPLAI_DESKTOP=1`, relay enabled, and multi-user mode off.
 The listener, socket peer and all forwarded addresses must be loopback. `Host`

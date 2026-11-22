@@ -29,9 +29,11 @@ pnpm yoplai agents migrate
 
 Use **New agent** on the Agents page to create an agent under
 `$YOPLAI_HOME/agents/<id>/`. Open **Agent settings** in its chat to change
-its identity, avatar, model, reasoning, fallback model, instructions, and skills. The model
-picker and instruction writer use the gateway's existing run credentials.
-Enabling management lets eligible creators use those credentials. If the
+its identity, avatar, model, reasoning, fallback model, instructions, and skills.
+The main model picker groups models by credential source. The selected source is saved with
+the model and used for instruction drafting and in-process Pi runs. If its
+credential becomes unavailable, choose another source or reconnect it. Existing
+agents without a saved source keep their usual credential precedence. If the
 model cannot generate instructions, creation uses a template.
 
 | `agentManagement` | Single-user gateway | Multi-user gateway |
