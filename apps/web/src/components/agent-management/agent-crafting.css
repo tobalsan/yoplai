@@ -1,0 +1,111 @@
+.agent-crafting {
+  --craft-size: clamp(96px, min(15vw, 20vh), 220px);
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+  outline: none;
+  background: var(--setup-paper, var(--bg-base));
+  color: var(--text-primary);
+}
+
+.agent-crafting canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.agent-crafting-drag { position: absolute; inset: 0 0 auto; height: 40px; }
+[data-yoplai-desktop] .agent-crafting-drag { -webkit-app-region: drag; }
+
+.agent-crafting-avatar {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  width: var(--craft-size);
+  height: var(--craft-size);
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  animation: craft-float 3.7s ease-in-out infinite;
+}
+.agent-crafting-avatar::before {
+  content: "";
+  position: absolute;
+  inset: -55%;
+  background: radial-gradient(ellipse, rgb(var(--craft-tint, 255 200 90) / 30%), transparent 68%);
+}
+.agent-crafting-avatar img { position: relative; width: 100%; height: 100%; object-fit: contain; }
+.agent-crafting-avatar .craft-upload { border-radius: 24%; object-fit: cover; }
+.agent-crafting-done .agent-crafting-avatar { animation: craft-hop 1s both; }
+
+.agent-crafting-copy {
+  position: absolute;
+  inset: min(calc(38% + var(--craft-size) * 1.45), 65%) 0 0;
+  padding: 0 20px 16px;
+  overflow: auto;
+  text-align: center;
+}
+.agent-crafting-copy h1 {
+  margin: 0;
+  font-size: clamp(28px, 3.6vw, 58px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  overflow-wrap: anywhere;
+}
+.agent-crafting-done h1 { animation: craft-title 500ms ease-out both; }
+.agent-crafting-status {
+  display: grid;
+  place-items: center;
+  min-height: 2.5em;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: clamp(15px, 1.35vw, 21px);
+}
+.agent-crafting-line, .agent-crafting-outgoing { grid-area: 1 / 1; }
+.agent-crafting-line { animation: craft-line 560ms 90ms cubic-bezier(.2,.85,.25,1) both; }
+.agent-crafting-outgoing { animation: craft-line-out 380ms ease-in forwards; }
+.agent-crafting-dots i { font-style: normal; animation: craft-dot 1.2s infinite; }
+.agent-crafting-dots i:nth-child(2) { animation-delay: .2s; }
+.agent-crafting-dots i:nth-child(3) { animation-delay: .4s; }
+.agent-crafting-phases {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: min(80vw, 420px);
+  margin: clamp(14px, 3vh, 30px) auto 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.agent-crafting-phases .craft-active { color: var(--text-primary); }
+.agent-crafting-bar { height: 3px; margin-bottom: 9px; border-radius: 3px; background: var(--bg-raised); overflow: hidden; }
+.agent-crafting-bar i {
+  display: block;
+  height: 100%;
+  background: var(--text-primary);
+  transform-origin: left;
+  transition: transform 100ms linear;
+}
+.agent-crafting-done .agent-crafting-bar i { transition: transform 600ms cubic-bezier(.2,.85,.25,1); }
+
+@keyframes craft-float { 0%, 100% { transform: translateY(-3%) rotate(-3deg); } 50% { transform: translateY(3%) rotate(3deg); } }
+@keyframes craft-hop {
+  0%, 100% { transform: none; }
+  24% { transform: scale(1.12, .88); }
+  46% { transform: translateY(-42%) scale(.94, 1.07); }
+  78% { transform: scale(1.06, .94); }
+}
+@keyframes craft-title { from { opacity: 0; transform: scale(1.06); } }
+@keyframes craft-line { from { opacity: 0; transform: translateY(90%); filter: blur(5px); } }
+@keyframes craft-line-out { to { visibility: hidden; opacity: 0; transform: translateY(-90%); filter: blur(5px); } }
+@keyframes craft-dot { 0%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-crafting .agent-crafting-avatar, .agent-crafting h1, .agent-crafting-line, .agent-crafting-dots i { animation: none; }
+  .agent-crafting-outgoing { display: none; }
+  .agent-crafting .agent-crafting-bar i { transition: none; }
+}

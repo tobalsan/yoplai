@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, getByRole, queryByRole, waitFor } from "@testing-library/dom";
+import { findByRole, fireEvent, getByRole, queryByRole, waitFor, within } from "@testing-library/dom";
 import { Route, Router } from "@solidjs/router";
 import { render } from "solid-js/web";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,15 +11,16 @@ afterEach(() => {
   document.body.replaceChildren();
   document.documentElement.removeAttribute("data-yoplai-desktop");
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("protects the draft and creates with the selected gateway's model", async () => {
   history.replaceState(null, "", "/agents/new");
   document.documentElement.setAttribute("data-yoplai-desktop", "");
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   const writes: Array<{ path: string; body: unknown }> = [];
   let reply!: (response: Response) => void;
-  const pending = new Promise<Response>((resolve) => { reply = resolve; });
   vi.stubGlobal("fetch", async (path: string, options: RequestInit) => {
     if (path === "/api/relay/gateways") return Response.json({ gateways: [{ name: "east" }, { name: "west" }] });
     if (path.endsWith("/permissions")) return Response.json({ canCreate: !path.includes("/west/") });
@@ -30,7 +31,7 @@ it("protects the draft and creates with the selected gateway's model", async () 
     }
     if (path.endsWith("/agents") && options.method === "POST") {
       writes.push({ path, body: JSON.parse(String(options.body)) });
-      return pending;
+      return new Promise<Response>((resolve) => { reply = resolve; });
     }
     return Response.json({}, { status: 404 });
   });
@@ -75,15 +76,27 @@ it("protects the draft and creates with the selected gateway's model", async () 
   fireEvent.click(byRole("link", "Agents"));
   expect(queryByRole(document.body, "alertdialog")).toBeNull();
   expect(location.pathname).toBe("/agents/new");
+  const screen = byRole("dialog", "Agent creation");
+  expect(within(screen).getByRole("status").textContent).toContain("Crafting Garden Guide");
+  reply(Response.json({ message: "Could not create the agent." }, { status: 503 }));
+  expect(await findByRole(document.body, "alert")).toBeTruthy();
+  expect(queryByRole(document.body, "dialog", { name: "Agent creation" })).toBeNull();
+  fireEvent.click(create);
+  await waitFor(() => expect(writes).toHaveLength(2));
   reply(Response.json({ id: "garden-guide" }, { status: 201 }));
-  await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy());
+  const finish = await findByRole(document.body, "heading", { name: "Garden Guide is ready." });
+  expect(finish).toBeTruthy();
+  expect(location.pathname).toBe("/agents/new");
+  await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy(), { timeout: 1800 });
   expect(location.pathname).toBe("/chat/garden-guide%40east");
-  expect(writes).toEqual([{ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed", source: "owned" } }) }]);
+  expect(writes[0]).toEqual({ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed", source: "owned" } }) });
+  expect(writes[1]).toEqual(writes[0]);
 });
 
 it("submits and retries with the same UUID on plain HTTP", async () => {
   history.replaceState(null, "", "/agents/new");
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
   const requestIds: string[] = [];
   vi.stubGlobal("fetch", async (path: string, options: RequestInit) => {

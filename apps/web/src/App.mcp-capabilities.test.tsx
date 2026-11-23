@@ -23,6 +23,11 @@ beforeEach(() => {
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("WebSocket", class {
+    static readonly OPEN = 1;
+    readonly readyState = 0;
+    close() {}
+  });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), location.origin).pathname;
     const method = init?.method ?? "GET";

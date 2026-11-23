@@ -12,6 +12,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Added
 
 - Prepare conversation handoffs that preserve recent messages and earlier user requests verbatim, with references for clipped or omitted history.
+- A full-screen progress view shows the selected avatar during agent creation in desktop setup and on the Agents page.
 - Pilot a permanent private web chat per user with `durable: true` in an agent's configuration. Main keeps its history across gateway restarts and deduplicates retried sends.
 - Choose a model by credential source during onboarding, agent creation, and settings. In-process runs use the saved source and report when it becomes unavailable.
 - Create agents and edit their settings in web and desktop chat. Desktop can also create on a linked gateway that allows it. New multi-user agents start private to their creator.
@@ -38,6 +39,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 - Omit unfinished blocks from agent and chat project drafts. Keep closed code fences even when an unfinished paragraph immediately follows them.
 - Use the same picker for both model fields in Agent settings. Show the selected fallback source until the settings reload.
+- The agent creation screen in browser setup uses the wizard background to keep text readable.
 - Configure Mattermost, Slack, Telegram, Discord, IRC, and Threadit in web and desktop agent settings. Saves apply live, and incomplete setups show what is missing. Per-agent settings live under `extensions.<id>`. Deprecated top-level channel blocks still load.
 - External MCP apps from linked gateways render in desktop chat and fullscreen, with edits sent back to the linked gateway.
 - Same-page links scroll and move keyboard focus in linked dashboards without closing the dashboard on desktop.

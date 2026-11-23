@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 import { createAgent, fetchAgentModels, fetchCreationGateways, type CreationGateway, type ModelChoice } from "../api/agent-management";
 import { startNewChat } from "../api/chat";
 import { qualifiedAgentId } from "../api/gateway";
+import { AgentCraftingScreen, finishCrafting } from "../components/agent-management/AgentCraftingScreen";
 import { AvatarField, preventFileNavigation, type AvatarDraft } from "../components/agent-management/AvatarField";
 import { ModelField } from "../components/agent-management/ModelField";
 import { createDiscardPrompt } from "../components/agent-management/discard";
@@ -37,6 +38,7 @@ export function NewAgent() {
   const [purpose, setPurpose] = createSignal("");
   const [avatar, setAvatar] = createSignal<AvatarDraft>({ face: initialFace });
   const [saving, setSaving] = createSignal(false);
+  const [doneAt, setDoneAt] = createSignal<number>();
   const [error, setError] = createSignal("");
   let finished = false;
   let disposed = false;
@@ -71,11 +73,14 @@ export function NewAgent() {
     const selected = model();
     const destination = gateway();
     if (!selected || !destination || !ready()) return;
+    setDoneAt(undefined);
     setSaving(true);
     setError("");
     try {
       requestId ??= createRequestId();
       const result = await createAgent({ name: name().trim(), purpose: purpose().trim(), requestId, model: selected, avatar: avatar().face }, destination.name, avatar().file);
+      if (disposed) return;
+      await finishCrafting(setDoneAt);
       if (disposed) return;
       const agentId = qualifiedAgentId(result.id, destination.name);
       finished = true;
@@ -124,5 +129,8 @@ export function NewAgent() {
       </footer>
     </form>
     <discard.Dialog />
+    <Show when={saving()}>
+      <AgentCraftingScreen name={name().trim()} face={avatar().face} file={avatar().file} doneAt={doneAt()} />
+    </Show>
   </main>;
 }
