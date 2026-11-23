@@ -1,9 +1,9 @@
 import { once } from "node:events";
 import fs from "node:fs/promises";
-import type { AddressInfo } from "node:net";
+import { createServer, type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import type { Extension, ExtensionReplyReviewer, WsClientMessage, WsSendMessage, WsServerMessage } from "@yoplai/shared";
+import type { Extension, ExtensionReplyReviewer, ModelSource, WsClientMessage, WsSendMessage, WsServerMessage } from "@yoplai/shared";
 import { vi } from "vitest";
 import { z } from "zod";
 import { WebSocket } from "ws";
@@ -13,8 +13,8 @@ type TestUser = "local" | "alice" | "bob";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "durable: true", reviewer, legacyAnswer, tokensPerSecond,
-}: { multiUser?: boolean; extraYaml?: string; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number } = {}) {
+  multiUser = false, extraYaml = "durable: true", reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false,
+}: { multiUser?: boolean; extraYaml?: string; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -25,9 +25,17 @@ export async function startDurableTestGateway({
   let stopAuth: (() => Promise<void>) | undefined;
   let restoreLegacy: (() => void) | undefined;
 
+  let appsPort: number | undefined;
+  if (appViews) {
+    const probe = createServer().listen(0, "127.0.0.1");
+    await once(probe, "listening");
+    appsPort = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()));
+  }
   vi.stubEnv("YOPLAI_HOME", home);
   await writeTestV3Config(home, {
-    agents: [{ id: "pilot", model: { provider: "faux", model: "fixture" }, extraYaml }],
+    extraConfig: { oauth: { encryptionKey: "fixture-encryption-key-durable" }, ...extraConfig, ...(appsPort ? { apps: { port: appsPort, origin: "http://127.0.0.1:" + appsPort } } : {}) },
+    agents: [{ id: "pilot", model: modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
     extensions: multiUser ? {
       multiUser: {
         enabled: true, autoApprove: true, emailAndPassword: { enabled: true },
@@ -40,11 +48,11 @@ export async function startDurableTestGateway({
   const { loadConfig, reloadConfig } = await import("../config/index.js");
   const { getExtensionRuntime } = await import("../extensions/registry.js");
   const { createDurableFaux } = await import("../durable/faux.js");
-  const faux = createDurableFaux(tokensPerSecond);
+  const faux = createDurableFaux(tokensPerSecond, modelFixture);
   faux.script("The seedlings are ready.");
   const runtime = getExtensionRuntime();
 
-  const extensions: Extension[] = [];
+  const extensions: Extension[] = [...fixtureExtensions];
   if (reviewer) {
     extensions.push({
       id: "fixture-reviewer", displayName: "Fixture Reviewer", description: "", dependencies: [], routePrefixes: [],
@@ -180,8 +188,36 @@ export async function startDurableTestGateway({
     script: faux.script,
     callCount: faux.callCount,
     requests: faux.requests,
+    offeredTools: faux.offeredTools,
+    prompt: faux.prompt,
+    request: (user: TestUser, pathname: string, init?: RequestInit) => fetch(base + pathname, {
+      ...init, headers: { ...init?.headers, Cookie: cookie(user) },
+    }),
+    async seedConversationFile(user: TestUser, name: string, content: string) {
+      const { getConversationFiles } = await import("../media/conversation-files.js");
+      const { DURABLE_MAIN_SESSION_ID } = await import("@yoplai/shared");
+      const folder = getConversationFiles("pilot", DURABLE_MAIN_SESSION_ID, user === "local" ? undefined : users.get(user)!.id);
+      const filename = path.join(folder.hostPath, name);
+      await fs.writeFile(filename, content);
+      return filename;
+    },
+    accountId: (user: TestUser) => users.get(user)!.id,
+    async seedPersonalToken(user: TestUser, extension: string, apiToken: string) {
+      const { storePersonalExtensionTokens } = await import("../credentials/extension-tokens.js");
+      const { CredentialStore } = await import("../credentials/store.js");
+      storePersonalExtensionTokens(new CredentialStore(), users.get(user)!.id, extension, { apiToken });
+    },
     close: cleanUp,
     failBetweenCommits() { fault = true; },
+    async seedModelKeys(keys: Record<string, string>) {
+      await fs.writeFile(path.join(home, "auth.json"), JSON.stringify(Object.fromEntries(
+        Object.entries(keys).map(([provider, key]) => [provider, { type: "api_key", key }]),
+      )), { mode: 0o600 });
+    },
+    async configure(model: string, yaml = extraYaml, source?: ModelSource) {
+      await writeTestAgent(home, { id: "pilot", model: { provider: modelFixture?.provider ?? "faux", model, source }, extraYaml: yaml });
+      reloadConfig();
+    },
     async restart(model?: string) {
       await stop();
       await stopAuth?.();

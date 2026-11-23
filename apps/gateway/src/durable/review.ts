@@ -5,10 +5,11 @@ import {
 } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
 import type { AgentConfig } from "@yoplai/shared";
-import { getAgent, loadConfig } from "../config/index.js";
+import { getAgent, loadConfig, resolveWorkspaceDir } from "../config/index.js";
 import type { ExtensionRuntime, LoadedReplyReviewer } from "../extensions/runtime.js";
 import { logWarn } from "../logging.js";
-import { InputEntry, ReviewDoc } from "./state.js";
+import type { createDurableTools } from "./tools.js";
+import { ReviewDoc } from "./state.js";
 
 export function draftDigest(content: unknown): string {
   return createHash("sha256").update(JSON.stringify(content)).digest("hex");
@@ -31,8 +32,8 @@ async function untilAbort<T>(work: () => T | Promise<T>, signal?: AbortSignal): 
 
 export function createReplyReview(
   agent: AgentConfig,
-  workspaceDir: string,
   runtime: ExtensionRuntime,
+  authority: ReturnType<typeof createDurableTools>["authority"],
   getHarness: () => Harness,
 ) {
   const active = new Map<ConversationId, { first: EntryId; reviewers: LoadedReplyReviewer[] }>();
@@ -49,11 +50,11 @@ export function createReplyReview(
     }
   }
 
-  function loadReviewers(user: string, conversationId: ConversationId) {
-    const userId = user === "local" ? undefined : user;
+  function loadReviewers(conversationId: ConversationId) {
+    const { agent, config, principal } = authority(conversationId);
     return runtime.getReplyReviewers(
-      getAgent(agent.id) ?? agent, loadConfig(), workspaceDir, "durable-main:" + conversationId,
-      userId, { source: "web", sessionOwnerId: userId, requesterId: userId },
+      agent, config, resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace),
+      principal.sessionId, principal.userId, principal,
     );
   }
 
@@ -64,9 +65,7 @@ export function createReplyReview(
     const existing = active.get(api.conversationId);
     if (existing?.first === first) return existing.reviewers;
     end(api.conversationId);
-    const input = await api.entry(InputEntry, first, context);
-    if (!input) throw new Error("Reply review could not identify the input.");
-    const reviewers = await untilAbort(() => loadReviewers(input.data.sender.id, api.conversationId), context.abortSignal);
+    const reviewers = await untilAbort(() => loadReviewers(api.conversationId), context.abortSignal);
     const started: LoadedReplyReviewer[] = [];
     active.set(api.conversationId, { first, reviewers: started });
     for (const item of reviewers) {
@@ -105,7 +104,7 @@ export function createReplyReview(
         }
       },
       afterResponse(message, api) {
-        if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "toolUse") {
+        if (message.stopReason === "error" || message.stopReason === "aborted") {
           end(api.conversationId);
         }
       },

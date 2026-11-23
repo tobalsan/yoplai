@@ -33,9 +33,11 @@ export type FileOutputResult = MediaFileMetadata & {
   };
 };
 
+type FileOutputContext = Pick<SdkRunParams, "agentId" | "sessionId" | "userId" | "onHistoryEvent" | "onEvent" | "context">;
+
 export class ContainerFileOutputAdapter {
   async handle(
-    params: SdkRunParams,
+    params: FileOutputContext,
     event: ContainerFileOutputRequest,
     hostDataDir: string | undefined,
     signal?: AbortSignal,
@@ -181,7 +183,7 @@ export class ContainerFileOutputAdapter {
 }
 
 async function addToProject(
-  params: SdkRunParams,
+  params: FileOutputContext,
   metadata: MediaFileMetadata
 ): Promise<NonNullable<FileOutputResult["project"]>> {
   const projectId = params.context!.project!.id;

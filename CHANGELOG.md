@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Durable Main supports workspace and extension tools, Code Mode, deferred tool search, and files and MCP Apps in chat. Tool calls use the conversation owner’s access and credentials.
 - Prepare conversation handoffs that preserve recent messages and earlier user requests verbatim, with references for clipped or omitted history.
 - A full-screen progress view shows the selected avatar during agent creation in desktop setup and on the Agents page.
 - Pilot a permanent private web chat per user with `durable: true` in an agent's configuration. Main keeps its history across gateway restarts and deduplicates retried sends.

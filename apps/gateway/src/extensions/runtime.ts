@@ -19,7 +19,7 @@ import { getConversationFiles } from "../media/conversation-files.js";
 import { logWarn } from "../logging.js";
 import { captureExtensionFrame, captureMcpApp } from "../mcp-apps/capture.js";
 
-type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "origin" | "conversationFiles" | "actorUserId" | "actorKind" | "toolCallId"> & ExtensionRunInfo;
+type RunIdentity = Pick<ExtensionAgentToolContext, "sessionOwnerId" | "requesterId" | "origin" | "conversationFiles" | "actorUserId" | "actorKind" | "toolCallId" | "env"> & ExtensionRunInfo;
 
 export function resolveRunActor(config: GatewayConfig, userId?: string, identity?: RunIdentity): Pick<ExtensionAgentToolContext, "actorUserId" | "actorKind"> {
   if (identity?.actorKind === "eval") return { actorKind: "eval", actorUserId: identity.actorUserId };
@@ -50,7 +50,7 @@ function buildHookContext(
     config,
     run: identity && { source: identity.source, sender: identity.sender, background: identity.background, requiresDevice: identity.requiresDevice, deviceTurnToken: identity.deviceTurnToken, sessionId: identity.sessionId },
     ...(execution ? { execution } : {}),
-    env: resolveAgentEnv(agent, config),
+    env: identity?.env ?? resolveAgentEnv(agent, config),
     userId,
     ...resolveRunActor(config, userId, identity),
     sessionOwnerId: identity?.sessionOwnerId,
@@ -65,14 +65,18 @@ function buildHookContext(
 }
 
 /** External OAuth extensions return their own refusal; give Slack requesters the single-pass connect link instead. */
+const scopedToolEnv = Symbol("scoped tool environment");
+type ScopedToolContext = ExtensionAgentToolContext & { [scopedToolEnv]?: Record<string, string> };
+
 function withOAuthConnectLink(
   extension: Extension,
   execute: ExtensionAgentTool["execute"]
 ): ExtensionAgentTool["execute"] {
   if (!extension.oauth) return execute;
   return async (args, context) => {
-    const scoped = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
-    const requirement = resolveExtensionOAuth(extension, scoped.config, scoped.agent, resolveAgentEnv(scoped.agent, scoped.config));
+    const env = (context as ScopedToolContext)[scopedToolEnv];
+    const scoped = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId, undefined, env);
+    const requirement = resolveExtensionOAuth(extension, scoped.config, scoped.agent, env ?? resolveAgentEnv(scoped.agent, scoped.config));
     if (!requirement) return execute(args, context);
     const oauth = await getOAuthService().resolveToken(context.agent.id, requirement, context.userId);
     const refusal = await oauthConnectionRefusal(context, requirement, oauth);
@@ -87,7 +91,8 @@ function needsCallTimeRebind(extension: Extension): boolean {
 
 function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): ExtensionAgentTool["execute"] {
   return async (args: unknown, context: ExtensionAgentToolContext) => {
-    const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId);
+    const env = (context as ScopedToolContext)[scopedToolEnv];
+    const current = resolveExtensionTokenConfig(extension, context.agent, context.config, context.userId, undefined, env);
     if (current.missing.length) {
       const connectUrl = await requestCredentialConnectLink(context, { kind: "token", extensionId: extension.id }) ?? current.connectUrl;
       return {
@@ -97,7 +102,7 @@ function rebindAtCallTime(extension: Extension, tool: ExtensionAgentTool): Exten
         connectUrl,
       };
     }
-    const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId, context));
+    const callTools = await extension.getAgentTools?.(current.agent, buildHookContext(current.agent, current.config, context.userId, { ...context, env }));
     const callTool = callTools?.find((candidate) => candidate.name === tool.name);
     if (!callTool) return { error: "extension_tool_unavailable", connectUrl: current.connectUrl };
     return callTool.execute(args, { ...context, agent: current.agent, config: current.config });
@@ -274,7 +279,7 @@ export class ExtensionRuntime {
     const groups = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
-          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId, undefined, identity?.env);
           const hookContext = buildHookContext(scoped.agent, scoped.config, userId, identity, execution);
           const tools =
             (await extension.getAgentTools?.(scoped.agent, hookContext)) ?? [];
@@ -378,13 +383,12 @@ export class ExtensionRuntime {
     const tool = await this.getTool(agent, toolName, config, userId, identity);
     if (!tool) return { found: false };
     signal?.throwIfAborted();
-    const env = resolveAgentEnv(agent, config);
-    return {
-      found: true,
-      result: await tool.execute(args, {
+    const env = identity?.env ?? resolveAgentEnv(agent, config);
+    const callContext: ScopedToolContext = {
         agent,
         config,
         env,
+        [scopedToolEnv]: identity?.env,
         sessionId,
         toolCallId: identity?.toolCallId,
         userId,
@@ -396,8 +400,8 @@ export class ExtensionRuntime {
         emitProgress,
         signal,
         conversationFiles: identity?.conversationFiles ?? (sessionId ? getConversationFiles(agent.id, sessionId, userId) : undefined),
-      }),
     };
+    return { found: true, result: await tool.execute(args, callContext) };
   }
 
   async getPromptContributions(
@@ -409,7 +413,7 @@ export class ExtensionRuntime {
     const contributions = await Promise.all(
       this.#extensions.map(async (extension) => {
         try {
-          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId);
+          const scoped = resolveExtensionTokenConfig(extension, agent, config, userId, undefined, identity?.env);
           if (scoped.missing.length) return [
             `${extension.displayName} requires credentials. Ask the user to add their own token using Just me at [Configure ${extension.displayName}](${scoped.connectUrl}) before using its tools. For Slack requests, call the requested tool to receive a single personal connection link; do not send this web configuration link.`,
           ];

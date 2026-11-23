@@ -1688,8 +1688,9 @@ export function createChatSession(input: ChatSessionInput) {
           return;
         }
 
+        const refreshDurableHistory = durableMain();
         if (viewMode() !== "full") {
-          if (!resolvedSessionId()) void refreshContextUsage();
+          if (!refreshDurableHistory && !resolvedSessionId()) void refreshContextUsage();
           batch(() => {
             appendStreamingAssistantMessage();
             skipNextHistoryRefresh = true;
@@ -1700,16 +1701,18 @@ export function createChatSession(input: ChatSessionInput) {
             resetStreamingState();
             cleanup = null;
           });
+          if (refreshDurableHistory) void loadHistory(viewMode(), true);
           return;
         }
 
         batch(() => {
-          // A silent (NO_REPLY) turn streams no text; load it from history.
+          // Durable tool results and silent (NO_REPLY) turns come from settled history.
           const streamedText =
             !!streamingText() ||
             streamingBlocks().some((block) => block.type === "text");
           appendStreamingAssistantMessage();
-          if (!streamedText) void loadHistory("full");
+          if (refreshDurableHistory) void loadHistory("full", true);
+          else if (!streamedText) void loadHistory("full");
           else if (!resolvedSessionId()) void refreshContextUsage();
           skipNextHistoryRefresh = true;
           // Update thinkingLevel if pending was used

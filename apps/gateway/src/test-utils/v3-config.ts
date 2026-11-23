@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ModelSource } from "@yoplai/shared";
 
 export type TestAgentConfig = {
   id: string;
   name?: string;
-  model?: { provider: string; model: string };
+  model?: { provider: string; model: string; source?: ModelSource };
   extraYaml?: string;
 };
 
@@ -18,7 +19,7 @@ export async function writeTestAgent(
   const extraYaml = agent.extraYaml ? `\n${agent.extraYaml.trim()}\n` : "";
   await fs.writeFile(
     path.join(agentDir, "agent.yaml"),
-    `id: ${agent.id}\nname: ${agent.name ?? agent.id}\nmodel:\n  provider: ${model.provider}\n  model: ${model.model}\n${extraYaml}`
+    `id: ${agent.id}\nname: ${agent.name ?? agent.id}\nmodel:\n  provider: ${model.provider}\n  model: ${model.model}${model.source ? "\n  source: " + model.source : ""}\n${extraYaml}`
   );
   return agentDir;
 }
