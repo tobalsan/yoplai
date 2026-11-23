@@ -121,8 +121,8 @@ it("keeps the model and tool catalog for a running turn while blocking revoked c
 });
 
 it("isolates concurrent direct and Code Mode calls to each Main owner's credentials and files", async () => {
-  const resources = new Map<string, { token: string; label: string }>();
-  const arrived: Array<{ label: string; actor: string | undefined; owner: string | null | undefined; folder: string }> = [];
+  const tokens = new Map<string, string>();
+  const arrived: Array<{ actor: string | undefined; owner: string | null | undefined; folder: string }> = [];
   const release = latch();
   const extension = fixtureExtension("greenhouse");
   extension.requiredSecrets = ["apiToken"];
@@ -132,15 +132,13 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
       name: "greenhouse_resource", description: "Read the caller's greenhouse report.",
       parameters: { type: "object", properties: {} },
       async execute(_args, run) {
-        const resource = resources.get(run.userId ?? "");
-        if (!resource || resource.token !== token || !run.conversationFiles) throw new Error("Wrong resource scope.");
+        const expectedToken = tokens.get(run.userId ?? "");
+        if (!expectedToken || expectedToken !== token || !run.conversationFiles) throw new Error("Wrong resource scope.");
         if (run.env?.HTTP_PROXY || process.env.HTTP_PROXY !== "http://foreign.test:8000") throw new Error("Wrong environment scope.");
         const folder = run.conversationFiles.hostPath;
-        const filename = path.join(folder, "report.txt");
-        await fs.writeFile(filename, resource.label);
-        arrived.push({ label: resource.label, actor: run.actorUserId, owner: run.sessionOwnerId, folder });
+        arrived.push({ actor: run.actorUserId, owner: run.sessionOwnerId, folder });
         await release.promise;
-        return fs.readFile(filename, "utf8");
+        return fs.readFile(path.join(folder, "report.txt"), "utf8");
       },
     }];
   };
@@ -151,10 +149,11 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
   });
   try {
     vi.stubEnv("HTTP_PROXY", "http://foreign.test:8000");
-    for (const [user, label] of [["alice", "Alice's basil"], ["bob", "Bob's mint"]] as const) {
+    for (const [user, report] of [["alice", "Alice's basil"], ["bob", "Bob's mint"]] as const) {
       const token = "fixture-token-" + user;
-      resources.set(gateway.accountId(user), { token, label });
+      tokens.set(gateway.accountId(user), token);
       await gateway.seedPersonalToken(user, "greenhouse", token);
+      await gateway.seedConversationFile(user, "report.txt", report);
     }
     const direct = { tool: "greenhouse_resource" };
     const nested = { tool: "codemode", args: { code: "console.log(await tools.greenhouse_resource({}));" } };
@@ -167,8 +166,8 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
     const bob = gateway.send("bob", "Read my mint report.", { clientSendId: "bob-resource" });
     await vi.waitFor(() => expect(arrived).toHaveLength(2));
     expect(arrived).toMatchObject([
-      { label: "Alice's basil", actor: gateway.accountId("alice"), owner: gateway.accountId("alice") },
-      { label: "Bob's mint", actor: gateway.accountId("bob"), owner: gateway.accountId("bob") },
+      { actor: gateway.accountId("alice"), owner: gateway.accountId("alice") },
+      { actor: gateway.accountId("bob"), owner: gateway.accountId("bob") },
     ]);
     expect(arrived[0].folder).not.toBe(arrived[1].folder);
     release.resolve();
@@ -178,13 +177,21 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
     expect((await gateway.send("alice", "Read my report directly.", { clientSendId: "alice-direct" })).status).toBe(200);
     expect((await gateway.send("bob", "Read my report from a script.", { clientSendId: "bob-nested" })).status).toBe(200);
     expect(arrived.slice(2)).toEqual(arrived.slice(0, 2));
-    const aliceHistory = JSON.stringify(await gateway.history("alice", "?view=full"));
-    const bobHistory = JSON.stringify(await gateway.history("bob", "?view=full"));
-    expect(aliceHistory).toContain("Alice's basil");
-    expect(aliceHistory).not.toContain("Bob's mint");
-    expect(bobHistory).toContain("Bob's mint");
-    expect(bobHistory).not.toContain("Alice's basil");
-    expect(aliceHistory + bobHistory).not.toContain("fixture-token-");
+    for (const [user, report, otherReport] of [
+      ["alice", "Alice's basil", "Bob's mint"],
+      ["bob", "Bob's mint", "Alice's basil"],
+    ] as const) {
+      const { messages } = await gateway.history(user, "?view=full");
+      for (const toolName of ["greenhouse_resource", "codemode"]) {
+        expect(messages).toContainEqual(expect.objectContaining({
+          role: "toolResult", toolName, isError: false,
+          content: expect.arrayContaining([expect.objectContaining({ type: "text", text: expect.stringContaining(report) })]),
+        }));
+      }
+      const history = JSON.stringify(messages);
+      expect(history).not.toContain(otherReport);
+      expect(history).not.toContain("fixture-token-");
+    }
   } finally {
     release.resolve();
     await gateway.close();
