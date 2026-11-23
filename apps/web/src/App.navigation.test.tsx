@@ -209,6 +209,45 @@ it("shows chat and Recent while the sidebar waits for top extensions", async () 
   }
 });
 
+it("keeps the chat transcript and Agent Settings drawer visible while models load", async () => {
+  multiUser = true;
+  history.replaceState({}, "", "/chat/demo");
+  const settings = holdResponse("/api/agents/demo/settings");
+  dispose = render(() => <App />, root);
+  const transcript = await findByRole(root, "region", { name: "Chat transcript" });
+  const settingsButton = getByRole(root, "button", { name: "Agent settings" });
+  const editableSettings = {
+    name: agent.name,
+    canEditAgent: true,
+    hasCustomAvatar: false,
+    skills: { global: [], agent: [], user: [] },
+  };
+
+  settingsButton.click();
+  await settings.requested;
+  const drawer = getByRole(root, "dialog", { name: "Agent settings" });
+  expect(within(drawer).getByText("Loading agent settings…")).toBeTruthy();
+  const models = holdResponse("/api/agent-management/models");
+
+  try {
+    settings.release(editableSettings);
+    await models.requested;
+
+    expect(transcript.isConnected, "Chat transcript stays on screen while models load").toBe(true);
+    expect(getByRole(root, "dialog", { name: "Agent settings" })).toBe(drawer);
+    const modelPicker = within(drawer).getByRole<HTMLButtonElement>("button", { name: /^Model:/ });
+    expect(modelPicker.disabled).toBe(true);
+
+    models.release({ models: [] });
+    await waitFor(() => expect(modelPicker.disabled).toBe(false));
+    within(drawer).getByRole("button", { name: "Close agent settings" }).click();
+    expect(queryByRole(root, "dialog", { name: "Agent settings" })).toBeNull();
+    expect(getByRole(root, "region", { name: "Chat transcript" })).toBe(transcript);
+  } finally {
+    models.release({ models: [] });
+  }
+});
+
 it("keeps Agents visible while archived conversations load", async () => {
   const archive = holdResponse("/api/agents/sessions?includeArchived=1");
   dispose = render(() => <App />, root);
