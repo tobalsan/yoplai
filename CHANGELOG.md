@@ -36,7 +36,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- Omit unfinished blocks from agent and chat project drafts. Keep closed code fences in the retained text.
+- Omit unfinished blocks from agent and chat project drafts. Keep closed code fences even when an unfinished paragraph immediately follows them.
 - Use the same picker for both model fields in Agent settings. Show the selected fallback source until the settings reload.
 - Configure Mattermost, Slack, Telegram, Discord, IRC, and Threadit in web and desktop agent settings. Saves apply live, and incomplete setups show what is missing. Per-agent settings live under `extensions.<id>`. Deprecated top-level channel blocks still load.
 - External MCP apps from linked gateways render in desktop chat and fullscreen, with edits sent back to the linked gateway.

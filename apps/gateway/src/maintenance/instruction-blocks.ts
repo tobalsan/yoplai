@@ -1,22 +1,23 @@
-function hasOpenFence(text: string): boolean {
-  let open: string | undefined;
-  for (const match of text.matchAll(/^ {0,3}(`{3,}|~{3,})(.*)$/gm)) {
-    const [, fence, tail] = match;
-    if (open) {
-      if (fence[0] === open[0] && fence.length >= open.length && !tail.trim()) open = undefined;
-    } else if (fence[0] === "~" || !tail.includes("`")) {
-      open = fence;
-    }
-  }
-  return open !== undefined;
-}
-
 export function completeInstructionBlocks(text: string): string {
   const draft = text.trimEnd();
-  const breaks = [...draft.matchAll(/\r?\n[ \t]*\r?\n/g)];
-  for (const { index } of breaks.reverse()) {
-    const prefix = draft.slice(0, index).trimEnd();
-    if (/[.!?。！？]$/u.test(prefix) && !hasOpenFence(prefix)) return prefix.trimStart();
+  let open: string | undefined;
+  let end = 0;
+  for (const { 0: span, 1: line, index } of draft.matchAll(/([^\r\n]*)(?:\r?\n|$)/g)) {
+    if (!span) break;
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (marker) {
+      const [, fence, tail] = marker;
+      if (open) {
+        if (fence[0] === open[0] && fence.length >= open.length && !tail.trim()) {
+          open = undefined;
+          if (index + line.length < draft.length) end = index + line.length;
+        }
+      } else if (fence[0] === "~" || !tail.includes("`")) {
+        open = fence;
+      }
+    } else if (!open && !line.trim() && /[.!?。！？]$/u.test(draft.slice(0, index).trimEnd())) {
+      end = index;
+    }
   }
-  return "";
+  return draft.slice(0, end).trim();
 }
