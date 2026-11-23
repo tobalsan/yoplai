@@ -179,6 +179,7 @@ export async function startDurableTestGateway({
     socket,
     script: faux.script,
     callCount: faux.callCount,
+    requests: faux.requests,
     close: cleanUp,
     failBetweenCommits() { fault = true; },
     async restart(model?: string) {

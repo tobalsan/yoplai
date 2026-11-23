@@ -223,6 +223,102 @@ describe("Durable web Main", () => {
     }
   });
 
+  it("reports a missing model provider over WebSocket and HTTP", async () => {
+    const gateway = await startDurableTestGateway();
+    try {
+      gateway.script({ errorMessage: "Provider is not configured: anthropic (Authorization: Bearer sk-faux-private)" });
+      const options = { clientSendId: "missing-provider" };
+      const sender = await gateway.send("local", "Check the greenhouse", options, "ws");
+      const message = "The model provider is not configured for this agent.";
+      await vi.waitFor(() => expect(sender.events).toHaveLength(1));
+      expect(sender.events).toEqual([{ type: "error", message }]);
+
+      const retry = await gateway.send("local", "Check the greenhouse", options);
+      expect(retry.status).toBe(500);
+      expect(await retry.json()).toEqual({ error: message });
+      await sender.flush();
+      expect(sender.events).toEqual([{ type: "error", message }]);
+      expect(gateway.callCount()).toBe(1);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("keeps a failed turn's notice in Main history across a gateway restart", async () => {
+    const gateway = await startDurableTestGateway();
+    try {
+      gateway.script({ errorMessage: "Provider is not configured: anthropic (Authorization: Bearer sk-faux-private)" });
+      const response = await gateway.send("local", "Check the greenhouse", { clientSendId: "failed-history" });
+      expect(response.status).toBe(500);
+      const text = "The model provider is not configured for this agent.";
+      const meta = { stopReason: "error", failure: { kind: "provider_not_configured" } };
+      const fullHistory = await gateway.history("local", "?view=full");
+      expect(fullHistory.messages).toMatchObject([
+        { role: "user", content: [{ type: "text", text: "Check the greenhouse" }] },
+        { role: "assistant", content: [{ type: "text", text }], meta },
+      ]);
+
+      await gateway.restart();
+      expect(await gateway.history("local", "?view=full")).toEqual(fullHistory);
+      expect((await gateway.history("local")).messages).toMatchObject([
+        { role: "user", content: "Check the greenhouse" },
+        { role: "assistant", content: text, meta },
+      ]);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("records one model note and warning for a failed send, even when retried across a restart", async () => {
+    const gateway = await startDurableTestGateway();
+    const warn = vi.spyOn(console, "warn");
+    try {
+      gateway.script(
+        { errorMessage: "Provider is not configured: anthropic (Authorization: Bearer sk-faux-private)" },
+        "The seedlings are ready.",
+      );
+      const sendA = () => gateway.send("local", "Check the greenhouse", { clientSendId: "failed-note" });
+      const expectedError = { error: "The model provider is not configured for this agent." };
+      const expectFailedSend = async () => {
+        const response = await sendA();
+        expect(response.status).toBe(500);
+        expect(await response.json()).toEqual(expectedError);
+      };
+      const warnings = () => warn.mock.calls.flatMap(([line]) =>
+        typeof line === "string" && line.startsWith("{") ? [JSON.parse(line)] : [])
+        .filter((warning) => warning.agentId === "pilot");
+      await expectFailedSend();
+      expect(warnings()).toEqual([{
+        level: "warn",
+        msg: "Durable turn failed",
+        agentId: "pilot",
+        conversationId: Number(await gateway.mainConversationId("local")),
+        submissionId: expect.any(Number),
+        reason: "model_error",
+        kind: "provider_not_configured",
+      }]);
+      await expectFailedSend();
+      await gateway.restart();
+      await expectFailedSend();
+      expect(gateway.callCount()).toBe(1);
+
+      const response = await gateway.send("local", "Try the greenhouse again", { clientSendId: "next-send" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ payloads: [{ text: "The seedlings are ready." }] });
+      expect(gateway.callCount()).toBe(2);
+      expect(gateway.requests[1]?.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual([
+        "[from Local user via web]\nCheck the greenhouse",
+        "[previous reply failed: model provider not configured]",
+        "[from Local user via web]\nTry the greenhouse again",
+      ]);
+      expect(warnings()).toHaveLength(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("sk-faux-private");
+    } finally {
+      warn.mockRestore();
+      await gateway.close();
+    }
+  });
+
   it.each(["local", "alice"] as const)("lands two distinct simultaneous first sends in %s's Main", async (user) => {
     const gateway = await startDurableTestGateway({ multiUser: user === "alice" });
     try {
