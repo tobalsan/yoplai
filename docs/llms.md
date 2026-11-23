@@ -652,6 +652,39 @@ Generic chat hooks live in `packages/shared/src/types.ts` and are collected by `
 
 Session history is a core gateway extension (`apps/gateway/src/session-history/`) that gives agents a read-only `session_history` tool, on by default; disable with root `sessionHistory.enabled: false`. It runs in the gateway (so sandboxed and host runs behave identically) and reads canonical history only, scoped to the calling agent (`ctx.agent.id`) and user (`ctx.userId`); when the current session belongs to a chat Project (project read from the session's own `meta project` on disk, never from model args) it also lists/searches/reads every agent's sessions tagged with that same project, addressed as `agent/session` (own-agent sessions keep bare ids; project sessions are listed by persisted history ownership, so sessions of since-removed agents remain accessible, but the current session's project must still exist in the user's store or project access fails closed; membership is re-read each call so moved/cleared sessions drop out; `ProjectContextResolver` sets `project.sessionHistory` from config so `renderAgentContext` adds a `session_history` line only when enabled); scheduler/webhook/Slack/compaction and CLI/subagent run sessions are not listed. Actions: `list` (newest first, limit 10, `cursor`), `search` (case-insensitive substring over message text and tool-call args; filters `role`, `tool`, `since`, `session`; newest first, stops at `limit`, default 15), and `read` (`from`/`to` or `around`+`n`, `role`, `full=<idx>` to expand one message, capped at 8000 chars). Output is plain text from the pure condenser `history/condense.ts`: `#idx` anchors, thinking dropped, system messages hidden unless `role=system`, tool call+result merged into one `→ label (ok|ERR: first line, size)` line, text cut at 300 chars with `[+N chars · read full=idx]`, ~4000-char budget with a `more:` continuation line. The current session is marked `★ CURRENT SESSION` in `list`, and search/read results from it carry a note that earlier messages were compacted and these are the originals. Session file enumeration helpers shared with `GET /api/agents/sessions` live in `history/sessions.ts`.
 
+`history/transcript.ts` defines the neutral, chronological `TranscriptEntry` and
+`ToolStep` shapes. Entries use stable public IDs, user or assistant text, and
+optional author and UTC timestamp. Tool steps pair a call with its optional
+result and result ID. The transcript has no thinking field.
+
+`history/handoff.ts` builds handoff text from that transcript and optional
+rendered memory, topic references, and tool-label templates. The pure builder
+uses a 30,000-token ceiling with `ceil(chars / 4)`, including headers and
+separators. It emits the sections in this order and skips empty sections.
+
+| Section | Tokens | Selection |
+| --- | ---: | --- |
+| Memory | 3,000 | Rendered memory, clipped with a marker when needed. |
+| Older excerpts | 4,000 | Fixed allowances of 4,000 chars for topic refs in topic order (500-char clips), 8,000 for omitted user messages (first, then newest first, 800-char clips), and 4,000 for final public replies of the last three wholly omitted turns (1,200-char clips). Selection deduplicates by ID in that order. Rendering is chronological. |
+| Condensed steps | 2,000 | Recent calls selected newest first, rendered chronologically with their entry IDs and the history condenser's tool labels and result sizes. |
+| Recent messages | 20,000 | Verbatim entries selected newest first, rendered chronologically, with an 8,000-char text cap per entry. The recent interval starts at its oldest selected message. |
+| Omission notice | 1,000 | Counts, ID ranges, a reference to the latest omitted tool output by call position, and recovery guidance for `session_history search`. Long ranges can be shortened to fit. |
+
+The breakdown exposes `totalTokens`, `memoryTokens`, `recentTokens`,
+`excerptTokens`, `stepTokens`, and `omissionTokens`. Clipped entries show the
+removed character count and the original ID. An ID that alone exceeds the
+available space is abbreviated. The omitted tool output reference gives its
+ID, name, and size. Fetching raw tool results requires the later history-tool
+slice.
+
+`history/legacy-transcript.ts` exposes `parseHistoryJsonl` for timestamp-ordered
+canonical JSONL and malformed-line diagnostics, which `getFullHistory` logs.
+`legacyTranscript` adapts ordered full history to the neutral type. IDs use
+`legacy:<agentId>:<sessionId>#<index>`, with the index assigned before system and
+tool-result rows are removed. Tool results keep their original index when
+paired with a call. The adapter drops system compaction summaries and thinking.
+Callers read through the existing scoped history readers.
+
 `session_history` requires `query` for search and `session` for read. Caller argument errors (missing arguments, invalid dates, and schema validation) carry `code: "invalid_input"` and log at warning, with unchanged messages and HTTP status; unexpected errors that propagate remain errors.
 
 Capability discovery is a factory meta-extension that is always loaded alongside task lifecycle tools. It reads the current built-in/external registry and agent `mcp.json` files on each dead-end lookup; it never resolves extension secrets while listing tools. Its self-enable path reuses the agent extension config writer and live extension reload.

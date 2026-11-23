@@ -50,7 +50,7 @@ function formatTime(timestamp: number): string {
     : "";
 }
 
-function formatSize(chars: number): string {
+export function formatSize(chars: number): string {
   return chars >= 1000 ? `${(chars / 1000).toFixed(1)}k chars` : `${chars} chars`;
 }
 
@@ -58,9 +58,9 @@ export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function toolLine(
-  call: { id: string; name: string; arguments: unknown },
-  result: ToolResultMessage | undefined,
+export function toolLine(
+  call: { name: string; arguments: unknown },
+  result: { text: string; isError: boolean } | undefined,
   templates?: ToolLabelTemplates
 ): string {
   let label = toolLabel(call.name, call.arguments, templates);
@@ -71,7 +71,7 @@ function toolLine(
     label = arg ? `${call.name} ${oneLine(arg).slice(0, 60)}` : call.name;
   }
   if (!result) return `    → ${label} (no result)`;
-  const text = messageText(result);
+  const { text } = result;
   if (result.isError) {
     const firstLine = oneLine(text.split("\n")[0] ?? "").slice(0, 100);
     return `    → ${label} (ERR: ${firstLine}, ${formatSize(text.length)})`;
@@ -101,7 +101,11 @@ function formatMessage(
   } else {
     lines.push(`#${index} ${role} ${formatTime(message.timestamp)}`.trimEnd());
   }
-  for (const call of calls) lines.push(toolLine(call, results.get(call.id), templates));
+  for (const call of calls) {
+    const result = results.get(call.id);
+    const display = result && { text: messageText(result), isError: result.isError };
+    lines.push(toolLine(call, display, templates));
+  }
   return lines.join("\n");
 }
 
