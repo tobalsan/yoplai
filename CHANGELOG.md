@@ -34,9 +34,10 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop MCP Connect and Reconnect open sign-in in a separate window and refresh the server status when it finishes.
 - HTML sent in chat has a readable inline preview and fills the side panel. File previews also work for agents on linked gateways.
-
 - Web and desktop navigation keep the sidebar and current page visible while the next page loads.
+- SVG extension icons display in the admin catalog. Unavailable icons show the puzzle piece.
 - Agent creation works over plain HTTP on a local network, including retries after a lost response.
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
 - Desktop agent creation still succeeds when an unrelated extension's reload hook fails.

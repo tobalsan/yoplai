@@ -78,6 +78,7 @@ afterEach(() => {
   dispose?.();
   dispose = undefined;
   container.remove();
+  document.documentElement.removeAttribute("data-yoplai-desktop");
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -92,7 +93,8 @@ async function connectMcp() {
 }
 
 describe("MCP sign-in of a remote agent", () => {
-  it("opens the window in the click, starts through the relay with explicit scope, and confirms from fresh remote status", async () => {
+  it.each(["browser", "desktop"])("starts %s sign-in through the relay and confirms from fresh remote status", async (surface) => {
+    if (surface === "desktop") document.documentElement.setAttribute("data-yoplai-desktop", "");
     await connectMcp();
     expect(open).toHaveBeenCalledTimes(1);
     const startIndex = gateways.order.findIndex((line) => line === "fetch POST /api/relay/oauth/start");

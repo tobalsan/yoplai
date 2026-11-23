@@ -11,12 +11,12 @@ export function openOAuthPopup(url: string): Window | null {
  * Calls `onReturn` when the window regains focus or the OAuth popup posts its
  * result message (optionally only for one `extension`). Returns a disposer.
  */
-export function onOAuthReturn(onReturn: () => void, filter?: { extension?: string }): () => void {
+export function onOAuthReturn(onReturn: (event: Event) => void, filter?: { extension?: string }): () => void {
   const onMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data || typeof data !== "object" || !OAUTH_MESSAGE_TYPES.includes(data.type)) return;
     if (filter?.extension !== undefined && data.extension !== filter.extension) return;
-    onReturn();
+    onReturn(event);
   };
   window.addEventListener("message", onMessage);
   window.addEventListener("focus", onReturn);

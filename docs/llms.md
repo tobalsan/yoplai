@@ -691,6 +691,7 @@ Manual extensions with multiple files still need a restart after a rebuild.
 
 The catalog on `/admin/extensions` uses the selected gateway. `extensionCatalog.url` selects the catalog source. `extensionCatalog.enabled: false` disables it.
 The gateway caches the last catalog with its ETag. Direct loopback requests can use HTTP. Other requests and all redirects require HTTPS.
+Catalog icons require HTTPS. List and refresh rows include cached PNG and SVG data URIs for successful icon reads up to 256 KiB. Rows without a usable icon show the puzzle piece.
 The catalog checks the download size, digest, archive files, manifest, and exported definition before it replaces a bundle.
 A worker checks the exported definition. The gateway gives the worker 30 seconds and stops it before it releases the lock.
 A valid `.install.json` in an extension folder marks a catalog install. A symlink is always manual, even if its target has a valid record. The catalog does not change manual extensions.
