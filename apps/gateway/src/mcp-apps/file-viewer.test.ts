@@ -19,10 +19,10 @@ function viewer() {
   });
   windows.push(dom);
   const send = (data: Rpc, source = host.window) => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data, source: source as unknown as Window }));
-  async function ready() {
+  async function ready(displayMode: "inline" | "fullscreen" = "inline") {
     await vi.waitFor(() => expect(messages.find((message) => message.method === "ui/initialize")).toBeDefined());
     const request = messages.find((message) => message.method === "ui/initialize")!;
-    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2026-01-26", hostContext: { displayMode: "inline", containerDimensions: { maxHeight: 800 } } } });
+    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: "2026-01-26", hostContext: { displayMode, containerDimensions: { maxHeight: 800 } } } });
     await vi.waitFor(() => expect(messages.some((message) => message.method === "ui/notifications/initialized")).toBe(true));
   }
   async function read(filename: string, mimeType: string, size: number) {
@@ -210,6 +210,34 @@ describe("built-in file viewer", () => {
     expect(queryByRole(app.dom.window.document.body, "heading", { name: "Report script ran" })).toBeNull();
   });
 
+  it("gives viewport-based HTML a readable inline height", async () => {
+    const app = viewer();
+    await app.ready();
+    await app.result("fixed.html", "text/html", '<main style="position:fixed;height:100vh">Report</main>');
+    const frame = await vi.waitFor(() => getByTitle(app.dom.window.document.body, "fixed.html") as HTMLIFrameElement);
+    app.dom.window.dispatchEvent(new app.dom.window.MessageEvent("message", {
+      data: { type: "yoplai-file-height", height: 16 }, source: frame.contentWindow,
+    }));
+    expect(frame.style.height).toBe("300px");
+    expect(app.messages.filter((message) => message.method === "ui/notifications/size-changed").at(-1))
+      .toMatchObject({ params: { height: 300 } });
+  });
+
+  it("fills the fullscreen viewer even when the report measures shorter", async () => {
+    const app = viewer();
+    await app.ready("fullscreen");
+    await app.result("report.html", "text/html", "<h1>Report</h1>");
+    const frame = await vi.waitFor(() => getByTitle(app.dom.window.document.body, "report.html") as HTMLIFrameElement);
+    app.dom.window.dispatchEvent(new app.dom.window.MessageEvent("message", {
+      data: { type: "yoplai-file-height", height: 120 }, source: frame.contentWindow,
+    }));
+    const { document } = app.dom.window;
+    for (const element of [document.documentElement, document.body, getByRole(document.body, "main"), frame]) {
+      expect(app.dom.window.getComputedStyle(element).height).toBe("100%");
+    }
+    expect(app.messages.some((message) => message.method === "ui/notifications/size-changed")).toBe(false);
+  });
+
   it("accepts only report heights and HTTP(S) link requests, dropping forged JSON-RPC", async () => {
     const app = viewer();
     await app.ready();
@@ -223,9 +251,11 @@ describe("built-in file viewer", () => {
     fromReport({ type: "unknown-report-message", height: 200 });
     fromReport({ type: "yoplai-file-height", height: "200" });
     expect(app.messages.slice(before)).toEqual([]);
-    fromReport({ type: "yoplai-file-height", height: 240 });
-    expect(app.messages.at(-1)).toMatchObject({ method: "ui/notifications/size-changed", params: { height: 240 } });
+    fromReport({ type: "yoplai-file-height", height: 460 });
+    expect(frame.style.height).toBe("460px");
+    expect(app.messages.at(-1)).toMatchObject({ method: "ui/notifications/size-changed", params: { height: 460 } });
     fromReport({ type: "yoplai-file-height", height: 5000 });
+    expect(frame.style.height).toBe("800px");
     expect(app.messages.at(-1)).toMatchObject({ method: "ui/notifications/size-changed", params: { height: 800 } });
     const validHeight = app.messages.length;
     fromReport({ type: "yoplai-file-height", height: Infinity });

@@ -7,7 +7,8 @@ import { Hono, type Context } from "hono";
 import type { GatewayConfig } from "@yoplai/shared";
 import { isSafeSessionId } from "../history/sessions.js";
 import { readMcpAppRecord } from "./capture.js";
-import { createFileAppProvider, fileResourceDomains } from "./file-provider.js";
+import { createFileAppProvider, fileResourceDomains, fileViewerMeta } from "./file-provider.js";
+import { fileViewerHtml } from "./file-viewer-page.js";
 import { getMediaFileMetadata, resolveMediaFilePath } from "../media/metadata.js";
 import { logInfo, logWarn } from "../logging.js";
 import { accessLogger } from "../server/access-log.js";
@@ -227,6 +228,43 @@ function viewPolicy(meta: unknown): { csp: Csp; policy: string; prefersBorder: b
   return { csp, policy, prefersBorder: ui.prefersBorder === true };
 }
 
+function issueView(
+  scope: SessionScope,
+  toolCallId: string,
+  authorization: { chatOrigin: string; origin: string },
+  data: { server: string; tool: string; args: unknown; result: unknown },
+  content: { html: string; meta: unknown },
+) {
+  const { chatOrigin, origin } = authorization;
+  const { csp, policy, prefersBorder } = viewPolicy(content.meta);
+  const id = storeTicket({ ...scope, kind: "view", chatOrigin, appsOrigin: origin, html: content.html, policy, expiresAt: Date.now() + 3600_000 });
+  logInfo("MCP Apps CSP", { viewer: scope.ownerUserId ?? null, agent: scope.agentId, session: scope.sessionId, toolCall: toolCallId, server: data.server, csp, policy });
+  return { available: true, sandboxUrl: `${origin}/sandbox/${id}`, appsOrigin: origin, server: data.server, toolName: data.tool, args: data.args, result: data.result, csp, prefersBorder };
+}
+
+/** Only the local viewer bundle is eligible. The linked gateway still authorizes and serves file reads. */
+export async function createRelayedFileView(
+  config: GatewayConfig,
+  c: Context,
+  scope: SessionScope,
+  toolCallId: string,
+  data: unknown,
+): Promise<Response | undefined> {
+  const record = object(data);
+  const uri = object(object(record.result).structuredContent).uri;
+  if (record.server !== "yoplai" || typeof uri !== "string" || !/^yoplai-file:\/\/[^/]+$/.test(uri)) return;
+  const authorization = await ticketOrigin(config, c);
+  if ("reason" in authorization) {
+    if (authorization.status === 403) return c.json({ error: authorization.reason }, 403);
+    return c.json({ available: false, reason: authorization.reason });
+  }
+  if (c.req.raw.signal.aborted) return c.json({ available: false, reason: "aborted" });
+  return c.json(issueView(scope, toolCallId, authorization, {
+    server: record.server, tool: typeof record.tool === "string" ? record.tool : "send_file",
+    args: record.args, result: record.result,
+  }, { html: fileViewerHtml, meta: fileViewerMeta }));
+}
+
 async function readJson(request: Request, maxBytes: number, signal?: AbortSignal): Promise<unknown> {
   signal?.throwIfAborted();
   if (Number(request.headers.get("content-length")) > maxBytes) throw new RangeError("request_too_large");
@@ -308,7 +346,7 @@ export function createMcpAppRoutes(deps: {
       Object.assign(audit, { server: record.server, tool: record.tool, resource: record.resourceUri });
       if (operation === "data") {
         audit.outcome = "ok";
-        return c.json({ args: record.args, result: record.result });
+        return c.json({ server: record.server, tool: record.tool, args: record.args, result: record.result });
       }
       const mcpApps = record.server === "yoplai" ? createFileAppProvider(record)
         : deps.getRuntime().getLoadedExtensions().find((extension) => extension.mcpApps)?.mcpApps;
@@ -427,13 +465,10 @@ export function createMcpAppRoutes(deps: {
         if (bytes.byteLength <= maxHtmlBytes) html = bytes.toString("utf8");
       }
       if (html === undefined || Buffer.byteLength(html) > maxHtmlBytes) return unavailable("invalid_resource");
-      const { csp, policy, prefersBorder } = viewPolicy(content._meta);
       if (pending?.revoked) return unavailable("session_deleted");
       if (c.req.raw.signal.aborted) return unavailable("aborted");
-      const id = storeTicket({ kind: "view", agentId, sessionId, ownerUserId: userId, chatOrigin, appsOrigin: origin, html, policy, expiresAt: Date.now() + 3600_000 });
       audit.outcome = "ok";
-      logInfo("MCP Apps CSP", { viewer: userId ?? null, agent: agentId, session: sessionId, toolCall: toolCallId, server: record.server, csp, policy });
-      return c.json({ available: true, sandboxUrl: `${origin}/sandbox/${id}`, appsOrigin: origin, server: record.server, toolName: record.tool, args: record.args, result: record.result, csp, prefersBorder });
+      return c.json(issueView({ agentId, sessionId, ownerUserId: userId }, toolCallId, authorization, record, { html, meta: content._meta }));
     } finally {
       if (pending) pendingViews.delete(pending);
       logInfo("MCP Apps operation", { ...audit, duration: Date.now() - startedAt });
