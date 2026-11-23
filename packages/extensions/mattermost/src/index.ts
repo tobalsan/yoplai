@@ -1,5 +1,8 @@
+import { mattermostSettings, readAgentChannelConfig } from "./config.js";
 import {
   MattermostExtensionConfigSchema,
+  createChannelBotReconciler,
+  startRegisteredChannelBot,
   type AgentConfig,
   type Extension,
   type ExtensionContext,
@@ -8,20 +11,27 @@ import {
 import {
   createMattermostAgentBot,
   createMattermostBot,
-  type MattermostBot,
 } from "./bot.js";
-import { clearMattermostContext, setMattermostContext } from "./context.js";
+import { clearMattermostContext, getMattermostContext, setMattermostContext } from "./context.js";
 import {
   clearActiveBots,
   getActiveBot,
   getActiveBots,
-  registerActiveBot,
+  getComponentBot,
+  registerComponentBot,
 } from "./bot-registry.js";
 import {
   createMattermostDeliverySink,
   getMattermostDeliveryOffer,
   mattermostAgentTools,
 } from "./agent-tools.js";
+
+const reconcileAgentBots = createChannelBotReconciler("mattermost", readAgentChannelConfig);
+
+async function reconcileBots(ctx?: ExtensionContext): Promise<void> {
+  const agents = ctx?.getAgents().filter((agent) => ctx.isAgentActive(agent.id)) ?? [];
+  await reconcileAgentBots(agents, (agent) => startRegisteredChannelBot(getActiveBots(), agent.id, createMattermostAgentBot(agent)));
+}
 
 let unregisterDeliverySink: (() => void) | undefined;
 
@@ -43,8 +53,7 @@ export async function startMattermostBots(
 
     try {
       await bot.start();
-      // Registered under the literal "mattermost" id, like discord/slack/telegram.
-      registerActiveBot(bot.agentId, bot);
+      registerComponentBot(bot);
       console.log("[mattermost] Started component bot");
     } catch (err) {
       console.error("[mattermost] Failed to start component bot:", err);
@@ -52,33 +61,15 @@ export async function startMattermostBots(
     return;
   }
 
-  const agentBots = ctx
-    .getAgents()
-    .filter((agent) => agent.mattermost?.token && ctx.isAgentActive(agent.id))
-    .map((agent) => ({ agent, bot: createMattermostAgentBot(agent) }))
-    .filter(
-      (entry): entry is { agent: AgentConfig; bot: MattermostBot } =>
-        !!entry.bot
-    );
-
-  await Promise.all(
-    agentBots.map(async ({ agent, bot }) => {
-      try {
-        await bot.start();
-        registerActiveBot(agent.id, bot);
-        console.log(`[mattermost] Started bot for agent: ${agent.id}`);
-      } catch (err) {
-        console.error(
-          `[mattermost] Failed to start bot for agent ${agent.id}:`,
-          err
-        );
-      }
-    })
-  );
+  await reconcileBots(ctx);
 }
 
 export async function stopMattermostBots(): Promise<void> {
-  for (const [agentId, bot] of getActiveBots()) {
+  await reconcileBots();
+  const bots = [...getActiveBots()];
+  const component = getComponentBot();
+  if (component) bots.push(["mattermost", component]);
+  for (const [agentId, bot] of bots) {
     try {
       await bot.stop();
       console.log(`[mattermost] Stopped bot: ${agentId}`);
@@ -92,6 +83,7 @@ export async function stopMattermostBots(): Promise<void> {
 export { getActiveBot };
 
 const mattermostExtension: Extension = {
+  ...mattermostSettings,
   id: "mattermost",
   displayName: "Mattermost",
   description: "Mattermost integration for channel, thread and DM routing",
@@ -152,6 +144,7 @@ const mattermostExtension: Extension = {
 
     await startMattermostBots(ctx);
   },
+  onConfigReload: () => reconcileBots(getMattermostContext()),
   async stop() {
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;
@@ -167,9 +160,11 @@ export {
   mattermostExtension,
   createMattermostAgentBot,
   createMattermostBot,
-  type MattermostBot,
 };
+export type { MattermostBot } from "./bot.js";
 export {
   ThreadSessionBindingStore,
   type ThreadSessionBinding,
 } from "./thread-session-bindings.js";
+
+export { readAgentChannelConfig } from "./config.js";

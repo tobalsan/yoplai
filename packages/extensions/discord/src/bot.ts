@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "./config.js";
 import type { CommandInteraction } from "@buape/carbon";
 import { MessageType } from "discord-api-types/v10";
 import type {
@@ -75,7 +76,6 @@ type ResolvedDiscordForumTarget = {
 function disconnectGateway(client: CarbonClient): void {
   const gateway = getGatewayPlugin(client);
   if (!gateway) return;
-  if (!gateway.isConnected) return;
 
   try {
     gateway.disconnect();
@@ -1087,6 +1087,7 @@ async function resolveDiscordClientId(
   try {
     const res = await fetch("https://discord.com/api/v10/oauth2/applications/@me", {
       headers: { Authorization: `Bot ${token}` },
+      signal: AbortSignal.timeout(10_000),
     });
     if (res.ok) {
       const data = await res.json();
@@ -1508,15 +1509,15 @@ async function createConfiguredDiscordBot(
       handledMessageIds.clear();
       handledThreadIds.clear();
       unlockedThreadIds.clear();
-      stopAllTyping();
+      stopAllTyping(client);
       disconnectGateway(client);
     },
   };
 }
 
 export async function createDiscordBot(agent: AgentConfig): Promise<DiscordBot | null> {
-  const discordConfig = agent.discord;
-  if (!discordConfig?.token) return null;
+  const discordConfig = readAgentChannelConfig(agent);
+  if (!discordConfig?.token?.trim()) return null;
   const token = discordConfig.token;
   const logPrefix = `[discord:${agent.id}]`;
 
@@ -1532,7 +1533,7 @@ export async function createDiscordBot(agent: AgentConfig): Promise<DiscordBot |
       logPrefix,
     }),
     resolveForumThreadTargets: (thread) =>
-      thread.parentId && agent.discord?.forumChannels?.includes(thread.parentId)
+      thread.parentId && discordConfig.forumChannels?.includes(thread.parentId)
         ? [{ agent, config: discordConfig, logPrefix }]
         : [],
     resolveReactionTarget: () => ({
@@ -1746,7 +1747,7 @@ export async function createDiscordComponentBot(
     routedAgentIds.add(componentConfig.dm.agent);
   }
   for (const agent of agents) {
-    if ((agent.discord?.forumChannels ?? []).length > 0) {
+    if ((readAgentChannelConfig(agent)?.forumChannels ?? []).length > 0) {
       routedAgentIds.add(agent.id);
     }
   }

@@ -1,3 +1,6 @@
+import { readAgentChannelConfig as readMattermost } from "@yoplai/extension-mattermost";
+import { readAgentChannelConfig as readDiscord } from "@yoplai/extension-discord";
+import { readAgentChannelConfig as readSlack } from "@yoplai/extension-slack";
 import { notify, type AgentConfig, type RequiredModelConfig } from "@yoplai/shared";
 import { loadConfig, resolveAgentEnv } from "../config/index.js";
 import { resolveSecretValue } from "../config/secrets.js";
@@ -22,10 +25,10 @@ export async function notifyProviderQuota(
   lastNotifications.set(key, now);
 
   const env = resolveAgentEnv(agent, config);
-  const discordToken = agent.discord?.token ?? config.extensions?.discord?.token;
-  const slackToken = agent.slack?.token ?? config.extensions?.slack?.token;
+  const discordToken = readDiscord(agent)?.token ?? config.extensions?.discord?.token;
+  const slackToken = readSlack(agent)?.token ?? config.extensions?.slack?.token;
   const mattermost = config.notifications?.channels?.[channel]?.mattermost
-    ? agent.mattermost ?? config.extensions?.mattermost
+    ? readMattermost(agent) ?? config.extensions?.mattermost
     : undefined;
   const summary = await notify({
     config: config.notifications,

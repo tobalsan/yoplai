@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { GatewayConfigSchema } from "@yoplai/shared";
+import { LegacyGatewayConfigSchema } from "@yoplai/shared";
 import { migrateConfigV1toV2 } from "../migrate.js";
 
 describe("migrateConfigV1toV2", () => {
   it("moves legacy config into extensions", () => {
     const { config, warnings } = migrateConfigV1toV2(
-      GatewayConfigSchema.parse({
+      LegacyGatewayConfigSchema.parse({
       agents: [
         {
           id: "main",
@@ -27,6 +27,7 @@ describe("migrateConfigV1toV2", () => {
 
     expect(warnings).toEqual([]);
     expect(config.version).toBe(2);
+    expect(config.extensions?.discord?.token).toBe("$env:DISCORD_TOKEN");
     expect(config.extensions?.discord?.channels?.["123"]?.agent).toBe("main");
     expect(config.extensions?.heartbeat?.enabled).toBe(true);
     expect(config.extensions?.scheduler?.enabled).toBe(true);
@@ -36,7 +37,7 @@ describe("migrateConfigV1toV2", () => {
 
   it("warns when multiple discord tokens exist", () => {
     const { warnings } = migrateConfigV1toV2(
-      GatewayConfigSchema.parse({
+      LegacyGatewayConfigSchema.parse({
       agents: [
         {
           id: "main",

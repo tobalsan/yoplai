@@ -92,9 +92,11 @@ describe("slack extension", () => {
           name: "Main",
           workspace: "~/main",
           model: { provider: "anthropic", model: "claude" },
-          slack: {
-            token: "xoxb-agent",
-            appToken: "xapp-agent",
+          extensions: {
+            slack: {
+              token: "xoxb-agent",
+              appToken: "xapp-agent",
+            },
           },
         },
       ],
@@ -142,7 +144,7 @@ describe("slack extension", () => {
           name: "Main",
           workspace: "~/main",
           model: { provider: "anthropic", model: "claude" },
-          slack: { token: "xoxb-agent", appToken: "xapp-agent" },
+          extensions: { slack: { token: "xoxb-agent", appToken: "xapp-agent" } },
         },
       ],
       extensions: {},

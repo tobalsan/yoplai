@@ -6,6 +6,7 @@ import {
 } from "@yoplai/extension-scheduler";
 import {
   DEFAULT_MAIN_KEY,
+  DiscordConfigSchema,
   type AgentConfig,
   type ExtensionContext,
   type HeartbeatEventPayload,
@@ -358,7 +359,10 @@ export async function runHeartbeat(
   }
 
   // Check delivery target (Discord broadcastToChannel)
-  const broadcastChannel = agent.discord?.broadcastToChannel;
+  const discord = agent.extensions?.discord;
+  const parsedDiscord = DiscordConfigSchema.safeParse(discord);
+  const broadcastChannel = discord?.enabled !== false && parsedDiscord.success
+    ? parsedDiscord.data.broadcastToChannel : undefined;
   if (!broadcastChannel) {
     maybeRestoreSessionUpdatedAt(ctx, agentId, DEFAULT_MAIN_KEY, originalUpdatedAt);
     const payload: HeartbeatEventPayload = {

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  GatewayConfigSchema,
+  LegacyGatewayConfigSchema,
   migrateConfigV1toV2,
   resolveConfigPath,
 } from "@yoplai/shared";
@@ -18,7 +18,7 @@ export type LocalConfigFile = {
 };
 
 export type ConfigValidationResult = {
-  config: ReturnType<typeof GatewayConfigSchema.parse>;
+  config: ReturnType<typeof LegacyGatewayConfigSchema.parse>;
   migrated: boolean;
   warnings: string[];
   version: ConfigVersionInfo;
@@ -51,7 +51,7 @@ export function validateLocalConfig(
   configPath?: string
 ): ConfigValidationResult {
   const file = readLocalConfigFile(configPath);
-  const parsed = GatewayConfigSchema.parse(file.json);
+  const parsed = LegacyGatewayConfigSchema.parse(file.json);
   if (parsed.version === 2) {
     return {
       config: parsed,
@@ -63,7 +63,7 @@ export function validateLocalConfig(
 
   const migration = migrateConfigV1toV2(parsed);
   return {
-    config: GatewayConfigSchema.parse(migration.config),
+    config: LegacyGatewayConfigSchema.parse(migration.config),
     migrated: true,
     warnings: migration.warnings,
     version: { number: 1, label: "1 (legacy)" },
@@ -73,7 +73,7 @@ export function validateLocalConfig(
 export type ConfigMigrationActionResult = {
   path: string;
   backupPath: string;
-  migratedConfig: ReturnType<typeof GatewayConfigSchema.parse>;
+  migratedConfig: ReturnType<typeof LegacyGatewayConfigSchema.parse>;
   warnings: string[];
   version: ConfigVersionInfo;
   changed: boolean;
@@ -91,7 +91,7 @@ export function migrateLocalConfig(
   configPath?: string
 ): ConfigMigrationActionResult {
   const file = readLocalConfigFile(configPath);
-  const parsed = GatewayConfigSchema.parse(file.json);
+  const parsed = LegacyGatewayConfigSchema.parse(file.json);
   const version: ConfigVersionInfo =
     parsed.version === 2
       ? { number: 2, label: "2" }
@@ -100,7 +100,7 @@ export function migrateLocalConfig(
     parsed.version === 2
       ? { config: parsed, warnings: [] }
       : migrateConfigV1toV2(parsed);
-  const migratedConfig = GatewayConfigSchema.parse(migration.config);
+  const migratedConfig = LegacyGatewayConfigSchema.parse(migration.config);
   const backupPath = getBackupPath(file.path);
   const changed =
     JSON.stringify(parsed, null, 2) !== JSON.stringify(migratedConfig, null, 2);
@@ -126,14 +126,14 @@ export function migrateLocalConfig(
 
 export function previewMigration(configPath?: string): {
   path: string;
-  originalConfig: ReturnType<typeof GatewayConfigSchema.parse>;
-  migratedConfig: ReturnType<typeof GatewayConfigSchema.parse>;
+  originalConfig: ReturnType<typeof LegacyGatewayConfigSchema.parse>;
+  migratedConfig: ReturnType<typeof LegacyGatewayConfigSchema.parse>;
   warnings: string[];
   version: ConfigVersionInfo;
   changed: boolean;
 } {
   const file = readLocalConfigFile(configPath);
-  const parsed = GatewayConfigSchema.parse(file.json);
+  const parsed = LegacyGatewayConfigSchema.parse(file.json);
   const version: ConfigVersionInfo =
     parsed.version === 2
       ? { number: 2, label: "2" }
@@ -142,7 +142,7 @@ export function previewMigration(configPath?: string): {
     parsed.version === 2
       ? { config: parsed, warnings: [] }
       : migrateConfigV1toV2(parsed);
-  const migratedConfig = GatewayConfigSchema.parse(migration.config);
+  const migratedConfig = LegacyGatewayConfigSchema.parse(migration.config);
 
   return {
     path: file.path,
@@ -157,8 +157,8 @@ export function previewMigration(configPath?: string): {
 }
 
 export function describeMigration(
-  originalConfig: ReturnType<typeof GatewayConfigSchema.parse>,
-  migratedConfig: ReturnType<typeof GatewayConfigSchema.parse>
+  originalConfig: ReturnType<typeof LegacyGatewayConfigSchema.parse>,
+  migratedConfig: ReturnType<typeof LegacyGatewayConfigSchema.parse>
 ): string[] {
   const actions: string[] = [];
 

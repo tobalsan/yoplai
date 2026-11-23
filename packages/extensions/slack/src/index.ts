@@ -1,5 +1,8 @@
+import { readAgentChannelConfig, slackSettings } from "./config.js";
 import {
   SlackExtensionConfigSchema,
+  createChannelBotReconciler,
+  startRegisteredChannelBot,
   type AgentConfig,
   type Extension,
   type ExtensionContext,
@@ -10,12 +13,13 @@ import {
   createSlackBot,
   type SlackBot,
 } from "./bot.js";
-import { clearSlackContext, setSlackContext } from "./context.js";
+import { clearSlackContext, getSlackContext, setSlackContext } from "./context.js";
 import {
   clearActiveBots,
   getActiveBot,
   getActiveBots,
-  registerActiveBot,
+  getComponentBot,
+  registerComponentBot,
 } from "./bot-registry.js";
 import {
   clearSlackClientCache,
@@ -54,7 +58,7 @@ export async function startSlackBots(
 
     try {
       await bot.start();
-      registerActiveBot(bot.agentId, bot);
+      registerComponentBot(bot);
       console.log("[slack] Started component bot");
     } catch (err) {
       console.error("[slack] Failed to start component bot:", err);
@@ -62,27 +66,23 @@ export async function startSlackBots(
     return;
   }
 
-  const agentBots = ctx
-    .getAgents()
-    .filter((agent) => agent.slack?.token && agent.slack?.appToken)
-    .map((agent) => ({ agent, bot: createSlackAgentBot(agent) }))
-    .filter((entry): entry is { agent: AgentConfig; bot: SlackBot } => !!entry.bot);
-
-  await Promise.all(
-    agentBots.map(async ({ agent, bot }) => {
-      try {
-        await bot.start();
-        registerActiveBot(agent.id, bot);
-        console.log(`[slack] Started bot for agent: ${agent.id}`);
-      } catch (err) {
-        console.error(`[slack] Failed to start bot for agent ${agent.id}:`, err);
-      }
-    })
-  );
+  await reconcileBots(ctx);
 }
 
+const reconcileAgentBots = createChannelBotReconciler("slack", readAgentChannelConfig);
+
+async function reconcileBots(ctx?: ExtensionContext): Promise<void> {
+  const agents = ctx?.getAgents().filter((agent) => ctx.isAgentActive(agent.id)) ?? [];
+  await reconcileAgentBots(agents, (agent) => startRegisteredChannelBot(getActiveBots(), agent.id, createSlackAgentBot(agent)));
+}
+
+
 export async function stopSlackBots(): Promise<void> {
-  for (const [agentId, bot] of getActiveBots()) {
+  await reconcileBots();
+  const bots = [...getActiveBots()];
+  const component = getComponentBot();
+  if (component) bots.push(["slack", component]);
+  for (const [agentId, bot] of bots) {
     try {
       await bot.stop();
       console.log(`[slack] Stopped bot: ${agentId}`);
@@ -109,6 +109,7 @@ let unregisterDeliverySink: (() => void) | undefined;
 let unregisterUserNotifier: (() => void) | undefined;
 
 const slackExtension: Extension = {
+  ...slackSettings,
   id: "slack",
   displayName: "Slack",
   description: "Slack integration for channel and DM routing",
@@ -170,6 +171,7 @@ const slackExtension: Extension = {
       ({ agent, userId }) => getSlackDeliveryOffer(agent, ctx.getConfig(), userId)
     );
   },
+  onConfigReload: () => reconcileBots(getSlackContext()),
   async stop() {
     unregisterPairingLinks?.();
     unregisterPairingLinks = undefined;
@@ -191,3 +193,5 @@ const slackExtension: Extension = {
 };
 
 export { slackExtension, createSlackAgentBot, createSlackBot, type SlackBot };
+
+export { readAgentChannelConfig } from "./config.js";

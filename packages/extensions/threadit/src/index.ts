@@ -3,7 +3,7 @@ import {
   type Extension,
   type ExtensionContext,
 } from "@yoplai/shared";
-import { resolveThreaditConfig } from "./config.js";
+import { resolveThreaditConfig, threaditSettings } from "./config.js";
 import { describeFailure, MAX_BODY_CHARS, splitAnswer, ThreaditApi } from "./api.js";
 import { ThreaditPoller } from "./poller.js";
 import { resolveToolTarget, threaditAgentTools } from "./tools.js";
@@ -52,6 +52,7 @@ function reconcilePollers(ctx: ExtensionContext): void {
 }
 
 const threaditExtension: Extension = {
+  ...threaditSettings,
   id: "threadit",
   displayName: "Threadit",
   description: "Threadit board agent: answers mentions and replies",

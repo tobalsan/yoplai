@@ -72,7 +72,7 @@ export function resolveToolTarget(
   const token = raw.startsWith("$env:")
     ? context.env?.[raw.slice("$env:".length)]
     : raw;
-  return { baseUrl, token: token || undefined, agent: live };
+  return { baseUrl, token: token?.trim() ? token : undefined, agent: live };
 }
 
 class Board {

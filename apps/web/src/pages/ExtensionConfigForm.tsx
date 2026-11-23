@@ -16,6 +16,7 @@ import {
 import { disconnectAgentConnection } from "../api/connections";
 import {
   buildAutoFormFields,
+  missingChannelSettings,
   REDACTED_SECRET_VALUE,
   splitAutoFormValues,
   type AutoFormField,
@@ -66,6 +67,8 @@ export function ExtensionConfigForm(props: {
   gateway?: string;
   /** Only the requester's own credentials: no scope tabs and no remove action. */
   personalOnly?: boolean;
+  disabled?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const routeParams = useParams<{ agentId: string; extensionId: string }>();
   // One form belongs to one gateway, agent, and extension. The parent mounts a new form when that identity
@@ -78,6 +81,9 @@ export function ExtensionConfigForm(props: {
 
   // Updated in place after saving, from the PATCH response.
   const [entry, setEntry] = createSignal<ExtensionCatalogEntry>(props.entry);
+  createEffect(() => {
+    if (props.entry.teamOnly) setEntry(props.entry);
+  });
 
   const fields = createMemo(() => {
     const current = entry();
@@ -100,6 +106,11 @@ export function ExtensionConfigForm(props: {
   const [savedValues, setSavedValues] = createSignal<AutoFormValues>({});
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
+  const blocked = () => saving() || props.disabled === true;
+  const reportSaving = (busy: boolean) => {
+    setSaving(busy);
+    props.onBusyChange?.(busy);
+  };
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [tabScope, setCredentialScope] = createSignal<"personal" | "team">("team");
@@ -139,7 +150,8 @@ export function ExtensionConfigForm(props: {
   const removeCredentials = async () => {
     const personal = personalTab();
     setConfirmingRemove(false);
-    setSaving(true);
+    if (blocked()) return;
+    reportSaving(true);
     setError(null);
     setSaved(false);
     try {
@@ -155,10 +167,11 @@ export function ExtensionConfigForm(props: {
       if (disposed) return;
       const refreshed = updated.find((extension) => extension.id === params.extensionId);
       if (refreshed) setEntry(refreshed);
+      props.onSaved?.(updated);
     } catch (cause) {
       if (!disposed) setError(cause instanceof Error ? cause.message : "Failed to remove credentials.");
     } finally {
-      if (!disposed) setSaving(false);
+      if (!disposed) reportSaving(false);
     }
   };
 
@@ -177,6 +190,7 @@ export function ExtensionConfigForm(props: {
     const team: AutoFormValues = {};
     for (const field of fields()) {
       const value = current?.configValues[field.name];
+      if (field.defaultBoolean !== undefined) team[field.name] = field.defaultBoolean;
       if (!field.secret && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
         team[field.name] = value;
       }
@@ -206,6 +220,8 @@ export function ExtensionConfigForm(props: {
         typeof value === "boolean"
       ) {
         next[field.name] = value;
+      } else if (field.defaultBoolean !== undefined) {
+        next[field.name] = field.defaultBoolean;
       }
     }
     setValues(next);
@@ -227,7 +243,7 @@ export function ExtensionConfigForm(props: {
           <input
             id={`ext-field-${field.name}`}
           type="checkbox"
-          disabled={saving() || teamReadOnly()}
+          disabled={blocked() || teamReadOnly()}
             checked={Boolean(values()[field.name])}
             onChange={(e) => setValue(field.name, e.currentTarget.checked)}
           />
@@ -239,7 +255,7 @@ export function ExtensionConfigForm(props: {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="password"
-          disabled={saving() || teamReadOnly()}
+          disabled={blocked() || teamReadOnly()}
           autocomplete="off"
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
@@ -250,7 +266,7 @@ export function ExtensionConfigForm(props: {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="number"
-          disabled={saving() || teamReadOnly()}
+          disabled={blocked() || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -260,7 +276,7 @@ export function ExtensionConfigForm(props: {
           id={`ext-field-${field.name}`}
           class="ext-config-input"
           type="text"
-          disabled={saving() || teamReadOnly()}
+          disabled={blocked() || teamReadOnly()}
           value={String(values()[field.name] ?? "")}
           onInput={(e) => setValue(field.name, e.currentTarget.value)}
         />
@@ -277,7 +293,7 @@ export function ExtensionConfigForm(props: {
   /** Validates and saves the form; returns the refreshed catalog entry. Throws with a user-facing message. */
   const submit = async (): Promise<ExtensionCatalogEntry | undefined> => {
     const current = entry();
-    if (!current || teamReadOnly()) return undefined;
+    if (!current || teamReadOnly() || (current.teamOnly && blocked())) return undefined;
 
     const formFields = fields();
     // Guard required fields client-side so a blank required secret doesn't
@@ -293,7 +309,7 @@ export function ExtensionConfigForm(props: {
       throw new Error(`Fill in required field: ${missing.map((f) => f.label).join(", ")}`);
     }
 
-    setSaving(true);
+    reportSaving(true);
     setError(null);
     setSaved(false);
     try {
@@ -306,6 +322,13 @@ export function ExtensionConfigForm(props: {
       const config = Object.fromEntries(Object.entries(submitted).filter(([name, value]) =>
         personalOAuth ? !(typeof value === "string" && value.startsWith("$env:")) : team[name] !== value
       ));
+      if (credentialScope() === "team") {
+        for (const field of formFields) {
+          if ((field.type === "text" || field.type === "number") && values()[field.name] === "" && Object.hasOwn(team, field.name)) {
+            config[field.name] = "";
+          }
+        }
+      }
       const updated = await patchAgentExtension(params.agentId, params.extensionId, {
         ...(current.personalSecretFields !== undefined || oauthScoped() ? { credentialScope: credentialScope() } : {}),
         ...(credentialScope() === "team" ? { enabled: true } : {}),
@@ -322,13 +345,13 @@ export function ExtensionConfigForm(props: {
       setSaved(true);
       return refreshed;
     } finally {
-      if (!disposed) setSaving(false);
+      if (!disposed) reportSaving(false);
     }
   };
 
   const handleSubmit = async (event: Event) => {
     event.preventDefault();
-    if (saving()) return;
+    if (blocked()) return;
     try {
       await submit();
     } catch (cause) {
@@ -392,7 +415,7 @@ export function ExtensionConfigForm(props: {
           <button type="button" class="ext-config-remove-cancel" onClick={() => setConfirmingRemove(false)}>
             Cancel
           </button>
-          <button type="button" class="ext-config-remove-confirm-button" disabled={saving()} onClick={() => void removeCredentials()}>
+          <button type="button" class="ext-config-remove-confirm-button" disabled={blocked()} onClick={() => void removeCredentials()}>
             Remove
           </button>
         </div>
@@ -403,7 +426,7 @@ export function ExtensionConfigForm(props: {
         <button
           type="button"
           class="ext-config-remove"
-          disabled={saving()}
+          disabled={blocked()}
           onClick={() => setConfirmingRemove(true)}
         >
           <WarningIcon />
@@ -411,13 +434,15 @@ export function ExtensionConfigForm(props: {
         </button>
       </Show>
       <Show when={saved()}>
-        <span class="ext-config-saved">Saved ✓</span>
+        <span class={entry().teamOnly && !entry().configured ? "ext-config-hint" : "ext-config-saved"}>
+          {entry().teamOnly && !entry().configured ? "Saved" : "Saved ✓"}
+        </span>
       </Show>
       <Show when={!autoSave()}>
         <button
           type="submit"
           class="ext-config-save"
-          disabled={saving()}
+          disabled={blocked()}
         >
           {saving() ? "Saving…" : "Save configuration"}
         </button>
@@ -441,7 +466,13 @@ export function ExtensionConfigForm(props: {
         <Show when={entry()}>
           {(ext) => (
             <>
-              <Show when={fields().length > 0}>
+              <Show when={ext().teamOnly && ext().enabled && !ext().configured}>
+                <p class="ext-config-channel-status" role="status">{missingChannelSettings(ext())}</p>
+              </Show>
+              <Show when={ext().managedAtRoot}>
+                <p class="ext-config-scope-note">Configured in agent.yaml</p>
+              </Show>
+              <Show when={!ext().managedAtRoot && fields().length > 0}>
                 <form class="ext-config-form" classList={{ "ext-config-panel": ext().personalSecretFields === undefined && !ext().oauth }} onSubmit={handleSubmit}>
                   <Show when={props.personalOnly}>
                     <p class="ext-config-scope-note">Your own credentials, stored encrypted and used only for your requests.</p>
@@ -453,7 +484,7 @@ export function ExtensionConfigForm(props: {
                       hidePersonal={props.singleUser}
                       teamLocked={!ext().canConfigureTeam}
                       status={scopeStatus()}
-                      disabled={saving()}
+                      disabled={blocked()}
                       onChange={(next) => { setCredentialScope(next); setSaved(false); setError(null); setConfirmingRemove(false); }}
                     >
                       <p class="ext-config-scope-note">
@@ -492,6 +523,12 @@ export function ExtensionConfigForm(props: {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+        .ext-config-channel-status {
+          margin: 12px 0 0;
+          color: var(--text-secondary);
+          font-size: 13px;
+          line-height: 1.5;
         }
         .ext-config-scope-note {
           margin: 0;

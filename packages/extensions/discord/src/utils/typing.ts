@@ -5,6 +5,7 @@ const TYPING_INTERVAL_MS = 5000; // Discord typing expires after 10s
 const QUEUED_TTL_MS = 30000; // Stop typing after 30s if queued run never completes
 
 type TypingEntry = {
+  client: CarbonClient;
   interval: ReturnType<typeof setInterval>;
   timeout: ReturnType<typeof setTimeout> | null;
   unsubscribe: () => void;
@@ -76,7 +77,7 @@ export function startTyping(
     ? setTimeout(() => stopTyping(channelId), QUEUED_TTL_MS)
     : null;
 
-  activeTyping.set(channelId, { interval, timeout, unsubscribe });
+  activeTyping.set(channelId, { client, interval, timeout, unsubscribe });
 }
 
 /**
@@ -95,8 +96,8 @@ export function stopTyping(channelId: string): void {
 /**
  * Stop all active typing indicators (for cleanup on bot stop).
  */
-export function stopAllTyping(): void {
-  for (const channelId of activeTyping.keys()) {
-    stopTyping(channelId);
+export function stopAllTyping(client: CarbonClient): void {
+  for (const [channelId, entry] of activeTyping) {
+    if (entry.client === client) stopTyping(channelId);
   }
 }

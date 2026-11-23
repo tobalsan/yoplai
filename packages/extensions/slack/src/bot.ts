@@ -1,10 +1,10 @@
+import { readAgentChannelConfig } from "./config.js";
 import { App, SocketModeReceiver } from "@slack/bolt";
 import type {
   AgentConfig,
   ChannelConversationType,
   FileAttachment,
   FileOutputEvent,
-  SlackAgentConfig,
   SlackComponentChannelConfig,
   SlackComponentConfig,
   SlackComponentDmConfig,
@@ -86,7 +86,7 @@ import {
 export type SlackBot = {
   app: App;
   agentId: string;
-  start: () => Promise<void>;
+  start: (signal?: AbortSignal) => Promise<void>;
   stop: () => Promise<void>;
 };
 
@@ -136,12 +136,16 @@ async function recoverTimedOutSlackProgress(
   );
 }
 
-function createSocketModeApp(token: string, appToken: string): App {
+function createSocketModeApp(token: string, appToken: string, dedicated = false): App {
   return new App({
     token,
+    ...(dedicated ? { deferInitialization: true, clientOptions: { timeout: 10_000 } } : {}),
     receiver: new SocketModeReceiver({
       appToken,
       clientPingTimeout: SLACK_CLIENT_PING_TIMEOUT_MS,
+      ...(dedicated ? {
+        installerOptions: { clientOptions: { timeout: 4_000, retryConfig: { retries: 0 }, rejectRateLimitedCalls: true } },
+      } : {}),
     }),
   });
 }
@@ -1575,6 +1579,7 @@ type SlackBotWiring = {
   recoveryPrefixes(): string[];
   acceptsAgent(agentId: string): boolean;
   getBroadcastChannel(): string | undefined;
+  initialize?: () => Promise<void>;
 };
 
 /** Event, command, and lifecycle wiring shared by the component and per-agent bots. */
@@ -1592,8 +1597,10 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   let progressRecovery: ReturnType<typeof setInterval> | undefined;
   let botUserId: string | undefined;
   let botId: string | undefined;
+  let stopped = false;
 
   app.message(async ({ message, client: eventClient, body }) => {
+    if (stopped) return;
     const data = toMessageData(message);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1624,6 +1631,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   });
 
   app.event("app_mention", async ({ event, client: eventClient, body }) => {
+    if (stopped) return;
     const data = toMessageData(event, true);
     if (!data) return;
     const target = resolveMessageTarget(data);
@@ -1653,6 +1661,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   });
 
   app.event("reaction_added", async ({ event, client: eventClient }) => {
+    if (stopped) return;
     const data = toReactionData(event);
     if (!data) return;
     const target = resolveReactionTarget(data);
@@ -1668,6 +1677,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   });
 
   app.event("reaction_removed", async ({ event, client: eventClient }) => {
+    if (stopped) return;
     const data = toReactionData(event);
     if (!data) return;
     const target = resolveReactionTarget(data);
@@ -1692,6 +1702,7 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   ) => {
     app.command(name, async ({ command, ack, respond }) => {
       await ack();
+      if (stopped) return;
       const target = w.resolveCommandTarget({
         channel_id: command.channel_id,
         user_id: command.user_id,
@@ -1725,9 +1736,11 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   return {
     app,
     agentId: w.agentId,
-    start: async () => {
+    start: async (signal) => {
+      stopped = false;
       try {
         const auth = await client.auth?.test();
+        signal?.throwIfAborted();
         botUserId = auth?.user_id;
         botId = auth?.bot_id;
         if (auth?.team_id) {
@@ -1738,8 +1751,16 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
         botUserId = undefined;
         botId = undefined;
       }
+      signal?.throwIfAborted();
+      await w.initialize?.();
+      signal?.throwIfAborted();
       await app.start();
+      if (stopped || signal?.aborted) {
+        await app.stop();
+        return;
+      }
       await recoverTimedOutSlackProgress(w.recoveryPrefixes(), client);
+      if (stopped || signal?.aborted) return;
       progressRecovery = setInterval(() => {
         void recoverTimedOutSlackProgress(w.recoveryPrefixes(), client);
       }, PROGRESS_ORPHAN_TIMEOUT_MS);
@@ -1753,12 +1774,13 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       console.log(`${logPrefix} Started Socket Mode bot`);
     },
     stop: async () => {
+      stopped = true;
       cleanupBroadcasts?.();
       if (progressRecovery) clearInterval(progressRecovery);
       cleanupBroadcasts = null;
       textAccumulators.clear();
       unlockedThreadKeys.clear();
-      stopAllThinkingReactions();
+      stopAllThinkingReactions(client);
       await app.stop();
     },
   };
@@ -1881,13 +1903,13 @@ export function createSlackBot(
 }
 
 export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
-  if (!agent.slack?.token || !agent.slack?.appToken) return null;
-
-  const agentSlackConfig = agent.slack as SlackAgentConfig;
-  const slackConfig = agent.slack as SlackComponentConfig;
+  const agentSlackConfig = readAgentChannelConfig(agent);
+  if (!agentSlackConfig) return null;
+  const slackConfig = agentSlackConfig as SlackComponentConfig;
   const app = createSocketModeApp(
     agentSlackConfig.token,
-    agentSlackConfig.appToken
+    agentSlackConfig.appToken,
+    true
   );
   const logPrefix = `[slack:${agent.id}]`;
 
@@ -2016,6 +2038,7 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   return wireSlackBot({
     app,
     agentId: agent.id,
+    initialize: () => app.init(),
     logPrefix,
     resolveMessageTarget,
     resolveReactionTarget,

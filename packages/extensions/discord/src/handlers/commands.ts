@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "../config.js";
 /**
  * Slash command handlers for Discord
  *
@@ -48,7 +49,7 @@ function getDiscordConfig(
 ): DiscordConfig | undefined {
   const resolved = ctx.resolveDiscordConfig?.(interaction);
   if (resolved) return resolved;
-  return ctx.agent?.discord;
+  return ctx.agent && readAgentChannelConfig(ctx.agent);
 }
 
 /**

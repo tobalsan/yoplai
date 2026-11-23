@@ -290,7 +290,7 @@ targets use their existing delivery behavior; in-app pause alerts remain availab
 When a tool runs, it resolves a Slack Web API client in this order:
 
 1. The live **per-agent** bot client (`getActiveBot(agent.id)`), if running.
-2. The live **component** bot client (`getActiveBot("slack")`), if running.
+2. The live **component** bot client (`getComponentBot()`), if running.
 3. A token-only `@slack/web-api` `WebClient` built from the agent's `slack.token`
    (in `agent.yaml`), falling back to `extensions.slack.token`.
 

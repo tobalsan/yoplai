@@ -81,7 +81,7 @@ describe("quota administrator notifications", () => {
     const { notifyProviderQuota } = await import("./quota-notification.js");
     await notifyProviderQuota({
       ...agent,
-      mattermost: { url: "$env:DUMMY_MM_URL", token: "$env:DUMMY_MM_TOKEN", channels: {} },
+      extensions: { mattermost: { url: "$env:DUMMY_MM_URL", token: "$env:DUMMY_MM_TOKEN", channels: {} } },
     });
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
       mattermostUrl: "https://agent.example.com",

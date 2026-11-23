@@ -124,7 +124,6 @@ Common fields:
 | `modelRouting`                        | Pi chat opt-in; defaults disabled, optional `categories`; see [routing guide](model-routing.md) |
 | `retryBaseDelay`                      | Initial retry delay in seconds; default 2                   |
 | `introMessage`                        | Custom message shown after `/new`                           |
-| `discord`, `slack`, `telegram`, `irc` | Supported per-agent transport config                        |
 | `heartbeat`, `dream`, `webhooks`      | Periodic and webhook-triggered behavior                     |
 | `reflect`                             | `true` or `{ enabled, cadence, provider, model, timeoutMs }`. Adds a self-improvement prompt so the agent saves lessons in the same turn. Off by default. Only `enabled` has an effect now; the other fields are reserved |
 | `extensions`                          | Per-agent extension opt-ins/overrides and channel settings |
@@ -134,7 +133,11 @@ Common fields:
 
 On first run Yoplai creates missing `AGENTS.md` and `USER.md` without overwriting existing files. Custom prompt files such as `PERSONA.md` in the example above must be created explicitly and listed in `system_files`.
 
-Mattermost, Slack and Telegram settings may also live under `extensions.mattermost`, `extensions.slack` and `extensions.telegram` in `agent.yaml`. The loader validates these blocks and exposes them to the per-agent bots; an existing top-level channel block takes precedence. A nested `enabled: false` prevents that bot from starting after a restart, unless a top-level block exists. Incomplete settings leave the agent available and log only the invalid field paths. Tokens may remain `$env:NAME` references resolved from the agent's `.env`; no file migration is needed.
+Put per-agent messaging settings under `extensions.<id>` in `agent.yaml`. The web and desktop settings forms write flat fields such as `dmEnabled` and comma-separated `channelIds`. They store credential values in the agent's `.env` and write `$env:NAME` references into YAML. Save or toggle a channel to apply changes live. See [channel setup and fields](channels.md#set-up-a-channel-for-one-agent).
+
+Nested routing policies such as `dm.allowFrom` can still be set in YAML. When present, `dmEnabled` overrides `dm.enabled`, and `channelIds` replaces the nested `channels` map.
+
+The top-level `mattermost`, `slack`, `telegram`, `discord`, and `irc` blocks are deprecated. The loader folds each existing block into `extensions.<id>` without rewriting the file. The top-level settings take precedence, and the extension block supplies the optional `enabled` toggle. Edit legacy settings in `agent.yaml` and enable or disable the channel in the app.
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
@@ -333,7 +336,7 @@ Named channels are referenced by scheduler, project orchestration, and `yoplai n
 }
 ```
 
-`mattermost` is a channel ID (normally 26 characters), not a channel name. For example, `MATTERMOST_URL` can be `https://mattermost.example.com`. Mattermost uses the `--from` agent's top-level `mattermost` block when present, otherwise root `extensions.mattermost`; its `url` and `token` always come from the same block. Both accept `$env:NAME` references, including agent-local env values.
+`mattermost` is a channel ID (normally 26 characters). For example, `MATTERMOST_URL` can be `https://mattermost.example.com`. Mattermost uses the `--from` agent's `extensions.mattermost` block when configured and otherwise uses the root block. The `url` and `token` always come from the same block. Both accept `$env:NAME` references, including agent-local env values.
 
 The default notify surface, `all`, sends to every surface with an ID on the channel key; `both` remains an alias of `all`. Explicit `discord`, `slack`, or `mattermost` selects only that surface. A configured surface with missing credentials returns a failed result; the overall notification succeeds if any surface succeeds. `notifications.adminChannel` can name a Mattermost channel key for provider-quota alerts, and orchestrator HITL channels use these same targets.
 

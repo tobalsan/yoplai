@@ -62,6 +62,7 @@ export type MattermostSocketOptions = {
 };
 
 const DEFAULT_INITIAL_BACKOFF_MS = 1_000;
+const FIRST_HELLO_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BACKOFF_MS = 60_000;
 const DEFAULT_PING_INTERVAL_MS = 30_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 75_000;
@@ -97,7 +98,7 @@ export class MattermostSocket {
   private lastTrafficAt = 0;
   private pingSeq = 1;
   private firstHello:
-    | { resolve: () => void; reject: (err: Error) => void }
+    | { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }
     | undefined;
 
   constructor(private readonly options: MattermostSocketOptions) {}
@@ -106,13 +107,19 @@ export class MattermostSocket {
   start(): Promise<void> {
     this.stopped = false;
     return new Promise((resolve, reject) => {
-      this.firstHello = { resolve, reject };
+      const timer = setTimeout(() => {
+        if (!this.firstHello) return;
+        this.finishStart(new Error("Mattermost WebSocket timed out waiting for hello"));
+        this.stop();
+      }, FIRST_HELLO_TIMEOUT_MS);
+      this.firstHello = { resolve, reject, timer };
       this.connect();
     });
   }
 
   stop(): void {
     this.stopped = true;
+    this.finishStart(new Error("Mattermost WebSocket stopped before hello"));
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.stopPing();
@@ -123,6 +130,15 @@ export class MattermostSocket {
     } catch {
       // Already closed.
     }
+  }
+
+  private finishStart(error?: Error): void {
+    const pending = this.firstHello;
+    if (!pending) return;
+    this.firstHello = undefined;
+    clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
   }
 
   private connect(): void {
@@ -195,8 +211,7 @@ export class MattermostSocket {
       this.attempt = 0;
       if (typeof message.seq === "number") this.nextSequence = message.seq + 1;
       if (this.firstHello) {
-        this.firstHello.resolve();
-        this.firstHello = undefined;
+        this.finishStart();
       } else if (isReconnect) {
         console.log(
           `${this.options.logPrefix} Reconnected (${resumed ? "resumed" : "new session, catching up"})`
@@ -223,10 +238,8 @@ export class MattermostSocket {
     if (this.stopped) return;
     if (this.firstHello) {
       // The first connection must succeed, so a bad url/token fails start().
-      const pending = this.firstHello;
-      this.firstHello = undefined;
       this.stopped = true;
-      pending.reject(
+      this.finishStart(
         err ?? new Error("Mattermost WebSocket closed before hello")
       );
       return;

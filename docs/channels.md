@@ -1,6 +1,23 @@
 # Messaging channels
 
-Yoplai supports Discord, Slack, Telegram, Mattermost, and IRC. Shared transports configure under root `extensions`; some transports also support dedicated per-agent bots.
+Yoplai supports Discord, Slack, Telegram, Mattermost, IRC, and Threadit.
+
+## Set up a channel for one agent
+
+In the web or desktop app, open the agent's settings and choose the channel under **Extensions**. Enter its settings and save. Use **Disable** to stop the bot or **Enable** to reuse its saved settings. An incomplete setup shows **Enabled, not connected** and names the missing settings.
+
+The form writes settings under `extensions.<id>` in `agent.yaml`. It saves tokens and passwords in the agent's `.env` and keeps `$env:NAME` references in YAML. Shared bots are configured in `yoplai.json`.
+
+| Channel | Per-agent fields |
+| --- | --- |
+| Mattermost | `url`, `token`, `dmEnabled`, and comma-separated `channelIds`. Enable DMs or add a channel to receive messages. |
+| Slack | `token`, `appToken`, `dmEnabled`, and comma-separated `channelIds`. An empty list allows every channel the bot is in. |
+| Telegram | `token`, comma-separated `allowedUsers` and `allowedChats`. An empty list allows nobody. |
+| Discord | `token`. Add a nested `dm` or `guilds` policy in YAML for advanced routing. |
+| IRC | `host`, `port`, `tls` (on by default), `nick`, optional `password` and `nickservPassword`, comma-separated `channelIds`, and `dmEnabled`. |
+| Threadit | `baseUrl` and `token`. You can provide the URL first, run `threadit.register` from the agent's chat, and approve the account on the board. |
+
+Existing top-level `mattermost`, `slack`, `telegram`, `discord`, and `irc` blocks still load and log a deprecation warning. Edit those settings in `agent.yaml` and use the app to enable or disable the channel.
 
 Never commit bot/app tokens. Put them in `$YOPLAI_HOME/.env` or agent-local `.env` and reference with `$env:`.
 
@@ -83,9 +100,9 @@ Works with self-hosted Mattermost and Mattermost Cloud (tested on 12.0). The bot
 }
 ```
 
-Only the channels listed under `channels` are served; posts anywhere else are ignored. Each channel exchange is threaded, and each thread is one durable agent session. A dedicated bot per agent goes in the agent's `agent.yaml` as `mattermost: { url, token, channels, dm }`.
+Only the channels listed under `channels` are served; posts anywhere else are ignored. Each channel exchange is threaded, and each thread is one durable agent session. Configure a dedicated bot under `extensions.mattermost` in the agent's `agent.yaml`. The flat `channelIds` and `dmEnabled` fields also work in YAML.
 
-The same bot URL and token also serve `yoplai notify --surface mattermost`. Configure the destination channel ID under `notifications.channels.<key>.mattermost`; notify uses the `--from` agent's `mattermost` block, otherwise root `extensions.mattermost` (see [notification channels](configuration.md#notification-channels)).
+The same bot URL and token also serve `yoplai notify --surface mattermost`. Configure the destination channel ID under `notifications.channels.<key>.mattermost`. Notify uses `extensions.mattermost` for the `--from` agent when configured and otherwise uses the root block. See [notification channels](configuration.md#notification-channels).
 
 Use the server root for `url` (e.g. `https://chat.example.com`, including any deployment subpath), never a team URL; team scoping comes from the bot's team membership and channel IDs, and DMs are cross-team.
 

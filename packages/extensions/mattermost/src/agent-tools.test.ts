@@ -16,7 +16,7 @@ import {
   parseDestination,
 } from "./agent-tools.js";
 import { createMattermostBot, type MattermostBot } from "./bot.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerActiveBot, registerComponentBot } from "./bot-registry.js";
 import { clearMattermostContext, setMattermostContext } from "./context.js";
 import { withThreadBindings } from "./thread-session-bindings.js";
 import {
@@ -71,12 +71,12 @@ describe("checkTarget", () => {
     const bot = {} as MattermostBot;
     try {
       expect(await getMattermostDeliveryOffer(support, config)).toBeUndefined();
-      registerActiveBot("mattermost", bot);
+      registerComponentBot(bot);
       expect(await getMattermostDeliveryOffer({ ...support, id: "unrouted" }, config)).toBeUndefined();
       expect(await getMattermostDeliveryOffer(support, config)).toEqual({ label: "Mattermost", channel: true });
       registerActiveBot(support.id, bot);
       expect(await getMattermostDeliveryOffer(support, config)).toBeUndefined();
-      expect(await getMattermostDeliveryOffer({ ...support, mattermost: { url: "https://chat.example.test", token: "fake-token", channels: { [CHANNEL]: {} } } }, config)).toEqual({ label: "Mattermost", channel: true });
+      expect(await getMattermostDeliveryOffer({ ...support, extensions: { mattermost: { url: "https://chat.example.test", token: "fake-token", channels: { [CHANNEL]: {} } } } }, config)).toEqual({ label: "Mattermost", channel: true });
     } finally {
       clearActiveBots();
     }
@@ -105,10 +105,12 @@ describe("checkTarget", () => {
   it("limits a per-agent bot to its configured channels", () => {
     const agent = {
       id: "a",
-      mattermost: {
-        url: "https://x.test",
-        token: "t",
-        channels: { [CHANNEL]: {} },
+      extensions: {
+        mattermost: {
+          url: "https://x.test",
+          token: "t",
+          channels: { [CHANNEL]: {} },
+        },
       },
     } as unknown as AgentConfig;
     expect(
@@ -164,7 +166,7 @@ describe("Mattermost agent tools and delivery sink", () => {
     sockets.last().open();
     sockets.last().hello("conn-1");
     await started;
-    registerActiveBot("mattermost", bot);
+    registerComponentBot(bot);
   });
 
   afterEach(async () => {
@@ -373,7 +375,7 @@ describe("Mattermost agent tools and delivery sink", () => {
     sockets.last().open();
     sockets.last().hello("after-restart");
     await started;
-    registerActiveBot("mattermost", bot);
+    registerComponentBot(bot);
     sockets.last().posted(server.addPost({
       channel_id: CHANNEL, root_id: result.rootId as string, user_id: ALICE.id,
       message: "Still the same conversation?",

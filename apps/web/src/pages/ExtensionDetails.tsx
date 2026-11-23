@@ -45,6 +45,7 @@ export function ExtensionDetails(props: {
     async (current) => ({ key: gatewayKey(current.gateway, current.agentId), list: await fetchAgentExtensions(current.agentId, current.gateway) })
   );
   const [busy, setBusy] = createSignal(false);
+  const [formBusy, setFormBusy] = createSignal(false);
   // The OAuth card's selected tab also selects which settings the form edits.
   const [pickedScope, setScope] = createSignal<CredentialScope>("personal");
   const singleUser = () => requester().ready && !requester().unknown && !requester().multiUser;
@@ -58,6 +59,7 @@ export function ExtensionDetails(props: {
     setScope("personal");
     generation++;
     setBusy(false);
+    setFormBusy(false);
     setToggleError(null);
   });
   onCleanup(() => { generation++; });
@@ -82,7 +84,7 @@ export function ExtensionDetails(props: {
     const key = targetKey();
     const form = formKey();
     const current = target();
-    if (!key || !form || current.state !== "ready" || entry()?.id !== ext.id) return;
+    if (!key || !form || current.state !== "ready" || entry()?.id !== ext.id || busy() || formBusy()) return;
     const mine = generation;
     const live = () => generation === mine && formKey() === form;
     setBusy(true);
@@ -97,7 +99,7 @@ export function ExtensionDetails(props: {
     }
   };
 
-  // Extensions without settings are a plain on/off, flipped here.
+  // Toggle the extension without resubmitting settings.
   const toggle = (ext: ExtensionCatalogEntry) => mutateExtension(ext, { enabled: !ext.enabled }, "Failed to update extension.");
   // Whoever connects turns the extension on for the agent. Signed-in users go
   // through their own scope, which any agent member may write (a team-scope
@@ -226,6 +228,10 @@ export function ExtensionDetails(props: {
                   agentId={params.agentId}
                   gateway={gateway()}
                   singleUser={singleUser()}
+                  disabled={ext().teamOnly && busy()}
+                  onBusyChange={(value) => {
+                    if (generation === mine && formKey() === form && ext().teamOnly) setFormBusy(value);
+                  }}
                   onSaved={(list) => saved(catalogKey, form, mine, list)}
                   registerConnectActions={(actions) => { settingsActions = actions; }}
                 />
@@ -239,18 +245,19 @@ export function ExtensionDetails(props: {
                   <Show
                     when={bespokeHref(ext())}
                     fallback={
-                      <Show when={!ext().oauth && ext().tier !== "auto-form"}>
+                      <Show when={!ext().oauth && (ext().tier !== "auto-form" || ext().teamOnly)}>
                         <button
                           type="button"
                           class="ext-details-configure"
+                          classList={{ "ext-details-channel-toggle": ext().teamOnly }}
                           disabled={
-                            busy() ||
-                            ext().managedAtRoot ||
+                            busy() || formBusy() ||
+                            (ext().managedAtRoot && !ext().teamOnly) ||
                             ext().canConfigureTeam === false ||
                             (!ext().enabled && ext().configurable === false)
                           }
                           title={
-                            ext().managedAtRoot
+                            ext().managedAtRoot && !ext().teamOnly
                               ? "Configured in agent.yaml — edit the file to change."
                               : ext().canConfigureTeam === false
                               ? "Ask an agent manager"
@@ -405,6 +412,10 @@ export const EXTENSION_DETAILS_STYLES = `
         button.ext-details-configure:disabled {
           opacity: 0.6;
           cursor: not-allowed;
+        }
+
+        .ext-details-channel-toggle {
+          margin-top: 12px;
         }
 
         .ext-details-configure:hover {

@@ -722,7 +722,7 @@ describe("runHeartbeat session preservation", () => {
     const agent = {
       id: "test-agent",
       heartbeat: { every: "1m", prompt: "Check" },
-      discord: { broadcastToChannel: "fixture-channel" },
+      extensions: { discord: { broadcastToChannel: "fixture-channel" } },
       workspace,
     };
     mockGetAgent.mockReturnValue(agent);
@@ -754,7 +754,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -775,7 +775,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -801,7 +801,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: {}, // No broadcastToChannel
+      extensions: { discord: {} }, // No broadcastToChannel
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -826,7 +826,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -853,7 +853,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -880,7 +880,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -904,7 +904,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({
@@ -929,7 +929,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue(undefined); // No existing session
@@ -955,7 +955,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m", prompt: "check in" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: tmpDir,
     });
     mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
@@ -994,7 +994,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m", prompt: "check in" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: tmpDir,
     });
     mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
@@ -1028,7 +1028,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
 
@@ -1047,7 +1047,7 @@ describe("runHeartbeat session preservation", () => {
     mockGetAgent.mockReturnValue({
       id: "test-agent",
       heartbeat: { every: "5m" },
-      discord: { broadcastToChannel: "channel-1" },
+      extensions: { discord: { broadcastToChannel: "channel-1" } },
       workspace: "/test",
     });
     mockGetSessionEntry.mockReturnValue({ sessionId: "s", updatedAt: 1000 });
@@ -1260,7 +1260,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "5m", prompt: "Ping" }, // 5 minutes = 300000ms
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1291,7 +1291,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-default",
         heartbeat: { prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1339,7 +1339,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1366,7 +1366,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "1m", prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1404,7 +1404,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "1m", prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1528,7 +1528,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "1m", prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1560,7 +1560,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "1m", prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1598,13 +1598,13 @@ describe("heartbeat lifecycle", () => {
       const enabledAgent = {
         id: "agent-1",
         heartbeat: { every: "1m", prompt: "Ping" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       const disabledAgent = {
         id: "agent-1",
         heartbeat: undefined, // Disabled
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
 
@@ -1642,7 +1642,7 @@ describe("heartbeat lifecycle", () => {
       const agent = {
         id: "agent-1",
         heartbeat: { every: "1m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       };
       mockLoadConfig.mockReturnValue({
@@ -1677,13 +1677,13 @@ describe("heartbeat lifecycle", () => {
         {
           id: "agent-1",
           heartbeat: { every: "1m", prompt: "ping" },
-          discord: { broadcastToChannel: "ch1" },
+          extensions: { discord: { broadcastToChannel: "ch1" } },
           workspace: "/t1",
         },
         {
           id: "agent-2",
           heartbeat: { every: "1m", prompt: "ping" },
-          discord: { broadcastToChannel: "ch2" },
+          extensions: { discord: { broadcastToChannel: "ch2" } },
           workspace: "/t2",
         },
       ];
@@ -1799,7 +1799,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1821,7 +1821,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1844,7 +1844,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1874,7 +1874,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1911,7 +1911,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1936,7 +1936,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 
@@ -1959,7 +1959,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: {}, // No broadcastToChannel
+        extensions: { discord: {} }, // No broadcastToChannel
         workspace: "/test",
       });
 
@@ -1981,7 +1981,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "my-channel-123" },
+        extensions: { discord: { broadcastToChannel: "my-channel-123" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({
@@ -2009,7 +2009,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({
@@ -2037,7 +2037,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({ payloads: [{ text: "" }] });
@@ -2059,7 +2059,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({
@@ -2083,7 +2083,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({
@@ -2107,7 +2107,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockIsStreaming.mockReturnValue(true);
@@ -2130,7 +2130,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockRejectedValue(new Error("API timeout"));
@@ -2155,7 +2155,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       // Text longer than 200 chars
@@ -2181,7 +2181,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       const shortText = "Short alert message";
@@ -2205,7 +2205,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       const exactText = "B".repeat(200);
@@ -2229,7 +2229,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({ payloads: [{ text: "" }] });
@@ -2252,7 +2252,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       mockRunAgent.mockResolvedValue({ payloads: [{ text: "HEARTBEAT_OK" }] });
@@ -2275,7 +2275,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
       // Long text with token in the middle
@@ -2307,7 +2307,7 @@ describe("heartbeat event emission", () => {
       mockGetAgent.mockReturnValue({
         id: "test-agent",
         heartbeat: { every: "5m" },
-        discord: { broadcastToChannel: "channel-1" },
+        extensions: { discord: { broadcastToChannel: "channel-1" } },
         workspace: "/test",
       });
 

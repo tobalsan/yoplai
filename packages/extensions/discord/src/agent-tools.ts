@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "./config.js";
 import type {
   AgentConfig,
   DeliveryDestination,
@@ -7,7 +8,7 @@ import type {
   GatewayConfig,
 } from "@yoplai/shared";
 import { z } from "zod";
-import { getActiveBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot } from "./bot-registry.js";
 import { getDiscordContext } from "./context.js";
 import { createThreadSessionBindingStore } from "./thread-session-bindings.js";
 import { splitMessage } from "./utils/chunk.js";
@@ -94,7 +95,8 @@ function resolveDiscordToken(
   agent: AgentConfig,
   config: GatewayConfig
 ): string | undefined {
-  if (agent.discord?.token) return agent.discord.token;
+  const own = readAgentChannelConfig(agent);
+  if (own?.token) return own.token;
   const component = config.extensions?.discord as
     | DiscordComponentConfig
     | undefined;
@@ -111,11 +113,12 @@ function configuredChannelIds(
   agent: AgentConfig,
   config: GatewayConfig
 ): string[] {
+  const own = readAgentChannelConfig(agent);
   const ids = new Set<string>();
-  if (agent.discord?.channelId) ids.add(agent.discord.channelId);
-  if (agent.discord?.broadcastToChannel)
-    ids.add(agent.discord.broadcastToChannel);
-  for (const guild of Object.values(agent.discord?.guilds ?? {})) {
+  if (own?.channelId) ids.add(own.channelId);
+  if (own?.broadcastToChannel)
+    ids.add(own.broadcastToChannel);
+  for (const guild of Object.values(own?.guilds ?? {})) {
     for (const channelId of Object.keys(guild.channels ?? {})) {
       ids.add(channelId);
     }
@@ -142,9 +145,10 @@ function configuredGuildIds(
   agent: AgentConfig,
   config: GatewayConfig
 ): string[] {
+  const own = readAgentChannelConfig(agent);
   const ids = new Set<string>();
-  if (agent.discord?.guildId) ids.add(agent.discord.guildId);
-  for (const guildId of Object.keys(agent.discord?.guilds ?? {})) {
+  if (own?.guildId) ids.add(own.guildId);
+  for (const guildId of Object.keys(own?.guilds ?? {})) {
     ids.add(guildId);
   }
 
@@ -217,7 +221,7 @@ function resolveDiscordClient(
     };
   }
 
-  const componentBot = getActiveBot("discord");
+  const componentBot = getComponentBot();
   if (componentBot) {
     return {
       rest: componentBot.client.rest as DiscordRestClient,
@@ -235,7 +239,7 @@ function resolveDiscordClient(
   }
   return {
     rest: client,
-    source: agent.discord?.token ? "agent" : "component",
+    source: readAgentChannelConfig(agent)?.token ? "agent" : "component",
   };
 }
 

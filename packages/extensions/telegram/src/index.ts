@@ -1,5 +1,8 @@
+import { readAgentChannelConfig, telegramSettings } from "./config.js";
 import {
   TelegramExtensionConfigSchema,
+  createChannelBotReconciler,
+  startRegisteredChannelBot,
   type AgentConfig,
   type DeliveryDestination,
   type Extension,
@@ -11,12 +14,13 @@ import {
   createTelegramBot,
   type TelegramBot,
 } from "./bot.js";
-import { clearTelegramContext, setTelegramContext } from "./context.js";
+import { clearTelegramContext, getTelegramContext, setTelegramContext } from "./context.js";
 import {
   clearActiveBots,
   getActiveBot,
   getActiveBots,
-  registerActiveBot,
+  getComponentBot,
+  registerComponentBot,
 } from "./bot-registry.js";
 import { getTelegramDeliveryOffer, sendTelegramMessage, telegramAgentTools } from "./agent-tools.js";
 
@@ -44,7 +48,7 @@ export async function startTelegramBots(
 
     try {
       await bot.start();
-      registerActiveBot(bot.agentId, bot);
+      registerComponentBot(bot);
       console.log("[telegram] Started component bot");
     } catch (err) {
       console.error("[telegram] Failed to start component bot:", err);
@@ -52,32 +56,23 @@ export async function startTelegramBots(
     return;
   }
 
-  const agentBots = ctx
-    .getAgents()
-    .filter((agent) => agent.telegram?.token)
-    .map((agent) => ({ agent, bot: createTelegramAgentBot(agent) }))
-    .filter(
-      (entry): entry is { agent: AgentConfig; bot: TelegramBot } => !!entry.bot
-    );
-
-  await Promise.all(
-    agentBots.map(async ({ agent, bot }) => {
-      try {
-        await bot.start();
-        registerActiveBot(agent.id, bot);
-        console.log(`[telegram] Started bot for agent: ${agent.id}`);
-      } catch (err) {
-        console.error(
-          `[telegram] Failed to start bot for agent ${agent.id}:`,
-          err
-        );
-      }
-    })
-  );
+  await reconcileBots(ctx);
 }
 
+const reconcileAgentBots = createChannelBotReconciler("telegram", readAgentChannelConfig);
+
+async function reconcileBots(ctx?: ExtensionContext): Promise<void> {
+  const agents = ctx?.getAgents().filter((agent) => ctx.isAgentActive(agent.id)) ?? [];
+  await reconcileAgentBots(agents, (agent) => startRegisteredChannelBot(getActiveBots(), agent.id, createTelegramAgentBot(agent)));
+}
+
+
 export async function stopTelegramBots(): Promise<void> {
-  for (const [agentId, bot] of getActiveBots()) {
+  await reconcileBots();
+  const bots = [...getActiveBots()];
+  const component = getComponentBot();
+  if (component) bots.push(["telegram", component]);
+  for (const [agentId, bot] of bots) {
     try {
       await bot.stop();
       console.log(`[telegram] Stopped bot: ${agentId}`);
@@ -91,6 +86,7 @@ export async function stopTelegramBots(): Promise<void> {
 export { getActiveBot };
 
 const telegramExtension: Extension = {
+  ...telegramSettings,
   id: "telegram",
   displayName: "Telegram",
   description: "Telegram integration for direct-message routing",
@@ -155,6 +151,7 @@ const telegramExtension: Extension = {
       ({ agent }) => getTelegramDeliveryOffer(agent)
     );
   },
+  onConfigReload: () => reconcileBots(getTelegramContext()),
   async stop() {
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;

@@ -337,11 +337,7 @@ const AgentConfigBaseSchema = z.object({
   fallback_model: RequiredModelConfigSchema.optional(),
   openclaw: z.never({ message: "openclaw SDK was removed, use pi" }).optional(),
   auth: AgentAuthConfigSchema.optional(), // OAuth/API key auth config
-  discord: DiscordConfigSchema.optional(),
-  slack: z.lazy(() => SlackAgentConfigSchema).optional(),
-  telegram: z.lazy(() => TelegramAgentConfigSchema).optional(),
-  irc: z.lazy(() => IrcAgentConfigSchema).optional(),
-  mattermost: z.lazy(() => MattermostAgentConfigSchema).optional(),
+  legacyChannelExtensions: z.array(z.enum(["discord", "slack", "telegram", "irc", "mattermost"])).optional(),
   reasoning: ThinkLevelSchema.optional(),
   thinkLevel: ThinkLevelSchema.optional(),
   queueMode: z.enum(["queue", "interrupt"]).optional().default("queue"),
@@ -410,10 +406,19 @@ export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
 );
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+const LegacyAgentChannelsSchema = z.object({
+  discord: DiscordConfigSchema.optional(),
+  slack: z.lazy(() => SlackAgentConfigSchema).optional(),
+  telegram: z.lazy(() => TelegramAgentConfigSchema).optional(),
+  irc: z.lazy(() => IrcAgentConfigSchema).optional(),
+  mattermost: z.lazy(() => MattermostAgentConfigSchema).optional(),
+});
+
 const AgentYamlConfigBaseSchema = AgentConfigBaseSchema.omit({
   workspace: true,
   workspaceDir: true,
-});
+  legacyChannelExtensions: true,
+}).extend(LegacyAgentChannelsSchema.shape);
 export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
   (value, ctx) => {
     validateDurableAgent(value, ctx);
@@ -1427,6 +1432,9 @@ export const GatewayConfigSchema = z.object({
   agents: z.array(AgentConfigSchema),
   ...GatewayCommonFields,
 });
+export const LegacyGatewayConfigSchema = GatewayConfigSchema.extend({
+  agents: z.array(AgentConfigSchema.and(LegacyAgentChannelsSchema)),
+});
 export type GatewayConfig = Omit<z.infer<typeof GatewayConfigSchema>, "modelRouting"> & {
   modelRouting?: ModelRoutingConfig;
 };
@@ -1957,6 +1965,8 @@ export interface Extension {
   configJsonSchema?: Record<string, unknown>;
   requiredSecrets?: string[];
   advancedConfigFields?: string[];
+  /** Only agent-owned settings and credentials are editable and used for tools. */
+  teamOnly?: boolean;
   /** Fields hidden from the config form when the agent uses OAuth. */
   oauthHiddenFields?: string[];
   /**
@@ -2014,6 +2024,7 @@ export interface Extension {
     callTool(ctx: McpAppsContext, server: string, tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
   };
   validateAgentConfigs?(config: GatewayConfig): ValidationResult;
+  missingAgentSettings?(agent: AgentConfig, config: GatewayConfig, env: Record<string, string>): string[];
   /** Validate this extension's config for one agent before it is enabled. */
   validateAgentConfig?(
     agent: AgentConfig,
@@ -2087,6 +2098,9 @@ export const ExtensionDefinitionSchema = z.object({
   getReplyReviewer: z.function().optional(),
   getDiscoveryTools: z.function().optional(),
   validateAgentConfigs: z.function().optional(),
+  validateAgentConfig: z.function().optional(),
+  missingAgentSettings: z.function().optional(),
+  teamOnly: z.boolean().optional(),
 });
 
 // API payloads

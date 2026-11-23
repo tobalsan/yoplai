@@ -62,6 +62,7 @@ type MockSlackApp = {
   message: ReturnType<typeof vi.fn>;
   event: ReturnType<typeof vi.fn>;
   command: ReturnType<typeof vi.fn>;
+  init: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 };
@@ -144,6 +145,7 @@ vi.mock("@slack/bolt", () => ({
       message: vi.fn(),
       event: vi.fn(),
       command: vi.fn(),
+      init: vi.fn().mockResolvedValue(undefined),
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
     };
@@ -2964,7 +2966,7 @@ describe.each(["component", "per-agent"] as const)("proactive DM routing (%s)", 
     };
     const bot = mode === "component"
       ? createSlackBot([agent], { ...config, dm })
-      : createSlackAgentBot({ ...agent, slack: { token: "xoxb-test", appToken: "xapp-test", dm } });
+      : createSlackAgentBot({ ...agent, extensions: { slack: { token: "xoxb-test", appToken: "xapp-test", dm } } });
     apps[0].client.auth.test.mockResolvedValue({ user_id: "Ubot", team_id: "T1" });
     await bot?.start();
     return bot;
@@ -3338,6 +3340,8 @@ describe("createSlackAgentBot", () => {
       name: "Agent",
       workspace: "~/ws",
       thinkLevel: "off",
+      model: { provider: "test", model: "test" },
+      queueMode: "queue",
     } as AgentConfig;
 
     expect(createSlackAgentBot(localAgent)).toBeNull();
@@ -3350,7 +3354,9 @@ describe("createSlackAgentBot", () => {
       name: "Agent",
       workspace: "~/ws",
       thinkLevel: "off",
-      slack: { appToken: "xapp-test" },
+      model: { provider: "test", model: "test" },
+      queueMode: "queue",
+      extensions: { slack: { appToken: "xapp-test" } },
     } as AgentConfig;
 
     expect(createSlackAgentBot(localAgent)).toBeNull();
@@ -3363,7 +3369,9 @@ describe("createSlackAgentBot", () => {
       name: "Agent",
       workspace: "~/ws",
       thinkLevel: "off",
-      slack: { token: "xoxb-test" },
+      model: { provider: "test", model: "test" },
+      queueMode: "queue",
+      extensions: { slack: { token: "xoxb-test" } },
     } as AgentConfig;
 
     expect(createSlackAgentBot(localAgent)).toBeNull();
@@ -3376,18 +3384,20 @@ describe("createSlackAgentBot", () => {
       name: "Agent",
       workspace: "~/ws",
       thinkLevel: "off",
-      slack: { token: "xoxb-test", appToken: "xapp-test" },
+      model: { provider: "test", model: "test" },
+      queueMode: "queue",
+      extensions: { slack: { token: "xoxb-test", appToken: "xapp-test" } },
     } as AgentConfig;
 
     const bot = createSlackAgentBot(localAgent);
 
     expect(bot).not.toBeNull();
     expect(bot?.agentId).toBe("a1");
-    expect(apps[0].config).toEqual({
+    expect(apps[0].config).toMatchObject({
       token: "xoxb-test",
       receiver: receivers[0],
     });
-    expect(receivers[0]?.config).toEqual({
+    expect(receivers[0]?.config).toMatchObject({
       appToken: "xapp-test",
       clientPingTimeout: 20000,
     });
@@ -3405,7 +3415,9 @@ describe("createSlackAgentBot", () => {
       name: "Agent",
       workspace: "~/ws",
       thinkLevel: "off",
-      slack: { token: "xoxb-test", appToken: "xapp-test" },
+      model: { provider: "test", model: "test" },
+      queueMode: "queue",
+      extensions: { slack: { token: "xoxb-test", appToken: "xapp-test" } },
     } as AgentConfig;
 
     const bot = createSlackAgentBot(localAgent);
@@ -3441,14 +3453,16 @@ describe("createSlackAgentBot", () => {
       model: { provider: "anthropic", model: "claude" },
       thinkLevel: "off" as const,
       queueMode: "queue" as const,
-      slack: {
-        token: "xoxb-test",
-        appToken: "xapp-test",
-        channels: {
-          C1: {
-            agent: "a1",
-            requireMention: false,
-            reactionNotifications: "off",
+      extensions: {
+        slack: {
+          token: "xoxb-test",
+          appToken: "xapp-test",
+          channels: {
+            C1: {
+              agent: "a1",
+              requireMention: false,
+              reactionNotifications: "off",
+            },
           },
         },
       },
@@ -3500,10 +3514,12 @@ describe("createSlackAgentBot", () => {
       model: { provider: "anthropic", model: "claude" },
       thinkLevel: "off" as const,
       queueMode: "queue" as const,
-      slack: {
-        token: "xoxb-test",
-        appToken: "xapp-test",
-        dm: { enabled: true },
+      extensions: {
+        slack: {
+          token: "xoxb-test",
+          appToken: "xapp-test",
+          dm: { enabled: true },
+        },
       },
     } as AgentConfig;
 
@@ -3545,14 +3561,16 @@ describe("createSlackAgentBot", () => {
       model: { provider: "anthropic", model: "claude" },
       thinkLevel: "off" as const,
       queueMode: "queue" as const,
-      slack: {
-        token: "xoxb-test",
-        appToken: "xapp-test",
-        dm: {
-          enabled: true,
-          allowFrom: ["Uhr"],
-          proactiveReplies: { enabled: true, maxReplies: 1 },
-          reactionNotifications: "all" as const,
+      extensions: {
+        slack: {
+          token: "xoxb-test",
+          appToken: "xapp-test",
+          dm: {
+            enabled: true,
+            allowFrom: ["Uhr"],
+            proactiveReplies: { enabled: true, maxReplies: 1 },
+            reactionNotifications: "all" as const,
+          },
         },
       },
     } as AgentConfig;
@@ -3596,7 +3614,7 @@ describe("createSlackAgentBot", () => {
     expect(mockRunAgent).toHaveBeenCalledTimes(2);
     await fs.rm(dataDir, { recursive: true, force: true });
   });
-  it("top-level agent.slack.threadUnlock unlocks threads in a listed channel", async () => {
+  it("extensions.slack.threadUnlock unlocks threads in a listed channel", async () => {
     const { createSlackAgentBot } = await import("./bot.js");
     const localAgent = {
       id: "a1",
@@ -3605,11 +3623,13 @@ describe("createSlackAgentBot", () => {
       model: { provider: "anthropic", model: "claude" },
       thinkLevel: "off" as const,
       queueMode: "queue" as const,
-      slack: {
-        token: "xoxb-test",
-        appToken: "xapp-test",
-        threadUnlock: true,
-        channels: { C1: { reactionNotifications: "own" as const } },
+      extensions: {
+        slack: {
+          token: "xoxb-test",
+          appToken: "xapp-test",
+          threadUnlock: true,
+          channels: { C1: { reactionNotifications: "own" as const } },
+        },
       },
     } as AgentConfig;
     const bot = createSlackAgentBot(localAgent);

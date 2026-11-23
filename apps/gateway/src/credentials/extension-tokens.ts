@@ -117,7 +117,7 @@ export function resolveExtensionTokenConfig(
   store?: CredentialStore,
   env = resolveAgentEnv(agent, config)
 ): { agent: AgentConfig; config: GatewayConfig; missing: string[]; connectUrl: string } {
-  const personal = userId ? getPersonalExtensionTokens(store ?? new CredentialStore(), agent.id, userId, extension.id) : undefined;
+  const personal = userId && !extension.teamOnly ? getPersonalExtensionTokens(store ?? new CredentialStore(), agent.id, userId, extension.id) : undefined;
   const scoped = overlayExtensionValues(extension, agent, config, personal, env);
   if (!extension.oauth || extensionSecretFields(extension).length || !userId) return scoped;
   const entry = agent.extensions?.[extension.id] as Record<string, unknown> | undefined;
@@ -171,6 +171,15 @@ function overlayExtensionValues(
   const rawAgent = agent.extensions?.[extension.id] as Record<string, unknown> | undefined;
   if (!fields.length || !rawAgent || rawAgent.enabled === false) {
     return { agent, config, missing: [], connectUrl };
+  }
+  if (extension.teamOnly) {
+    const own = { ...rawAgent };
+    for (const field of fields) {
+      const value = own[field];
+      if (isEnvRef(value)) own[field] = resolveEnvRefSync(value, env);
+      if (own[field] === undefined || own[field] === "") delete own[field];
+    }
+    return { agent: { ...agent, extensions: { ...agent.extensions, [extension.id]: own } }, config, missing: [], connectUrl };
   }
   const root = config.extensions?.[extension.id] as Record<string, unknown> | undefined;
   const tokens: Record<string, unknown> = {};

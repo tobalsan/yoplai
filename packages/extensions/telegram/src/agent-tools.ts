@@ -1,13 +1,13 @@
+import { readAgentChannelConfig } from "./config.js";
 import type {
   AgentConfig,
   DeliveryOffer,
   ExtensionAgentTool,
   GatewayConfig,
-  TelegramAgentConfig,
   TelegramComponentConfig,
 } from "@yoplai/shared";
 import { z } from "zod";
-import { getActiveBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot } from "./bot-registry.js";
 import { splitMessage } from "./utils/chunk.js";
 import { renderMarkdown } from "./utils/render.js";
 import { withRetry } from "./utils/retry.js";
@@ -33,7 +33,7 @@ function resolveTelegramToken(
   config: GatewayConfig,
   env?: Record<string, string>
 ): string | undefined {
-  const agentTelegram = agent.telegram as TelegramAgentConfig | undefined;
+  const agentTelegram = readAgentChannelConfig(agent);
   if (agentTelegram?.token) return agentTelegram.token;
   const component = config.extensions?.telegram as
     | TelegramComponentConfig
@@ -44,7 +44,7 @@ function resolveTelegramToken(
 export async function getTelegramDeliveryOffer(
   agent: AgentConfig
 ): Promise<Omit<DeliveryOffer, "target"> | undefined> {
-  return getActiveBot(agent.id) ?? getActiveBot("telegram")
+  return getActiveBot(agent.id) ?? getComponentBot()
     ? { label: "Telegram", channel: true }
     : undefined;
 }
@@ -61,7 +61,7 @@ export async function sendTelegramMessage(
   chatId: string | number,
   text: string
 ): Promise<void> {
-  const activeBot = getActiveBot(agent.id) ?? getActiveBot("telegram");
+  const activeBot = getActiveBot(agent.id) ?? getComponentBot();
   if (!activeBot) {
     const token = resolveTelegramToken(agent, config, env);
     if (!token) {

@@ -1,7 +1,7 @@
+import { readAgentChannelConfig } from "./config.js";
 import { registerSurfaceIdentityProvider } from "@yoplai/shared";
 import type {
   AgentConfig,
-  MattermostAgentConfig,
   MattermostComponentConfig,
 } from "@yoplai/shared";
 import {
@@ -344,12 +344,12 @@ export function createMattermostBot(
   });
 }
 
-/** A bot account dedicated to one agent (`mattermost:` block in agent.yaml). */
+/** A bot account dedicated to one agent (`extensions.mattermost` in agent.yaml). */
 export function createMattermostAgentBot(
   agent: AgentConfig,
   options?: CreateBotOptions
 ): MattermostBot | null {
-  const config = agent.mattermost as MattermostAgentConfig | undefined;
+  const config = readAgentChannelConfig(agent);
   if (!config?.token || !config.url) return null;
   const settings = settingsFrom(config);
 

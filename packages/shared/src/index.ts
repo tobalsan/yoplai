@@ -30,3 +30,5 @@ export * from "./web-url.js";
 
 export * from "./surface-links.js";
 export * from "./device-link.js";
+export * from "./channel-settings.js";
+export * from "./channel-bots.js";

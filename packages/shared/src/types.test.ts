@@ -68,11 +68,13 @@ describe("Mattermost config schemas", () => {
       agents: [
         {
           ...agent,
-          mattermost: {
-            url: "https://chat.example.test",
-            token: "$env:MATTERMOST_BOT_TOKEN",
-            channels: { chan1: { requireMention: false } },
-            dm: { enabled: true, allowFrom: ["alice"] },
+          extensions: {
+            mattermost: {
+              url: "https://chat.example.test",
+              token: "$env:MATTERMOST_BOT_TOKEN",
+              channels: { chan1: { requireMention: false } },
+              dm: { enabled: true, allowFrom: ["alice"] },
+            },
           },
         },
       ],
@@ -88,7 +90,7 @@ describe("Mattermost config schemas", () => {
       },
     });
     expect(config.extensions?.mattermost?.channels?.chan1.agent).toBe("main");
-    expect(config.agents[0].mattermost?.dm?.allowFrom).toEqual(["alice"]);
+    expect(config.agents[0].extensions?.mattermost?.dm).toEqual({ enabled: true, allowFrom: ["alice"] });
   });
 
   it("accepts an $env: ref for url", () => {
@@ -97,7 +99,7 @@ describe("Mattermost config schemas", () => {
       agents: [
         {
           ...agent,
-          mattermost: { url: "$env:MATTERMOST_URL", token: "$env:MATTERMOST_BOT_TOKEN" },
+          extensions: { mattermost: { url: "$env:MATTERMOST_URL", token: "$env:MATTERMOST_BOT_TOKEN" } },
         },
       ],
       extensions: {
@@ -243,10 +245,12 @@ describe("AgentConfigSchema model handling", () => {
       name: "Slack Agent",
       workspace: "~/agents/slack",
       model: { provider: "anthropic", model: "claude" },
-      slack: {
-        token: "xoxb-test",
-        appToken: "xapp-test",
-        channels: { C0123456789: { requireMention: false } },
+      extensions: {
+        slack: {
+          token: "xoxb-test",
+          appToken: "xapp-test",
+          channels: { C0123456789: { requireMention: false } },
+        },
       },
     });
 

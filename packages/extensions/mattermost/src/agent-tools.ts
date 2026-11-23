@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "./config.js";
 import type {
   AgentConfig,
   DeliveryDestination,
@@ -6,12 +7,11 @@ import type {
   ExtensionAgentTool,
   ExtensionContext,
   GatewayConfig,
-  MattermostAgentConfig,
   MattermostComponentConfig,
 } from "@yoplai/shared";
 import { z } from "zod";
 import type { MattermostBot } from "./bot.js";
-import { getActiveBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot } from "./bot-registry.js";
 import { getMattermostContextIfInitialized } from "./context.js";
 import { postReply } from "./handlers/message.js";
 import { withThreadBindings } from "./thread-session-bindings.js";
@@ -48,7 +48,7 @@ type ResolvedBot = { bot: MattermostBot; source: "agent" | "component" };
 function resolveBot(agent: AgentConfig): ResolvedBot {
   const own = getActiveBot(agent.id);
   if (own) return { bot: own, source: "agent" };
-  const shared = getActiveBot("mattermost");
+  const shared = getComponentBot();
   if (shared) return { bot: shared, source: "component" };
   throw new Error("No active Mattermost bot is running for this agent.");
 }
@@ -71,7 +71,7 @@ export function checkTarget(
   target: { channel?: string; user?: string }
 ): string | undefined {
   if (source === "agent") {
-    const own = agent.mattermost as MattermostAgentConfig | undefined;
+    const own = readAgentChannelConfig(agent);
     if (target.user) {
       return own?.dm && own.dm.enabled !== false
         ? undefined
@@ -106,7 +106,7 @@ export async function getMattermostDeliveryOffer(
     return undefined;
   }
   const channels = source === "agent"
-    ? agent.mattermost?.channels
+    ? readAgentChannelConfig(agent)?.channels
     : componentConfig(config)?.channels;
   if (!Object.keys(channels ?? {}).some((channel) => !checkTarget(agent, config, source, { channel }))) return undefined;
   return { label: "Mattermost", channel: true };
@@ -131,8 +131,7 @@ async function resolveDmChannel(
 }
 
 /**
- * Post to a channel, a thread of it, or a user's DM. Shared by the
- * `mattermost.send_message` tool and the delivery sink; throws on failure.
+ * Post to a channel, thread, or DM allowed by the agent's routing policy.
  */
 export async function sendMattermostMessage(
   agent: AgentConfig,
@@ -144,13 +143,20 @@ export async function sendMattermostMessage(
   const { bot, source } = resolveBot(agent);
   const denied = checkTarget(agent, config, source, input);
   if (denied) throw new Error(denied);
+  return postWithBot(bot, input, signal);
+}
 
+async function postWithBot(
+  bot: MattermostBot,
+  input: SendInput,
+  signal?: AbortSignal
+): Promise<{ channelId: string; postId: string; rootId?: string }> {
   const channelId = input.user
     ? await resolveDmChannel(bot, input.user, signal)
     : input.channel!;
   if (input.rootId) {
     // A root post from another channel would move the reply out of the
-    // allowlisted channel; refuse it rather than rely on the server.
+    // requested destination.
     signal?.throwIfAborted();
     const root = await bot.rest.getPost(input.rootId, signal);
     if (root.channel_id !== channelId) {
@@ -199,10 +205,15 @@ export function createMattermostDeliverySink(
   ctx: ExtensionContext
 ): DeliverySink {
   return async ({ agent, destination, text }) => {
-    await sendMattermostMessage(agent, ctx.getConfig(), {
-      ...parseDestination(destination),
-      text,
-    });
+    const input = { ...parseDestination(destination), text };
+    const own = getActiveBot(agent.id);
+    // Host deliveries have an explicit destination. A dedicated bot can
+    // deliver even when the agent's inbound routes are empty.
+    if (own && readAgentChannelConfig(agent)) {
+      await postWithBot(own, input);
+      return;
+    }
+    await sendMattermostMessage(agent, ctx.getConfig(), input);
   };
 }
 

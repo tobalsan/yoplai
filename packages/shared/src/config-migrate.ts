@@ -1,28 +1,32 @@
 import type {
   AgentConfig,
+  AgentYamlConfig,
   ExtensionsConfig,
   DiscordExtensionConfig,
   GatewayConfig,
 } from "./types.js";
 
 export interface MigrationResult {
-  config: GatewayConfig;
+  config: LegacyGatewayConfig;
   warnings: string[];
 }
 
-function cloneAgent(agent: AgentConfig): AgentConfig {
-  return JSON.parse(JSON.stringify(agent)) as AgentConfig;
+type LegacyAgentConfig = AgentConfig & Pick<AgentYamlConfig, "discord">;
+
+function cloneAgent(agent: LegacyAgentConfig): LegacyAgentConfig {
+  return JSON.parse(JSON.stringify(agent)) as LegacyAgentConfig;
 }
 
-type LegacyGatewayConfig = GatewayConfig & {
+type LegacyGatewayConfig = Omit<GatewayConfig, "agents"> & {
+  agents: LegacyAgentConfig[];
   components?: ExtensionsConfig;
   scheduler?: {
     enabled?: boolean;
   };
 };
 
-export function migrateConfigV1toV2(v1: GatewayConfig): MigrationResult {
-  const legacy = v1 as LegacyGatewayConfig;
+export function migrateConfigV1toV2(v1: LegacyGatewayConfig): MigrationResult {
+  const legacy = v1;
   const warnings: string[] = [];
   const agents = legacy.agents.map((agent) => cloneAgent(agent));
   const extensions: NonNullable<ExtensionsConfig> = {

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig, DiscordConfig } from "@yoplai/shared";
 import { DiscordConfigSchema } from "@yoplai/shared";
 import {
   clearDiscordClientCache,
@@ -10,7 +10,7 @@ import {
   getDiscordDeliveryOffer,
   sendDiscordDelivery,
 } from "./agent-tools.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerActiveBot, registerComponentBot } from "./bot-registry.js";
 import type { DiscordBot } from "./bot.js";
 import { clearDiscordContext, setDiscordContext } from "./context.js";
 import { createThreadSessionBindingStore } from "./thread-session-bindings.js";
@@ -20,7 +20,7 @@ type MockRest = {
   post: ReturnType<typeof vi.fn>;
 };
 
-function agent(id: string, discord?: Partial<AgentConfig["discord"]>): AgentConfig {
+function agent(id: string, discord?: Partial<DiscordConfig>): AgentConfig {
   return {
     id,
     name: id,
@@ -28,7 +28,7 @@ function agent(id: string, discord?: Partial<AgentConfig["discord"]>): AgentConf
     workspaceDir: `/tmp/${id}`,
     model: { provider: "test", model: "test" },
     queueMode: "queue",
-    discord: discord ? DiscordConfigSchema.parse(discord) : undefined,
+    extensions: discord ? { discord: DiscordConfigSchema.parse(discord) } : undefined,
   };
 }
 
@@ -44,12 +44,14 @@ function config(extensionsDiscord?: unknown): GatewayConfig {
 }
 
 function registerMockBot(agentId: string, rest: MockRest): void {
-  registerActiveBot(agentId, {
+  const bot = {
     agentId,
     client: { rest },
     start: vi.fn(),
     stop: vi.fn(),
-  } as unknown as DiscordBot);
+  } as unknown as DiscordBot;
+  if (agentId === "discord") registerComponentBot(bot);
+  else registerActiveBot(agentId, bot);
 }
 
 function tool(name: string) {

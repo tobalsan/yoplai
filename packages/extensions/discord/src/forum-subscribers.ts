@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "./config.js";
 import type { AgentConfig, ExtensionContext } from "@yoplai/shared";
 import { getDiscordContext } from "./context.js";
 
@@ -17,6 +18,6 @@ export function getForumSubscribers(
         : source;
 
   return agents.filter((agent) =>
-    (agent.discord?.forumChannels ?? []).includes(channelId)
+    (readAgentChannelConfig(agent)?.forumChannels ?? []).includes(channelId)
   );
 }

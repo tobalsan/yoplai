@@ -1,5 +1,9 @@
 import {
   ThreaditAgentConfigSchema,
+  channelSetting,
+  isChannelUrl,
+  validateChannelFields,
+  type Extension,
   ThreaditExtensionConfigSchema,
 } from "@yoplai/shared";
 
@@ -35,7 +39,8 @@ export function resolveThreaditConfig(
   ) {
     return { status: "skipped" };
   }
-  const agent = ThreaditAgentConfigSchema.safeParse(agentRaw);
+  const candidate = agentRaw as { token?: unknown };
+  const agent = ThreaditAgentConfigSchema.safeParse(candidate.token === "" ? { ...candidate, token: undefined } : agentRaw);
   if (!agent.success) return { status: "invalid", reason: "agent config" };
   const root = ThreaditExtensionConfigSchema.safeParse(rootRaw ?? {});
   const rootData = root.success ? root.data : {};
@@ -47,7 +52,7 @@ export function resolveThreaditConfig(
     status: "ok",
     config: {
       baseUrl,
-      token: agent.data.token,
+      token: agent.data.token?.trim() ? agent.data.token : undefined,
       pollIntervalMs:
         agent.data.pollIntervalMs ??
         rootData.pollIntervalMs ??
@@ -60,3 +65,33 @@ export function resolveThreaditConfig(
     },
   };
 }
+
+export const threaditSettings = {
+  teamOnly: true,
+  advancedConfigFields: ["pollIntervalMs", "turnTimeoutMinutes", "activity"],
+  configJsonSchema: {
+    type: "object",
+    properties: {
+      baseUrl: { type: "string", title: "Board URL" },
+      token: { type: "string", title: "Board token", writeOnly: true, description: "Leave blank to register the agent from chat and approve it on the board." },
+      pollIntervalMs: { type: "integer", title: "Poll interval (ms)", minimum: 1000 },
+      turnTimeoutMinutes: { type: "number", title: "Turn timeout (minutes)", minimum: 1 },
+      activity: { type: "string", title: "Activity detail", description: "Enter safe or detailed (default)." },
+    },
+  },
+  validateAgentConfig(agent, _config, env) {
+    return validateChannelFields(agent, "threadit", {
+      baseUrl: isChannelUrl,
+      pollIntervalMs: (value) => typeof value === "number" && Number.isInteger(value) && value >= 1000,
+      turnTimeoutMinutes: (value) => typeof value === "number" && Number.isFinite(value) && value >= 1,
+      activity: (value) => value === "safe" || value === "detailed",
+    }, env, ThreaditAgentConfigSchema);
+  },
+  missingAgentSettings(agent, config, env) {
+    const block = agent.extensions?.threadit;
+    return [
+      ...(!channelSetting(block?.baseUrl ?? config.extensions?.threadit?.baseUrl, env) ? ["baseUrl"] : []),
+      ...(!channelSetting(block?.token, env) ? ["token"] : []),
+    ];
+  },
+} satisfies Partial<Extension>;

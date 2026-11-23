@@ -1,3 +1,4 @@
+import { missingChannelSettings } from "../lib/auto-form-schema";
 import { releaseCatalogChanged } from "../api/release-catalog";
 import { decodeRouteParam } from "../lib/path";
 import {
@@ -602,6 +603,7 @@ export function EditAgent() {
   // secrets). Extensions without settings are a plain on/off, flipped on their
   // details page.
   const isExtensionSetUp = (ext: ExtensionCatalogEntry) => {
+    if (ext.teamOnly) return ext.enabled && ext.configured;
     if (ext.oauth) return !!ext.oauthConnected;
     if (ext.tier === "toggle-only") return ext.enabled;
     const secretFields = ext.requiredSecrets ?? [];
@@ -882,7 +884,7 @@ export function EditAgent() {
                             {ext.description}
                           </span>
                           <Show when={ext.enabled && ext.configured === false}>
-                            <span class="edit-agent-ext-desc">Needs configuration</span>
+                            <span class="edit-agent-ext-desc">{ext.teamOnly ? missingChannelSettings(ext) : "Needs configuration"}</span>
                           </Show>
                         </div>
                       </div>

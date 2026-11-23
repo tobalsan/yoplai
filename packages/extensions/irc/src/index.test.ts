@@ -26,7 +26,7 @@ function context(config: GatewayConfig): ExtensionContext {
 const agent = {
   id: "main", name: "Main", workspace: ".",
   model: { provider: "anthropic", model: "claude" },
-  irc: { host: "agent.example", nick: "agent-bot", channels: { "#agent": { mode: "reply-all" as const } }, dm: { enabled: true } },
+  extensions: { irc: { host: "agent.example", nick: "agent-bot", channels: { "#agent": { mode: "reply-all" as const } }, dm: { enabled: true } } },
 };
 
 describe("IRC extension lifecycle", () => {

@@ -16,7 +16,7 @@ function agent(
     name: id,
     workspace: `~/agents/${id}`,
     model: { provider: "anthropic", model: "claude" },
-    ...(discord ? { discord } : {}),
+    ...(discord ? { extensions: { discord } } : {}),
   });
 }
 
