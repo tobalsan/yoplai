@@ -1,3 +1,4 @@
+import { targetsDurableMain } from "@yoplai/shared/types";
 import { AgentSettingsSidebar } from "./agent-management/AgentSettingsSidebar";
 import { createDiscardPrompt } from "./agent-management/discard";
 import { stripBase } from "../lib/path";
@@ -701,7 +702,10 @@ export function ChatView() {
     }
   };
 
+  let submittingDurableDraft = false;
   const handleSend = async () => {
+    const main = targetsDurableMain(agent(), explicitSessionId());
+    if (main && submittingDurableDraft) return;
     session.flushFinished();
 
     if (impersonationStatus()?.active) return;
@@ -716,14 +720,14 @@ export function ChatView() {
     }
 
     // Treat /stop as an interrupt
-    if (text === "/stop") {
+    if (text === "/stop" && !main) {
       setInput("");
       if (textareaRef) textareaRef.style.height = "auto";
       handleStop();
       return;
     }
 
-    if (text === "/compact") {
+    if (text === "/compact" && !main) {
       setInput("");
       if (textareaRef) textareaRef.style.height = "auto";
       await session.compact().catch(() => undefined);
@@ -731,12 +735,17 @@ export function ChatView() {
     }
 
     const message = annotations.compose(text);
-    const result = await session.send({ text: message.text, pendingFiles: currentPendingFiles });
-    if (result.kind === "sent") {
-      message.sent();
-      setInput("");
-      if (textareaRef) textareaRef.style.height = "auto";
-      scrollToBottom(true);
+    if (main) submittingDurableDraft = true;
+    try {
+      const result = await session.send({ text: message.text, pendingFiles: currentPendingFiles });
+      if (result.kind === "sent") {
+        message.sent();
+        setInput("");
+        if (textareaRef) textareaRef.style.height = "auto";
+        scrollToBottom(true);
+      }
+    } finally {
+      if (main) submittingDurableDraft = false;
     }
   };
 

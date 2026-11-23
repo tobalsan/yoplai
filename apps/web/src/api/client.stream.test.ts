@@ -81,6 +81,35 @@ describe("streamMessage", () => {
     expect(JSON.parse(ws.sent[0]!)).toMatchObject({ projectId: "project-1", sessionKey: "fresh" });
   });
 
+  it("reuses a Durable send ID after a dropped socket and gives a new send its own ID", () => {
+    const onText = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const cleanup = streamMessage("pilot", "Check the greenhouse", "web-seed", onText, onDone, onError, undefined, { retryOnDisconnect: true });
+    const first = MockWebSocket.instances[0];
+    first.open();
+    const sent = JSON.parse(first.sent[0]);
+    expect(sent.clientSendId).toMatch(/^[0-9a-f-]{36}$/);
+    first.receive({ type: "text", data: "Seedlings " });
+    first.close();
+
+    const retry = MockWebSocket.instances[1];
+    retry.open();
+    expect(JSON.parse(retry.sent[0])).toEqual(sent);
+    retry.receive({ type: "text", data: "Seedlings are ready." });
+    retry.receive({ type: "done", meta: { sessionId: "durable-main", durationMs: 10 } });
+    expect(onText.mock.calls.flat().join("")).toBe("Seedlings are ready.");
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+    cleanup();
+
+    const stop = streamMessage("pilot", "Check the greenhouse", "web-seed", vi.fn(), vi.fn(), vi.fn());
+    const next = MockWebSocket.instances[2];
+    next.open();
+    expect(JSON.parse(next.sent[0]).clientSendId).not.toBe(sent.clientSendId);
+    stop();
+  });
+
   it("routes streaming events to callbacks", () => {
     const onText = vi.fn();
     const onDone = vi.fn();
@@ -119,6 +148,7 @@ describe("streamMessage", () => {
       agentId: "agent-1",
       sessionKey: "main",
       message: "hello",
+      clientSendId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
 
     ws.receive({ type: "text", data: "hi" });

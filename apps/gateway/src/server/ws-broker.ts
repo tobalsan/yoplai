@@ -11,6 +11,8 @@ import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
 import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import type { DurableWeb } from "../durable/web.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
 import { DEVICE_MAX_MESSAGE_BYTES, getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
@@ -49,13 +51,15 @@ const AUTH_RECHECK_MS = 5000;
 const CLOSE_CREDENTIAL_INVALID = 1008;
 
 export class WsBroker {
+  private readonly durableSends = new WeakMap<WebSocket, Set<string>>();
+  private readonly durableSubscriptions = new Map<WebSocket, () => void>();
   private readonly subscriptions = new Map<WebSocket, Subscription>();
   private readonly connectedClients = new Set<WebSocket>();
   private readonly authContexts = new Map<WebSocket, RequestAuthContext>();
   private readonly deviceContexts = new Map<WebSocket, RequestAuthContext>();
   private authAdapter: WsBrokerAuthAdapter | undefined;
 
-  constructor(private readonly options: { recheckMs?: number } = {}) {}
+  constructor(private readonly options: { recheckMs?: number; durableWeb?: DurableWeb } = {}) {}
   private readonly statusSubscribers = new Set<WebSocket>();
   /** Counts the subscribe and unsubscribe messages of each page socket. A late authorization checks it. */
   private readonly subscribeGenerations = new Map<WebSocket, number>();
@@ -152,6 +156,8 @@ export class WsBroker {
       ws.close();
     }
     this.subscriptions.clear();
+    for (const unsubscribe of this.durableSubscriptions.values()) unsubscribe();
+    this.durableSubscriptions.clear();
     this.connectedClients.clear();
     this.authContexts.clear();
     this.deviceContexts.clear();
@@ -187,6 +193,8 @@ export class WsBroker {
     });
 
     ws.on("close", () => {
+      this.durableSubscriptions.get(ws)?.();
+      this.durableSubscriptions.delete(ws);
       this.subscriptions.delete(ws);
       this.subscribeGenerations.delete(ws);
       this.statusSubscribers.delete(ws);
@@ -251,6 +259,8 @@ export class WsBroker {
   }
 
   private supersedeSubscribe(ws: WebSocket): number {
+    this.durableSubscriptions.get(ws)?.();
+    this.durableSubscriptions.delete(ws);
     const generation = (this.subscribeGenerations.get(ws) ?? 0) + 1;
     this.subscribeGenerations.set(ws, generation);
     return generation;
@@ -273,6 +283,23 @@ export class WsBroker {
       return;
     }
     const userId = authContext?.session.userId;
+    if (this.options.durableWeb && targetsDurableMain(agent, msg.sessionId)) {
+      if (this.subscribeGenerations.get(ws) !== generation) return;
+      this.subscriptions.delete(ws);
+      try {
+        const host = await this.options.durableWeb.host(agent);
+        const unsubscribe = await host.subscribe(userId ?? "local", (event) => {
+          if (this.subscribeGenerations.get(ws) === generation) this.send(ws, event);
+        });
+        if (this.subscribeGenerations.get(ws) !== generation) unsubscribe();
+        else this.durableSubscriptions.set(ws, unsubscribe);
+      } catch {
+        if (this.subscribeGenerations.get(ws) === generation) {
+          this.send(ws, { type: "error", message: "Could not subscribe to Durable Main." });
+        }
+      }
+      return;
+    }
     const entry = msg.sessionId
       ? null
       : await getSessionEntry(msg.agentId, msg.sessionKey, userId);
@@ -351,6 +378,29 @@ export class WsBroker {
       }
       if (!(await authAdapter.canAccessAgent(authContext, msg.agentId))) {
         this.send(ws, { type: "error", message: "Forbidden" });
+        return;
+      }
+
+      if (this.options.durableWeb && msg.clientSendId !== undefined && targetsDurableMain(agent, msg.sessionId)) {
+        const parsed = parseDurableWebSend(msg);
+        if (!parsed.ok) {
+          this.send(ws, { type: "error", message: parsed.error });
+          return;
+        }
+        const key = agent.id + ":" + parsed.input.clientSendId;
+        const pending = this.durableSends.get(ws) ?? new Set<string>();
+        if (pending.has(key)) return;
+        pending.add(key);
+        this.durableSends.set(ws, pending);
+        try {
+          const host = await this.options.durableWeb.host(agent);
+          await host.submitWeb(durableWebSender(authContext), parsed.input, (event) => {
+            if (event.type === "error" || event.type === "done") terminalEventSent = true;
+            this.send(ws, event);
+          });
+        } finally {
+          pending.delete(key);
+        }
         return;
       }
 

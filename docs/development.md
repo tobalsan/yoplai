@@ -53,6 +53,45 @@ Do not use `pnpm test -- <path>` for one file. Run `pnpm install` when `node_mod
 
 Wait for observable subprocess readiness/completion with startup headroom; fake timers do not flush real filesystem I/O.
 
+### Durable web test harness
+
+`apps/gateway/src/test-utils/durable-gateway.ts` starts a real HTTP/WS gateway on
+an ephemeral port with a temporary v3 home and a scripted Faux provider.
+
+Single-user example
+
+```ts
+const gateway = await startDurableTestGateway();
+try {
+  gateway.script("The seedlings are ready.");
+  const response = await gateway.send("local", "Check the greenhouse", { clientSendId: "garden-1" });
+  expect(response.status).toBe(200);
+  expect((await gateway.history("local")).messages).toHaveLength(2);
+} finally {
+  await gateway.close();
+}
+```
+
+Multi-user example
+
+```ts
+const gateway = await startDurableTestGateway({ multiUser: true });
+try {
+  gateway.script("The seedlings are ready.");
+  const socket = await gateway.send("alice", "Check the greenhouse", { clientSendId: "garden-1" }, "ws");
+  await vi.waitFor(() => expect(socket.events).toContainEqual(expect.objectContaining({ type: "done" })));
+  expect((await gateway.history("bob")).messages).toEqual([]);
+} finally {
+  await gateway.close();
+}
+```
+
+Multi-user mode signs up two fixture accounts through production auth. Use
+`subscribe(user)` for a watching tab, a `reviewer` fixture to exercise draft
+holding, and `restart()` to reopen the same gateway home in process. For identity
+recovery, `failBetweenCommits()` interrupts one send after Main creation and
+`mainConversationId(user)` lets the test compare the id across the restart.
+
 ## Remote web development
 
 When UI runs on machine A and gateway/projects on machine B:

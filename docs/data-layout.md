@@ -12,6 +12,7 @@
 | `agents/<id>/.env`           | Agent-local extension secret aliases            |
 | `agents/<id>/cron/jobs.json` | Scheduler jobs                                  |
 | `agents/<id>/cron/output/`   | Scheduler/heartbeat run output                  |
+| `agents/<id>/durable/agent.sqlite` | Pi Durable transcript, Main identity map, submissions and review decisions |
 | `agents/<id>/dreams/`        | Dream journals/state/staged sessions            |
 | `history/*.jsonl`            | Canonical single-user chat transcripts          |
 | `sessions/*.jsonl`           | Pi SDK runtime resume state                     |
@@ -30,6 +31,16 @@
 `history/*.jsonl` is normalized transcript used by API, web UI, tracing, compaction, channel context, and media blocks. `sessions/*.jsonl` is Pi SDK-owned resume/session state, not product history. Gateway may backfill/fallback from Pi files for legacy or actively streaming sessions.
 
 Multi-user mode puts user-scoped maps/history under `sessions/users/<userId>/`. Enabling it does not migrate existing single-user history.
+
+## Durable web Main
+
+On first use the gateway opens one Durable harness and SQLite store for the
+flagged agent. The gateway owns writes to that store and closes it on shutdown.
+Each account maps to a permanent Main in a session-scoped document. Single-user
+mode uses the fixed key `main:local`. Main creation and its mapping commit
+together, before the separately committed input. Durable web history is
+projected directly from the store. Include it in stopped-gateway snapshots with
+the rest of the agent's data.
 
 ## Project data
 

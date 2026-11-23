@@ -1,3 +1,4 @@
+import { targetsDurableMain } from "@yoplai/shared/types";
 // Flicker: keep immutable streamingBlocks() reads, batch completion/reset, and
 // history/block identity for transcript Index/non-keyed branches and reply copy.
 // Run under the page owner; pagination fetch/guard precedes the synchronous
@@ -118,6 +119,7 @@ function isRemoteAgent(agentId: string): boolean {
 
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, viewMode, explicitSessionId } = input;
+  const durableMain = () => targetsDurableMain(agent(), explicitSessionId());
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -256,9 +258,10 @@ export function createChatSession(input: ChatSessionInput) {
     return pct > 0 && pct < 1 ? 1 : Math.max(0, Math.min(100, Math.round(pct)));
   });
 
-  const shouldAutoCompact = createMemo(() => estimatedContextUsagePct() >= 80);
+  const shouldAutoCompact = createMemo(() => !durableMain() && estimatedContextUsagePct() >= 80);
 
   const contextWarning = createMemo(() => {
+    if (durableMain()) return null;
     const pct = estimatedContextUsagePct();
     if (pct >= 75) {
       return `Context usage is high, consider compacting by sending "/compact". Context will be auto-compacted above 80%.`;
@@ -1284,11 +1287,7 @@ export function createChatSession(input: ChatSessionInput) {
       return;
     }
     beforeSubmit?.();
-    const isResetCommand =
-      text === "/new" ||
-      text.startsWith("/new ") ||
-      text === "/reset" ||
-      text.startsWith("/reset ");
+    const isResetCommand = !durableMain() && /^(\/new|\/reset)( |$)/.test(text);
 
     if (!turnId && !isResetCommand && !isStreaming() && shouldAutoCompact()) {
       try {
@@ -1321,11 +1320,12 @@ export function createChatSession(input: ChatSessionInput) {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const streamOptions = {
+      ...(durableMain() ? { retryOnDisconnect: true } : {}),
       ...(turnId ? { turnId } : {}),
       ...(input.projectId() ? { projectId: input.projectId() } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
-      ...(!isResetCommand && explicitSessionId()
+      ...((!isResetCommand || currentAgent?.durable) && explicitSessionId()
         ? { sessionId: explicitSessionId() }
         : {}),
     };
@@ -1866,7 +1866,7 @@ export function createChatSession(input: ChatSessionInput) {
   const stop = async (): Promise<{ error?: string }> => {
     if (stopping() || !isStreaming() || !input.agentId()) return {};
     setStopping(true);
-    aborted = true;
+    if (!durableMain()) aborted = true;
 
     try {
       const sessionId = explicitSessionId();
@@ -1883,6 +1883,7 @@ export function createChatSession(input: ChatSessionInput) {
 
 
   const startNewChat = (agentId: string) => {
+    if (durableMain()) return;
     approvalAnswerers.clear();
     appSessionLookup?.abort();
     appSessionLookup = undefined;

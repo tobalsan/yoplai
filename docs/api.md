@@ -172,6 +172,30 @@ Clients can send run request using `agentId` plus logical `sessionKey` or explic
 
 Use `packages/shared` stream schemas and `apps/gateway/src/server/ws-broker.ts`; do not copy protocol unions from this overview.
 
+## Durable Main
+
+The WebSocket `send` message and `POST /api/agents/:id/messages` accept
+`clientSendId`, a client-generated id of up to 128 ASCII letters, digits,
+underscores or hyphens. Reuse that id to retry a composed send and mint a fresh
+id for each new send. On a flagged agent it deduplicates admission within the
+caller's Main, including after a gateway restart.
+
+Send, history and subscribe select the caller's Main when `sessionId` is absent
+or equals `durable-main`. Logical keys such as `main` and `web-*` all resolve to
+that Main. Any other explicit session id and sends without a `clientSendId`
+use the legacy runner. Main rejects project and desktop turn ids and attachments.
+
+The agent detail route includes `durable: true` for a flagged agent.
+The send endpoint still waits for settlement and returns `payloads` and `meta`
+with `sessionId` and `durationMs`. A failed or withheld reply returns an error
+status with `{ error }`. The socket receives `text`, then `done` or `error`. Main
+subscriptions may receive `active_turn` snapshots and `history_updated`.
+
+The history route serves the existing simple or full view, paging, and active
+turn fields. The synthetic id is identical across accounts and resolves using
+the authenticated caller. Sidebar, search, compact, delete, share and abort routes
+continue to use legacy sessions.
+
 ## Authentication
 
 Single-user mode has no Yoplai user boundary; keep it private. Multi-user extension guards `/api/*` and `/ws` using Better Auth cookie session or bearer API key. Both resolve same request auth context and agent/team access checks.

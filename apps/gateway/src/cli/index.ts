@@ -552,7 +552,7 @@ const gatewayCmd = program
   .option("--dev", "Dev mode: auto-find ports, print dev banner")
   .action(async (opts) => {
     try {
-      const { actualPort, config, extensions, uiEnabled, uiPort } =
+      const { actualPort, config, extensions, uiEnabled, uiPort, closeDurableHosts } =
         await startGatewayCommand(opts);
 
       // Start web UI if enabled (default: true) and not in dev mode
@@ -579,6 +579,7 @@ const gatewayCmd = program
         if (tailscaleServeEnabled && tailscaleServeResetOnExit) {
           resetTailscaleServe();
         }
+        await closeDurableHosts().catch((error) => logError("Durable host shutdown failed", error));
         await stopCurrentExtensions();
         process.exit(0);
       };

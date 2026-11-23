@@ -332,6 +332,7 @@ const AgentConfigBaseSchema = z.object({
   workspaceDir: z.string().optional(),
   system_files: z.array(SystemFileEntrySchema).optional(),
   sdk: SdkIdSchema.optional(), // default "pi"
+  durable: z.boolean().optional(),
   model: AgentModelConfigSchema.optional(),
   fallback_model: RequiredModelConfigSchema.optional(),
   openclaw: z.never({ message: "openclaw SDK was removed, use pi" }).optional(),
@@ -375,8 +376,19 @@ const AgentConfigBaseSchema = z.object({
   onecliToken: z.string().optional(), // Per-agent OneCLI proxy token
   sandbox: AgentSandboxConfigSchema.optional(),
 });
+function validateDurableAgent(value: { durable?: boolean; sdk?: string; sandbox?: { enabled?: boolean } }, ctx: z.RefinementCtx) {
+  if (!value.durable) return;
+  if (value.sandbox?.enabled) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Durable requires sandbox.enabled to be off", path: ["durable"] });
+  }
+  if (value.sdk && value.sdk !== "pi") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Durable requires the Pi SDK", path: ["sdk"] });
+  }
+}
+
 export const AgentConfigSchema = AgentConfigBaseSchema.superRefine(
   (value, ctx) => {
+    validateDurableAgent(value, ctx);
     if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
     }
@@ -404,6 +416,7 @@ const AgentYamlConfigBaseSchema = AgentConfigBaseSchema.omit({
 });
 export const AgentYamlConfigSchema = AgentYamlConfigBaseSchema.superRefine(
   (value, ctx) => {
+    validateDurableAgent(value, ctx);
     if (value.modelRouting?.enabled && value.sdk && value.sdk !== "pi") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "modelRouting is only supported by the Pi SDK", path: ["modelRouting", "enabled"] });
     }
@@ -1478,6 +1491,11 @@ export type RunAgentResult = {
 };
 
 export const DEFAULT_MAIN_KEY = "main";
+export const DURABLE_MAIN_SESSION_ID = "durable-main";
+
+export function targetsDurableMain(agent: { durable?: boolean } | undefined, sessionId: unknown): boolean {
+  return agent?.durable === true && (sessionId === undefined || sessionId === DURABLE_MAIN_SESSION_ID);
+}
 
 export type SessionEntry = {
   sessionId: string;
@@ -2073,6 +2091,7 @@ export const ExtensionDefinitionSchema = z.object({
 
 // API payloads
 export const SendMessageRequestSchema = z.object({
+  clientSendId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
   turnId: z.string().uuid().optional(),
   deviceTurnToken: z.string().max(200).optional(),
   projectId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
@@ -2548,6 +2567,7 @@ export type StreamEvent = z.infer<typeof StreamEventSchema>;
 export type WsSendMessage = {
   projectId?: string;
   type: "send";
+  clientSendId?: string;
   agentId: string;
   turnId?: string;
   sessionId?: string; // explicit session ID (bypasses sessionKey resolution)

@@ -37,6 +37,7 @@ export type StartedGateway = {
   extensions: Extension[];
   uiEnabled: boolean;
   uiPort: number;
+  closeDurableHosts: () => Promise<void>;
 };
 
 export async function startGatewayCommand(
@@ -105,7 +106,7 @@ export async function startGatewayCommand(
     await extension.start(bindExtensionContext(extensionContext, extension));
   }, buildInnerApi, innerApi);
 
-  startServer(port, opts.host, extensionRuntime);
+  const server = startServer(port, opts.host, extensionRuntime);
   startGatewayHotReload(runtimeConfig, {
     onError(error) {
       console.warn(
@@ -120,5 +121,6 @@ export async function startGatewayCommand(
     extensions,
     uiEnabled: config.ui?.enabled !== false,
     uiPort,
+    closeDurableHosts: () => server.durableWeb.close(),
   };
 }
