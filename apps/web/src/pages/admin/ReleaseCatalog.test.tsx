@@ -15,6 +15,38 @@ const catalog = (sample: ReleaseCatalogRow) => Response.json({ source: "fixture"
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.replaceChildren(); vi.resetAllMocks(); });
 
+it("renders only inlined icon sources and leaves missing icons to the fallback", async () => {
+  const iconDataUri = "data:image/svg+xml;base64,PHN2Zy8+";
+  request.mockResolvedValueOnce(Response.json({ source: "fixture", fetchedAt: null, stale: false, entries: [
+    { ...available, iconUrl: "https://example.test/sample.svg", iconDataUri },
+    { ...other, iconUrl: "https://example.test/other.svg" },
+  ] }));
+  dispose = render(() => <ReleaseCatalog gateway="east" ready canWrite
+    icon={(src) => <span>{src ?? "No icon source"}</span>} onChange={() => undefined} />, document.body);
+
+  await vi.waitFor(() => {
+    expect(within(getByRole(document.body, "article", { name: "Sample" })).getByText(iconDataUri)).toBeTruthy();
+    expect(within(getByRole(document.body, "article", { name: "Other" })).getByText("No icon source")).toBeTruthy();
+  });
+});
+
+it("keeps the displayed icon after install while the catalog list reloads", async () => {
+  const iconUrl = "https://example.test/sample.svg";
+  const iconDataUri = "data:image/svg+xml;base64,PHN2Zy8+";
+  const installed: ReleaseCatalogRow = { ...available, iconUrl, state: "installed", installedVersion: "1.0.0" };
+  request.mockResolvedValueOnce(catalog({ ...available, iconUrl, iconDataUri }));
+  request.mockResolvedValueOnce(Response.json(installed));
+  request.mockImplementationOnce(() => new Promise(() => undefined));
+  dispose = render(() => <ReleaseCatalog gateway="east" ready canWrite
+    icon={(src) => <span>{src}</span>} onChange={() => undefined} />, document.body);
+
+  const card = () => within(getByRole(document.body, "article", { name: "Sample" }));
+  await vi.waitFor(() => expect(card().getByText(iconDataUri)).toBeTruthy());
+  fireEvent.click(card().getByRole("button", { name: "Install" }));
+  await vi.waitFor(() => expect(card().getByText("Installed")).toBeTruthy());
+  expect(card().getByText(iconDataUri)).toBeTruthy();
+});
+
 it("filters the catalog and installs, updates, and removes an extension", async () => {
   let sample = available;
   const writes: string[] = [];

@@ -26,6 +26,7 @@ export type ReleaseCatalogRow = Partial<Omit<ReleaseCatalogEntry, "id">> & {
   id: string;
   state: "available" | "installed" | "update" | "manual" | "incompatible";
   installedVersion?: string;
+  iconDataUri?: string;
   usedByAgents: number;
 };
 
