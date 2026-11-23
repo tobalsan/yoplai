@@ -49,3 +49,108 @@ canvas {
   height: 40px;
   -webkit-app-region: drag;
 }
+
+#wait-loader {
+  --ink: #e8e8e8;
+  --r: 20px;
+  position: fixed; inset: 0; display: grid; place-items: center;
+  opacity: 0;
+  &.revealed { animation: wait-appear .15s ease-out forwards; }
+
+  .rig { position: relative; width: calc(var(--r) * 2); height: calc(var(--r) * 2); }
+
+  .shadow {
+    position: absolute; left: 10%; right: 10%; bottom: -6px; height: 4px; border-radius: 50%;
+    background: var(--ink); opacity: .2;
+    animation: wait-shadow 1.4s linear both;
+  }
+  .hop { position: absolute; inset: 0; animation: wait-drop 1.4s both; }
+  .breathe {
+    position: absolute; inset: 0; transform-origin: 50% 100%;
+    animation: wait-breathe 2.8s ease-in-out 1.4s infinite;
+  }
+  .body {
+    position: absolute; inset: 0; border-radius: 50%; background: var(--ink);
+    transform-origin: 50% 100%;
+    animation: wait-squash 1.4s ease-in-out both;
+  }
+  .eyes {
+    position: absolute; inset: 0;
+    animation: wait-pop .42s cubic-bezier(.3,1.6,.5,1) 1.3s both;
+  }
+  .gaze {
+    position: absolute; inset: 0;
+    animation: wait-look 1.8s 1.75s both;
+  }
+  .track { position: relative; will-change: transform; }
+  .spin, .peek { position: absolute; inset: 0; will-change: transform; }
+  .eye {
+    position: absolute; border-radius: 50%; background: var(--paper);
+    width: calc(var(--r) * .368); height: calc(var(--r) * .632);
+    top: calc(var(--r) * .65);
+    animation:
+      wait-blink .2s ease-in-out 3.15s 1,
+      wait-blink-idle 4.6s ease-in-out 5.4s infinite;
+  }
+  .eye.l { left: calc(var(--r) * (1 - .184 - .29)); }
+  .eye.r { left: calc(var(--r) * (1 - .184 + .29)); }
+
+  /* App ready: eyes close, blob shrinks away */
+  &.out .eyes { animation: wait-close .14s ease-in forwards; }
+  &.out .rig  { animation: wait-vanish .24s cubic-bezier(.6,-.4,.8,.4) .1s forwards; }
+
+  &:not(.revealed) * { animation: none; }
+  &[hidden] { display: none; }
+  @media (prefers-color-scheme: light) { & { --ink: #1a1a1a; } }
+  @media (prefers-reduced-motion: reduce) {
+    &.revealed { animation: none; opacity: 1; }
+    * { animation: none !important; }
+  }
+}
+
+@keyframes wait-appear { to { opacity: 1; } }
+@keyframes wait-drop {
+  0%   { transform: translateY(-64px); animation-timing-function: cubic-bezier(.55,0,1,.45); }
+  27%  { transform: translateY(0);     animation-timing-function: cubic-bezier(0,.55,.45,1); }
+  44%  { transform: translateY(-24px); animation-timing-function: cubic-bezier(.55,0,1,.45); }
+  61%  { transform: translateY(0);     animation-timing-function: cubic-bezier(0,.55,.45,1); }
+  70%  { transform: translateY(-7px);  animation-timing-function: cubic-bezier(.55,0,1,.45); }
+  79%, 100% { transform: translateY(0); }
+}
+@keyframes wait-squash {
+  0%   { transform: scale(.88,1.14); }
+  25%  { transform: scale(.9,1.12); }
+  27%  { transform: scale(1.38,.66); }
+  32%  { transform: scale(.86,1.16); }
+  38%  { transform: scale(1.04,.96); }
+  44%  { transform: scale(1,1); }
+  57%  { transform: scale(.94,1.07); }
+  61%  { transform: scale(1.22,.8); }
+  65%  { transform: scale(.92,1.08); }
+  70%  { transform: scale(1,1); }
+  77%  { transform: scale(.98,1.02); }
+  79%  { transform: scale(1.12,.88); }
+  84%  { transform: scale(.96,1.04); }
+  90%  { transform: scale(1.02,.98); }
+  95%, 100% { transform: scale(1,1); }
+}
+@keyframes wait-shadow {
+  0%   { transform: scaleX(.35); opacity: .04; }
+  27%  { transform: scaleX(1.25); opacity: .24; }
+  44%  { transform: scaleX(.7);  opacity: .12; }
+  61%  { transform: scaleX(1.15); opacity: .22; }
+  70%  { transform: scaleX(.9);  opacity: .17; }
+  79%, 100% { transform: scaleX(1); opacity: .2; }
+}
+@keyframes wait-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.035,.965); } }
+@keyframes wait-pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+@keyframes wait-look {
+  0%        { transform: translateX(0) scaleX(1); animation-timing-function: cubic-bezier(.5,0,.2,1); }
+  10%, 38%  { transform: translateX(calc(var(--r) * -.28)) scaleX(.86); animation-timing-function: cubic-bezier(.5,0,.2,1); }
+  50%, 78%  { transform: translateX(calc(var(--r) * .28)) scaleX(.86); animation-timing-function: cubic-bezier(.5,0,.2,1); }
+  90%, 100% { transform: translateX(0) scaleX(1); }
+}
+@keyframes wait-blink { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(.1); } }
+@keyframes wait-blink-idle { 0%, 5%, 100% { transform: scaleY(1); } 2.5% { transform: scaleY(.1); } }
+@keyframes wait-close { from { transform: var(--eye-pose); } to { transform: var(--eye-pose) scaleY(.08); } }
+@keyframes wait-vanish { to { transform: scale(0); opacity: 0; } }

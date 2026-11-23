@@ -17,6 +17,7 @@ const desktop = vi.hoisted(() => ({
   loadFile: vi.fn<(_file: string, _options: { query: { mode: string } }) => Promise<void>>(),
   loadURL: vi.fn<(_url: string) => Promise<void>>(),
   execute: vi.fn<(_code: string) => Promise<void>>(),
+  themeMessage: vi.fn<(name: string, listener: (event: { senderFrame: unknown; returnValue?: unknown }, action: string) => void) => void>(),
   onNavigation: vi.fn<(name: string, listener: (event: { preventDefault(): void }, url: string) => void) => void>(),
   onWindowEvent: vi.fn<(name: string, listener: () => void) => void>(),
   onAppEvent: vi.fn<(name: string, listener: (event: { preventDefault(): void }) => void) => void>(),
@@ -42,7 +43,10 @@ vi.mock("electron", () => ({
     once = vi.fn();
     loadFile = desktop.loadFile;
     loadURL = desktop.loadURL;
-    webContents = { on: desktop.onNavigation, executeJavaScript: desktop.execute, ipc: { on: vi.fn() } };
+    webContents = {
+      on: desktop.onNavigation, executeJavaScript: desktop.execute, ipc: { on: desktop.themeMessage },
+      mainFrame: uiFrame, getURL: () => uiUrl,
+    };
   },
   nativeTheme: { shouldUseDarkColors: true, on: vi.fn(), removeListener: vi.fn() },
   Menu: { buildFromTemplate: desktop.menu, setApplicationMenu: vi.fn() },
@@ -53,6 +57,14 @@ vi.mock("./shell-path.js", () => ({ probeShellPath: desktop.probe }));
 vi.mock("./stack.js", () => ({ startStack: desktop.start }));
 
 const uiUrl = "http://127.0.0.1:3000";
+const uiFrame = { url: uiUrl, origin: uiUrl, detached: false };
+
+function takeWaitFirstScreen(): unknown {
+  const listener = desktop.themeMessage.mock.calls.find(([name]) => name === "desktop-theme")![1];
+  const event: { senderFrame: unknown; returnValue?: unknown } = { senderFrame: uiFrame };
+  listener(event, "wait-first-screen");
+  return event.returnValue;
+}
 const stop = async () => {};
 const stack = { uiUrl, uiOrigin: uiUrl, stop };
 const signals = ["SIGINT", "SIGTERM"] as const;
@@ -172,6 +184,11 @@ it("does not load the UI from a pending fade after Restart", async () => {
   expect(desktop.loadURL).not.toHaveBeenCalled();
   expect(setupItem().enabled).toBe(false);
 
+  expect(takeWaitFirstScreen()).toBe(false);
+  desktop.loadURL.mockImplementationOnce(async () => {
+    expect(takeWaitFirstScreen()).toBe(true);
+    expect(takeWaitFirstScreen()).toBe(false);
+  });
   newFade.resolve();
   await vi.waitFor(() => expect(setupItem().enabled).toBe(true));
   expect(desktop.loadURL.mock.calls).toEqual([[uiUrl]]);

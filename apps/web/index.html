@@ -18,7 +18,7 @@
         document.documentElement.setAttribute('data-yoplai-desktop', '');
         var firstDesktopScreen = true;
         try { firstDesktopScreen = !sessionStorage.getItem('yoplai:desktop-first-screen'); } catch {}
-        if (firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
+        if (window.yoplaiDesktopTheme.takeWaitFirstScreen?.() || firstDesktopScreen) document.documentElement.setAttribute('data-desktop-first-screen', '');
       }
       var t;
       try { t = localStorage.getItem('yoplai-theme') ?? localStorage.getItem('aihub-theme'); } catch {}

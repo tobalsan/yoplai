@@ -19,7 +19,7 @@ export function createDesktopTheme(userData: string, nativeTheme: NativeTheme) {
   nativeTheme.themeSource = preference ?? "system";
   const background = () => startupColor(preference, nativeTheme.shouldUseDarkColors);
 
-  function attach(win: BrowserWindow, activeOrigin: () => string | undefined): void {
+  function attach(win: BrowserWindow, activeOrigin: () => string | undefined, takeWaitFirstScreen: () => boolean): void {
     const contents = win.webContents;
     const updateBackground = () => win.setBackgroundColor(background());
     nativeTheme.on("updated", updateBackground);
@@ -34,8 +34,15 @@ export function createDesktopTheme(userData: string, nativeTheme: NativeTheme) {
     });
     contents.on("did-stop-loading", () => { pendingNavigation = false; });
     contents.ipc.on("desktop-theme", (event, action: unknown, choice: unknown) => {
-      if (pendingNavigation || !isCurrentFrame(contents, event.senderFrame, activeOrigin())
-        || (action !== "load" && action !== "save") || !isThemeChoice(choice)) {
+      if (pendingNavigation || !isCurrentFrame(contents, event.senderFrame, activeOrigin())) {
+        event.returnValue = null;
+        return;
+      }
+      if (action === "wait-first-screen") {
+        event.returnValue = takeWaitFirstScreen();
+        return;
+      }
+      if ((action !== "load" && action !== "save") || !isThemeChoice(choice)) {
         event.returnValue = null;
         return;
       }

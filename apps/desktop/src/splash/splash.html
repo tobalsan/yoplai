@@ -12,9 +12,98 @@
   <canvas id="c" role="img" aria-label="YOPLAI."></canvas>
   <div id="loading" role="status" aria-label="Loading" hidden></div>
 </div>
+<div id="wait-loader" role="status" aria-label="Loading" hidden>
+  <div class="track"><div class="rig">
+    <div class="shadow"></div>
+    <div class="hop"><div class="breathe"><div class="spin"><div class="body">
+      <div class="eyes"><div class="gaze"><div class="peek"><span class="eye l"></span><span class="eye r"></span></div></div></div>
+    </div></div></div></div>
+  </div></div>
+</div>
 <div id="drag-strip" aria-hidden="true"></div>
 <script>
 'use strict';
+if (new URLSearchParams(location.search).get('mode') === 'wait') {
+  const R = 20, TURN = 2 * Math.PI * R;
+  const ROLL_AT = 0.25 + 3.45;
+  const LEAN = 0.025, PEEK = 0.3, WIND = 0.16;
+  const easeIO = x => x < .5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
+  const smooth = x => x * x * (3 - 2 * x);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const roll = { clock: 0, last: 0, raf: 0, pos: 0, seg: null, queue: [], gx: 0 };
+
+  function nextSeg(t) {
+    const r = roll;
+    if (r.queue.length) return { ...r.queue.shift(), t0: t };
+    const home = Math.round(r.pos);
+    const dir = home >= 1 ? -1 : home <= -1 ? 1 : Math.random() < .5 ? -1 : 1;
+    if (Math.random() < .22) {
+      r.queue.push({ from: home + dir * .14, to: home, dir: -dir, D: .54, rest: rnd(.7, 1.6), peek: 0 });
+      return { t0: t, from: home, to: home + dir * .14, dir, D: .38, rest: .35, peek: PEEK, tease: true };
+    }
+    const turns = home !== 0 && Math.random() < .35 ? 2 : 1;
+    return { t0: t, from: home, to: home + dir * turns, dir, D: .6 + .4 * turns, rest: rnd(.5, 2.2), peek: PEEK };
+  }
+
+  function poseAt(s, t) {
+    const u = t - s.t0, lean = s.peek ? LEAN : 0;
+    const start = s.peek + (s.peek ? WIND : 0);
+    if (u < s.peek) return { a: s.from, g: s.dir };
+    if (u < start) return { a: s.from - s.dir * lean * smooth((u - s.peek) / WIND), g: s.dir };
+    const base = s.from - s.dir * lean;
+    if (u < start + s.D) return { a: base + (s.to - base) * easeIO((u - start) / s.D), g: s.dir };
+    const tau = u - start - s.D;
+    const wob = s.tease ? 0 : s.dir * .03 * Math.exp(-6 * tau) * Math.sin(15 * tau);
+    return { a: s.to + wob, g: tau < .25 ? s.dir : 0, done: tau > s.rest };
+  }
+
+  function rollFrame(now) {
+    const r = roll;
+    const dt = Math.min(.05, (now - (r.last || now)) / 1000);
+    r.clock += dt; r.last = now;
+    if (r.clock >= ROLL_AT) {
+      r.seg ??= nextSeg(r.clock);
+      let p = poseAt(r.seg, r.clock);
+      if (p.done) { r.pos = r.seg.to; r.seg = nextSeg(r.clock); p = poseAt(r.seg, r.clock); }
+      r.pos = p.a;
+      r.gx += (p.g - r.gx) * (1 - Math.exp(-dt / .07));
+      track.style.transform = `translateX(${p.a * TURN}px)`;
+      spin.style.transform = `rotate(${p.a * 360}deg)`;
+      peek.style.transform = `translateX(${r.gx * R * .28}px) scaleX(${1 - .14 * Math.abs(r.gx)})`;
+    }
+    r.raf = requestAnimationFrame(rollFrame);
+  }
+  const stage = document.getElementById('wait-loader');
+  const track = stage.querySelector('.track');
+  const spin = stage.querySelector('.spin');
+  const peek = stage.querySelector('.peek');
+  const eyes = stage.querySelector('.eyes');
+  const rig = stage.querySelector('.rig');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.getElementById('c').hidden = true;
+  stage.hidden = false;
+  const reveal = setTimeout(() => stage.classList.add('revealed'), 250);
+  if (!reduced) roll.raf = requestAnimationFrame(rollFrame);
+
+  let finishPromise;
+  window.yoplaiSplash = {
+    finish() {
+      return finishPromise ??= (async () => {
+        clearTimeout(reveal);
+        cancelAnimationFrame(roll.raf);
+        if (!stage.classList.contains('revealed') || reduced) {
+          stage.hidden = true;
+          return;
+        }
+        eyes.style.setProperty('--eye-pose', getComputedStyle(eyes).transform);
+        stage.classList.add('out');
+        await Promise.allSettled(rig.getAnimations().map(animation => animation.finished));
+        stage.hidden = true;
+      })();
+    },
+    stats: () => ({ frames: 0, medianMs: 0, p95Ms: 0, longFrames: 0 }),
+  };
+} else {
 const R = 35;
 const BIG = 57;
 const DOT = 3.5;
@@ -381,7 +470,6 @@ function draw(t) {
 }
 
 
-const wait = params.get('mode') === 'wait';
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const freeze = params.has('t') ? Number(params.get('t')) : NaN;
 const frozen = Number.isFinite(freeze);
@@ -394,7 +482,6 @@ let startAt, last;
 let clock = reducedMotion ? T.end : frozen ? clamp01(freeze / T.end) * T.end : 0;
 
 function drawFrame() {
-  if (wait) return;
   simTo(clock);
   draw(clock);
 }
@@ -431,14 +518,14 @@ window.yoplaiSplash = {
   },
 };
 
-canvas.hidden = wait;
 resize();
 drawFrame();
 light.addEventListener('change', () => { setColors(); drawFrame(); });
 window.addEventListener('resize', () => { resize(); drawFrame(); });
-if (wait || reducedMotion || clock === T.end) complete();
+if (reducedMotion || clock === T.end) complete();
 else if (frozen) end();
 else requestAnimationFrame(frame);
+}
 </script>
 </body>
 </html>

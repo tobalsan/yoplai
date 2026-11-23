@@ -29,12 +29,14 @@ const stackController = createStackController(() =>
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
 let attempt = 0;
+let waitFirstScreen = false;
 let setupMenuItem: MenuItem | null = null;
 const SPLASH_PATH = path.join(import.meta.dirname, "splash/splash.html");
 type SplashMode = "splash" | "wait";
 
 function invalidateAttempt(): void {
   attempt++;
+  waitFirstScreen = false;
   if (setupMenuItem) setupMenuItem.enabled = false;
 }
 /** A packaged app runs one instance. The dev app keeps its own rules, so two worktrees can run side by side. */
@@ -85,7 +87,11 @@ function createWindow(theme: ReturnType<typeof createDesktopTheme>): BrowserWind
     width: 1280, height: 860, titleBarStyle: "hiddenInset", backgroundColor: theme.background(),
     webPreferences: { ...SECURE_WEB_PREFERENCES, preload: path.join(import.meta.dirname, "theme-preload.cjs") },
   });
-  theme.attach(win, () => mainWindow === win && !quitting ? stackController.current()?.uiOrigin : undefined);
+  theme.attach(win, () => mainWindow === win && !quitting ? stackController.current()?.uiOrigin : undefined, () => {
+    const firstScreen = waitFirstScreen;
+    waitFirstScreen = false;
+    return firstScreen;
+  });
   // Child windows (OAuth) must reach identity providers, so only the main window is pinned.
   win.webContents.on("will-navigate", (event, url) => {
     const decision = decideNavigation({ url, uiOrigin: stackController.current()?.uiOrigin ?? "" });
@@ -188,7 +194,9 @@ async function startAndLoad(mode: SplashMode): Promise<void> {
       }
     }
     if (!isCurrent()) return;
+    waitFirstScreen = mode === "wait";
     await win.loadURL(stack.uiUrl);
+    if (isCurrent()) waitFirstScreen = false;
     if (isCurrent() && setupMenuItem) setupMenuItem.enabled = true;
   } catch (err) {
     if (isCurrent()) showError((err as Error).message);

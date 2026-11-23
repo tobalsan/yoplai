@@ -23,7 +23,8 @@ function harness(userData: string) {
   const frame = { url: `${origin}/setup`, origin, detached: false };
   const contents = Object.assign(new EventEmitter(), { mainFrame: frame, getURL: () => frame.url, ipc: new EventEmitter() });
   const win = Object.assign(new EventEmitter(), { webContents: contents, setBackgroundColor: vi.fn() });
-  theme.attach(win as unknown as BrowserWindow, () => activeOrigin);
+  const takeWaitFirstScreen = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+  theme.attach(win as unknown as BrowserWindow, () => activeOrigin, takeWaitFirstScreen);
   const send = (action: string, choice: unknown, senderFrame = frame, ipc = contents.ipc) => {
     const event = { senderFrame, returnValue: undefined };
     ipc.emit("desktop-theme", event, action, choice);
@@ -54,6 +55,17 @@ it("imports the first choice and rejects messages from other frames and navigati
   setOrigin("http://127.0.0.1:7001");
   expect(send("save", "dark")).toBeNull();
   expect(readThemePreference(userData)).toBe("light");
+}));
+
+it("leaves the wait fade for the active main frame", () => withProfile((userData) => {
+  const { contents, send, frame } = harness(userData);
+  expect(send("wait-first-screen", undefined, { ...frame })).toBeNull();
+  contents.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+  expect(send("wait-first-screen", undefined)).toBeNull();
+  contents.emit("did-frame-navigate", {}, "", 200, "", true);
+  expect(send("wait-first-screen", undefined)).toBe(true);
+  expect(send("wait-first-screen", undefined)).toBe(false);
+  expect(readThemePreference(userData)).toBeUndefined();
 }));
 
 it("rejects an opaque origin even when the top frame has the active UI URL", () => withProfile((userData) => {
