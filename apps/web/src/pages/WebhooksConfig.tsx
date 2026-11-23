@@ -5,7 +5,6 @@ import {
   updateWebhook,
   type WebhookCredentials,
 } from "../api/webhooks";
-import { LeftNavShell } from "../components/LeftNavShell";
 import { ScopeIcon } from "../components/CredentialScopeTabs";
 import { MODES, SCHEDULES_STYLES } from "./SchedulesPanel";
 import { decodeRouteParam } from "../lib/path";
@@ -172,7 +171,7 @@ export default function WebhooksConfigPage() {
   };
 
   return (
-    <LeftNavShell>
+    <>
       <main class="webhooks-config">
         <style>{SCHEDULES_STYLES}</style>
         <style>{STYLES}</style>
@@ -347,7 +346,7 @@ export default function WebhooksConfigPage() {
           </ul>
         </Show>
       </main>
-    </LeftNavShell>
+    </>
   );
 }
 

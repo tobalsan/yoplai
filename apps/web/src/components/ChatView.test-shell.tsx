@@ -1,6 +1,7 @@
-import type { JSX } from "solid-js";
+import type { ParentProps } from "solid-js";
+import { PageToolbarSlot } from "./PageToolbar";
 
-/** A shell for ChatView tests that do not exercise the layout: it puts the toolbar above the chat, with no sidebar. */
-export function ToolbarOnlyShell(props: { toolbar: JSX.Element; children: JSX.Element }) {
-  return <><header>{props.toolbar}</header>{props.children}</>;
+/** Renders the real toolbar slot for tests that do not need the sidebar. */
+export function ToolbarOnlyShell(props: ParentProps) {
+  return <PageToolbarSlot>{(toolbar) => <><header>{toolbar()}</header>{props.children}</>}</PageToolbarSlot>;
 }

@@ -1,5 +1,4 @@
 import { For, Match, Show, Switch, createEffect, createResource, createSignal, onCleanup, onMount } from "solid-js";
-import { LeftNavShell } from "../components/LeftNavShell";
 import {
   RelayLinkApiError,
   cancelLink,
@@ -65,7 +64,7 @@ function attemptMessage(view: LinkAttemptView): string {
 
 /** The saved remote gateways of this computer, and the controls to link, link again, and disconnect. */
 export function RemoteGateways() {
-  return <LeftNavShell><GatewayLinkPanel /></LeftNavShell>;
+  return <GatewayLinkPanel />;
 }
 
 export function GatewayLinkPanel(props: {

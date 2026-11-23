@@ -8,7 +8,6 @@ import type { GatewayLinkSummary } from "@yoplai/shared";
 
 const api = vi.hoisted(() => ({ fetchGatewayLinks: vi.fn(), revokeGatewayLink: vi.fn() }));
 vi.mock("../api/gateway-link", async (original) => ({ ...(await original<typeof import("../api/gateway-link")>()), ...api }));
-vi.mock("../components/LeftNavShell", () => ({ LeftNavShell: (props: { children: unknown }) => props.children }));
 
 import { GatewayLinkApiError } from "../api/gateway-link";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";

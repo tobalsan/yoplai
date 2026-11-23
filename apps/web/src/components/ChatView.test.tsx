@@ -214,7 +214,7 @@ const mountedViews = new Set<() => void>();
 function renderView() {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const stop = render(() => <ChatView shell={ToolbarOnlyShell} />, container);
+  const stop = render(() => <ToolbarOnlyShell><ChatView /></ToolbarOnlyShell>, container);
   const dispose = () => { mountedViews.delete(dispose); stop(); };
   mountedViews.add(dispose);
   return { container, dispose };

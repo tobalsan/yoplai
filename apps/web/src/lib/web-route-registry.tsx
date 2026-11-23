@@ -4,7 +4,6 @@ import { isExtensionEnabled } from "./capabilities";
 import { decodeRouteParam } from "./path";
 import { useAgentTarget } from "./agent-target";
 import { useRequester } from "./requester";
-import { LeftNavShell } from "../components/LeftNavShell";
 import { ExtensionDetails } from "../pages/ExtensionDetails";
 
 type ExtensionRoute = {
@@ -76,21 +75,19 @@ function AgentConfigRoute(props: { extensionId: string; component: Component }) 
   const settled = () => target().state === "missing" || (target().state === "ready" && (gateway() === undefined || requester().ready));
   const Config = props.component;
   return (
-    <Show when={settled()} fallback={<LeftNavShell><p role="status">Loading…</p></LeftNavShell>}>
-      <Show when={target().state === "missing" || requester().isExtensionEnabled(props.extensionId)} fallback={<LeftNavShell><ExtensionDetails extensionId={props.extensionId} requester={requester} /></LeftNavShell>}>
+    <Show when={settled()} fallback={<p role="status">Loading…</p>}>
+      <Show when={target().state === "missing" || requester().isExtensionEnabled(props.extensionId)} fallback={<ExtensionDetails extensionId={props.extensionId} requester={requester} />}>
         <Config />
       </Show>
     </Show>
   );
 }
 
-export function renderExtensionRoutes(
-  wrap: (component: Component) => JSX.Element
-): JSX.Element[] {
+export function renderExtensionRoutes(): JSX.Element[] {
   return getExtensions().flatMap((extension) => {
     const routes = isExtensionEnabled(extension.extensionId)
       ? extension.routes.map((route) => (
-          <Route path={route.path} component={() => wrap(route.component)} />
+          <Route path={route.path} component={route.component} />
         ))
       : [];
     // Mount the bespoke agent-keyed config route too, so the hub's redirect
@@ -100,7 +97,7 @@ export function renderExtensionRoutes(
       routes.push(
         <Route
           path={configRoute.path}
-          component={() => wrap(() => <AgentConfigRoute extensionId={extension.extensionId} component={configRoute.component} />)}
+          component={() => <AgentConfigRoute extensionId={extension.extensionId} component={configRoute.component} />}
         />
       );
     }

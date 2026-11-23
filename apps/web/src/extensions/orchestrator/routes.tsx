@@ -4,7 +4,6 @@ import { renderMarkdown } from "../../lib/markdown";
 import { extractBlockText } from "../../lib/history";
 import { formatFileSize } from "../../lib/attachments";
 import type { FileBlock, FullToolResultMessage } from "../../api/types";
-import { LeftNavShell } from "../../components/LeftNavShell";
 import {
   fetchOrchestratorHealth,
   fetchOrchestratorLogs,
@@ -1850,18 +1849,10 @@ const ORCH_STYLES = `
 }
 `;
 
-function OrchestratorRouteShell() {
-  return (
-    <LeftNavShell>
-      <OrchestratorDashboard />
-    </LeftNavShell>
-  );
-}
-
 export const webRouteExtension: {
   extensionId: string;
   routes: { path: string; component: Component }[];
 } = {
   extensionId: "orchestrator",
-  routes: [{ path: "/orchestrator", component: OrchestratorRouteShell }],
+  routes: [{ path: "/orchestrator", component: OrchestratorDashboard }],
 };

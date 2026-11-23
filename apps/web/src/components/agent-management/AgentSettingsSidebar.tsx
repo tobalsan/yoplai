@@ -53,6 +53,8 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
   const [models, { refetch: retryModels }] = createResource(
     () => initial.canEditAgent,
     () => fetchAgentModels(props.agent.gateway),
+    // On the first load, .latest needs an initial value to avoid suspending the chat page.
+    { initialValue: [] },
   );
   const initialFields: Fields = {
     name: initial.name, description: initial.description ?? "",

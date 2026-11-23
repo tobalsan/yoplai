@@ -1,7 +1,6 @@
 import { For, Match, Show, Switch, createResource, createSignal } from "solid-js";
 import type { GatewayLinkStatus, GatewayLinkSummary } from "@yoplai/shared";
 import { GatewayLinkApiError, describeGatewayLinkError, fetchGatewayLinks, revokeGatewayLink } from "../api/gateway-link";
-import { LeftNavShell } from "../components/LeftNavShell";
 import { capabilities } from "../lib/capabilities";
 
 const STATUS_LABEL: Record<GatewayLinkStatus, string> = {
@@ -38,7 +37,7 @@ export function GatewayLinks() {
   };
 
   return (
-    <LeftNavShell>
+    <>
       <main class="gateway-links">
         <style>{GATEWAY_LINKS_STYLES}</style>
         <h1>Linked devices</h1>
@@ -87,7 +86,7 @@ export function GatewayLinks() {
         </Switch>
         <Show when={error()}>{(message) => <p role="alert">{message()}</p>}</Show>
       </main>
-    </LeftNavShell>
+    </>
   );
 }
 

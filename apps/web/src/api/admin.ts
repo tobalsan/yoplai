@@ -1,3 +1,5 @@
+import { apiFetch } from "./core";
+
 export type AdminUser = {
   id: string;
   name: string | null;
@@ -17,10 +19,7 @@ export type ImpersonationStatus =
     };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await globalThis.fetch(path, {
-    ...init,
-    credentials: "include",
-  });
+  const res = await apiFetch(path, init);
   if (!res.ok) {
     const error = await res
       .json()

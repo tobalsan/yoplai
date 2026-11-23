@@ -37,7 +37,7 @@ let mcpAppPaths: string[];
 let capturedExtra: Record<string, unknown>;
 
 function mountChat() {
-  dispose = render(() => <Router><Route path="/chat/:agentId/:view?" component={() => <ChatView shell={LeftNavShell} />} /></Router>, root);
+  dispose = render(() => <Router><Route path="/chat/:agentId/:view?" component={() => <LeftNavShell><ChatView /></LeftNavShell>} /></Router>, root);
 }
 const shell = () => getByTitle(root, "Dashboard dashboard") as HTMLIFrameElement;
 const fromShell = (event: string, extra: Record<string, unknown> = {}) =>

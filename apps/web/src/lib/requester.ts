@@ -1,4 +1,5 @@
-import { createMemo, createResource, type Accessor } from "solid-js";
+import { createMemo, createResource, useContext, type Accessor } from "solid-js";
+import { PageNavigationContext } from "../api/core";
 import { useSession } from "../auth/client";
 import { capabilities, capabilitiesFailed, capabilitiesReady, loadCapabilities } from "./capabilities";
 import { fetchGatewayCapabilities, type GatewayName } from "../api/gateway";
@@ -26,6 +27,7 @@ export type Requester = {
 
 export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester> {
   const session = useSession();
+  const insideAppFrame = useContext(PageNavigationContext) !== undefined;
   const [remote, { refetch }] = createResource(
     () => gateway() ?? null,
     async (name) => {
@@ -36,11 +38,13 @@ export function useRequester(gateway: Accessor<GatewayName>): Accessor<Requester
   return createMemo<Requester>(() => {
     const name = gateway();
     if (name === undefined) {
-      const user = session().data?.user as Requester["user"];
+      // A single-user app page has no auth service to wait for.
+      const localSession = insideAppFrame && !capabilities.multiUser ? undefined : session();
+      const user = localSession?.data?.user as Requester["user"];
       const role = (user as { role?: SessionRole } | undefined)?.role;
       return {
         gateway: undefined,
-        ready: !session().isPending && capabilitiesReady(),
+        ready: !localSession?.isPending && capabilitiesReady(),
         unknown: capabilitiesFailed(),
         multiUser: capabilities.multiUser,
         enableCronMonitoring: capabilities.enableCronMonitoring === true,

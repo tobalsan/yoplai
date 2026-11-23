@@ -1,6 +1,5 @@
-import { Suspense, lazy } from "solid-js";
-import type { Component, JSX } from "solid-js";
-import { LeftNavShell } from "../../components/LeftNavShell";
+import { lazy } from "solid-js";
+import type { Component } from "solid-js";
 
 const LazyProjectsBoard = lazy(() =>
   import("../../components/ProjectsBoard").then((mod) => ({
@@ -18,49 +17,21 @@ const LazyAgentsView = lazy(() =>
   }))
 );
 
-export function BoardRouteShell(): JSX.Element {
-  return (
-    <Suspense>
-      <LazyProjectsBoard />
-    </Suspense>
-  );
-}
-
-export function BoardHomeRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyBoardView />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-export function BoardAgentsRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyAgentsView />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
 export const webRouteExtension: {
   extensionId: string;
   home: Component;
   routes: { path: string; component: Component }[];
 } = {
   extensionId: "board",
-  home: BoardHomeRouteShell,
+  home: LazyBoardView,
   routes: [
-    { path: "/board", component: BoardRouteShell },
-    { path: "/board/projects", component: BoardHomeRouteShell },
-    { path: "/board/projects/:projectId", component: BoardHomeRouteShell },
+    { path: "/board", component: LazyProjectsBoard },
+    { path: "/board/projects", component: LazyBoardView },
+    { path: "/board/projects/:projectId", component: LazyBoardView },
     {
       path: "/board/projects/:projectId/slices/:sliceId",
-      component: BoardHomeRouteShell,
+      component: LazyBoardView,
     },
-    { path: "/board/agents", component: BoardAgentsRouteShell },
+    { path: "/board/agents", component: LazyAgentsView },
   ],
 };

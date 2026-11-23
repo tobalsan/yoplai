@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { within, waitFor } from "@testing-library/dom";
 import { render } from "solid-js/web";
+import { LeftNavShell } from "./LeftNavShell";
 import { ProjectsBoard } from "./ProjectsBoard";
 import { setSidebarCollapsedPersistent } from "../lib/layout";
 import { getSessionKey } from "../api/chat";
@@ -106,7 +107,7 @@ afterEach(() => {
 describe("ProjectsBoard context panel navigation", () => {
   it("puts the sidebar toggle and filter in the same toolbar", () => {
     setSidebarCollapsedPersistent(false);
-    dispose = render(() => <ProjectsBoard />, container);
+    dispose = render(() => <LeftNavShell><ProjectsBoard /></LeftNavShell>, container);
     const page = within(container);
     const toolbar = within(page.getByRole("banner"));
     expect(toolbar.getByRole("textbox", { name: "Filter projects" })).toBeTruthy();
@@ -117,7 +118,7 @@ describe("ProjectsBoard context panel navigation", () => {
 
   it("opens a directory agent's current session on the main chat page", async () => {
     localStorage.setItem("yoplai:sessionKey:PRO-lead/one", "existing-session");
-    dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
+    dispose = render(() => <ProjectsBoard />, container);
     await waitFor(() => {
       expect(
         within(container).getByRole("button", { name: /Lead One/ })
@@ -133,7 +134,7 @@ describe("ProjectsBoard context panel navigation", () => {
   });
   it("opens a Feed run's project using the existing project destination", async () => {
     localStorage.setItem("yoplai:context-panel:mode", "feed");
-    dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
+    dispose = render(() => <ProjectsBoard />, container);
     await waitFor(() => {
       expect(
         within(container).getByRole("button", { name: /started project run/ })
@@ -150,7 +151,7 @@ describe("ProjectsBoard context panel navigation", () => {
   it("opens a Feed agent's current session on the main chat page", async () => {
     localStorage.setItem("yoplai:context-panel:mode", "feed");
     localStorage.setItem("yoplai:sessionKey:PRO-lead/one", "existing-session");
-    dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
+    dispose = render(() => <ProjectsBoard />, container);
     await waitFor(() => {
       expect(
         within(container).getByRole("button", { name: /Lead One said hello/ })
@@ -169,7 +170,7 @@ describe("ProjectsBoard context panel navigation", () => {
     "does nothing for a Feed %s run without a project",
     async (kind) => {
       localStorage.setItem("yoplai:context-panel:mode", "feed");
-      dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
+      dispose = render(() => <ProjectsBoard />, container);
       const label =
         kind === "bare" ? /started bare run/ : /started unknown run/;
       await waitFor(() => {
@@ -192,7 +193,7 @@ describe("ProjectsBoard context panel navigation", () => {
         "PRO-lead/one"
       );
       localStorage.setItem("yoplai:context-panel:mode", "chat");
-      dispose = render(() => <ProjectsBoard withSidebar={false} />, container);
+      dispose = render(() => <ProjectsBoard />, container);
       await waitFor(() => {
         expect(
           within(container).getByRole("button", { name: /Lead One/ })

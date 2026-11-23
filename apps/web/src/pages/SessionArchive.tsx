@@ -1,6 +1,5 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
-import { LeftNavShell } from "../components/LeftNavShell";
 import {
   fetchAgentSessions,
   archiveAgentSession,
@@ -28,45 +27,32 @@ function relativeTime(timestamp: number, now: number): string {
 
 export function SessionArchive() {
   const navigate = useNavigate();
-  const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
-  const [loading, setLoading] = createSignal(false);
-  const [error, setError] = createSignal<string>();
+  const [archive, { mutate, refetch }] = createResource(async (): Promise<{ sessions: SessionSummary[]; error?: string }> => {
+    try {
+      const response = await fetchAgentSessions({ includeArchived: true });
+      return { sessions: response.items.filter((session) => session.archived !== null) };
+    } catch (cause) {
+      return { sessions: [], error: cause instanceof Error ? cause.message : "Failed to load archived sessions" };
+    }
+  });
+  const [actionError, setError] = createSignal<string>();
+  const error = () => actionError() ?? archive.latest?.error;
+  const sessions = () => archive.latest?.sessions ?? [];
+  const removeSession = (id: string) => mutate((current) => current && {
+    ...current,
+    sessions: current.sessions.filter((session) => session.sessionId !== id),
+  });
   const [deletingSession, setDeletingSession] = createSignal<SessionSummary>();
   const [currentTime, setCurrentTime] = createSignal(Date.now());
-  let requestId = 0;
 
   // Update time every minute for relative timestamps
   const intervalId = setInterval(() => setCurrentTime(Date.now()), 60000);
   onCleanup(() => clearInterval(intervalId));
 
-  const refresh = async () => {
-    const currentRequest = ++requestId;
-    setLoading(true);
+  const onSessionsChanged = () => {
     setError(undefined);
-    try {
-      const response = await fetchAgentSessions({ includeArchived: true });
-      if (currentRequest === requestId) {
-        setSessions(response.items.filter((s) => s.archived !== null));
-      }
-    } catch (cause) {
-      if (currentRequest === requestId) {
-        setSessions([]);
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Failed to load archived sessions"
-        );
-      }
-    } finally {
-      if (currentRequest === requestId) setLoading(false);
-    }
+    void refetch();
   };
-
-  createEffect(() => {
-    void refresh();
-  });
-
-  const onSessionsChanged = () => void refresh();
   window.addEventListener("chat-projects-changed", onSessionsChanged);
   onCleanup(() => window.removeEventListener("chat-projects-changed", onSessionsChanged));
 
@@ -74,9 +60,7 @@ export function SessionArchive() {
     setError(undefined);
     try {
       await archiveAgentSession(session.agentId, session.sessionId, false);
-      setSessions((prev) =>
-        prev.filter((s) => s.sessionId !== session.sessionId)
-      );
+      removeSession(session.sessionId);
       showToast("Chat restored", "success");
     } catch (cause) {
       setError(
@@ -91,9 +75,7 @@ export function SessionArchive() {
     setError(undefined);
     try {
       await deleteAgentSession(session.agentId, session.sessionId);
-      setSessions((prev) =>
-        prev.filter((s) => s.sessionId !== session.sessionId)
-      );
+      removeSession(session.sessionId);
       showToast("Chat deleted", "success");
     } catch (cause) {
       setError(
@@ -105,7 +87,7 @@ export function SessionArchive() {
   };
 
   return (
-    <LeftNavShell>
+    <>
       <main class="session-archive">
         <style>{`
           .session-archive {
@@ -220,15 +202,15 @@ export function SessionArchive() {
             </div>
           )}
         </Show>
-        <Show when={loading()}>
+        <Show when={archive.loading}>
           <p role="status" class="archive-empty">
             Loading archived chats…
           </p>
         </Show>
-        <Show when={!loading() && sessions().length === 0}>
+        <Show when={!archive.loading && sessions().length === 0}>
           <p class="archive-empty">No archived chats.</p>
         </Show>
-        <Show when={!loading() && sessions().length > 0}>
+        <Show when={!archive.loading && sessions().length > 0}>
           <ul class="archive-session-list">
             <For each={sessions()}>
               {(session) => {
@@ -285,6 +267,6 @@ export function SessionArchive() {
           />
         </Show>
       </main>
-    </LeftNavShell>
+    </>
   );
 }

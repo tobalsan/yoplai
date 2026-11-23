@@ -1,5 +1,7 @@
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
-import type { JSX } from "solid-js";
+import { Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { useLocation } from "@solidjs/router";
+import type { Accessor, JSX } from "solid-js";
+import { PageToolbarSlot } from "./PageToolbar";
 import { AgentSidebar } from "./AgentSidebar";
 import {
   sidebarCollapsed,
@@ -8,8 +10,10 @@ import {
   zenMode,
 } from "../lib/layout";
 
-export function LeftNavShell(props: { children?: JSX.Element; toolbar?: JSX.Element }) {
+export function LeftNavShell(props: { children?: JSX.Element; pendingLocation?: Accessor<Pick<Location, "pathname" | "search"> | undefined> }) {
+  const location = useLocation();
   const [isMobile, setIsMobile] = createSignal(false);
+  let main!: HTMLDivElement;
 
   onMount(() => {
     const media = window.matchMedia("(max-width: 768px)");
@@ -28,9 +32,14 @@ export function LeftNavShell(props: { children?: JSX.Element; toolbar?: JSX.Elem
     }
   });
 
+  createEffect(on(() => location.pathname, () => {
+    if (isMobile()) setSidebarCollapsedPersistent(true);
+    main.scrollTop = 0;
+  }, { defer: true }));
+
   const sidebarVisible = () => !zenMode() && (!isMobile() || !sidebarCollapsed());
 
-  return (
+  return <PageToolbarSlot>{(toolbar) => (
     <div class="left-nav-shell">
       <header class="shell-toolbar">
         <Show when={!zenMode()}>
@@ -48,19 +57,19 @@ export function LeftNavShell(props: { children?: JSX.Element; toolbar?: JSX.Elem
             </svg>
           </button>
         </Show>
-        <div class="shell-toolbar-content">{props.toolbar}</div>
+        <div class="shell-toolbar-content">{toolbar()}</div>
         <Show when={import.meta.env.VITE_YOPLAI_DEV === "true" || import.meta.env.VITE_AIHUB_DEV === "true"}>
           <span class="shell-dev-badge">DEV</span>
         </Show>
       </header>
       <div class="left-nav-content">
         <Show when={sidebarVisible()}>
-          <AgentSidebar collapsed={sidebarCollapsed} />
+          <AgentSidebar collapsed={sidebarCollapsed} pendingLocation={props.pendingLocation} />
         </Show>
         <Show when={isMobile() && sidebarVisible()}>
           <div class="sidebar-scrim" onClick={toggleSidebarCollapsed} />
         </Show>
-        <div class="left-nav-main">{props.children}</div>
+        <div class="left-nav-main" ref={main}>{props.children}</div>
       </div>
       <style>{`
         .left-nav-shell {
@@ -135,6 +144,36 @@ export function LeftNavShell(props: { children?: JSX.Element; toolbar?: JSX.Elem
           overflow-x: hidden;
           overflow-y: auto;
         }
+        .navigation-progress {
+          position: fixed;
+          inset: 0 0 auto;
+          height: 2px;
+          overflow: hidden;
+          z-index: 46;
+          pointer-events: none;
+        }
+        .navigation-progress::after {
+          content: "";
+          display: block;
+          width: 45%;
+          height: 100%;
+          background: var(--accent);
+          animation: navigation-progress 1.1s ease-in-out infinite;
+        }
+        @keyframes navigation-progress {
+          from { transform: translateX(-100%); }
+          to { transform: translateX(225%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .navigation-progress::after {
+            width: 100%;
+            animation: none;
+          }
+        }
+        .page-loading {
+          margin: 16px;
+          color: var(--text-secondary);
+        }
         .sidebar-scrim {
           position: absolute;
           inset: 0;
@@ -149,5 +188,5 @@ export function LeftNavShell(props: { children?: JSX.Element; toolbar?: JSX.Elem
         }
       `}</style>
     </div>
-  );
+  )}</PageToolbarSlot>;
 }

@@ -1,3 +1,4 @@
+import { apiFetch } from "./core";
 import { gatewayApiPath, type GatewayName } from "./gateway";
 
 export type Team = {
@@ -57,10 +58,7 @@ export type AgentFork = {
 };
 
 async function request<T>(path: string, init?: RequestInit, gateway?: GatewayName): Promise<T> {
-  const res = await globalThis.fetch(gatewayApiPath(gateway, path), {
-    ...init,
-    credentials: "include",
-  });
+  const res = await apiFetch(gatewayApiPath(gateway, path), init);
   if (!res.ok) {
     const error = await res
       .json()

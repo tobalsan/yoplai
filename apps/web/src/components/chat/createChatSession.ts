@@ -315,9 +315,10 @@ export function createChatSession(input: ChatSessionInput) {
   // Load history based on view mode
   let latestHistoryRequest = 0;
   const loadHistory = async (mode: HistoryViewMode, refresh = false) => {
+    const agentId = input.agentId();
+    if (!agentId) return;
     const request = ++latestHistoryRequest;
     const requestedSession = currentSession();
-    const agentId = input.agentId();
     const key = sessionKey();
     const sessionId = explicitSessionId();
     setLoading(true);
