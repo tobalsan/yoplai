@@ -5,7 +5,6 @@ import { render } from "solid-js/web";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import { fireEvent, within } from "@testing-library/dom";
 
-vi.mock("../components/LeftNavShell", () => ({ LeftNavShell: (props: { children: unknown }) => props.children }));
 
 import type { LinkRow } from "../api/relay-link";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";

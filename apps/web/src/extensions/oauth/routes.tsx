@@ -1,6 +1,5 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
-import { LeftNavShell } from "../../components/LeftNavShell";
 import { OAuthConnectCard } from "../../components/OAuthConnectCard";
 import { useRequester } from "../../lib/requester";
 import { fetchAgents } from "../../api/agents";
@@ -31,7 +30,7 @@ function OAuthConnectPage() {
   });
 
   return (
-    <LeftNavShell>
+    <>
       <div class="oauth-root">
         <style>{`
           .oauth-root { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
@@ -68,7 +67,7 @@ function OAuthConnectPage() {
           {(agentId) => <OAuthConnectCard agentId={agentId} gateway={selected()?.gateway} requester={requester} provider="google" label="Google Drive" />}
         </Show>
       </div>
-    </LeftNavShell>
+    </>
   );
 }
 

@@ -16,7 +16,6 @@ const { useSessionMock, fetchPairingsMock, unpairMock, fetchMock } = vi.hoisted(
 }));
 vi.mock("../auth/client", () => ({ useSession: useSessionMock }));
 vi.mock("../api/gateway", async (original) => ({ ...(await original<typeof import("../api/gateway")>()), fetchGatewayList: () => Promise.resolve({ state: "unavailable" }) }));
-vi.mock("../components/LeftNavShell", () => ({ LeftNavShell: (props: { children: unknown }) => props.children }));
 vi.mock("../api/connections", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api/connections")>(),
   fetchSlackPairings: fetchPairingsMock,

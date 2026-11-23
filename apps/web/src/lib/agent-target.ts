@@ -29,6 +29,6 @@ export function useAgentTarget(agentId: Accessor<string>): { target: Accessor<Ag
     if (!id.includes("@")) return { state: "ready", agentId: id, gateway: undefined };
     const result = resolved.state === "ready" || resolved.state === "refreshing" ? resolved() : undefined;
     return result?.agentId === id ? result : { state: "loading" };
-  });
+  }, { state: "loading" });
   return { target, retry: () => void refetch() };
 }

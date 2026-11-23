@@ -33,7 +33,7 @@ import {
   untrack,
 } from "solid-js";
 
-import type { Component, JSX } from "solid-js";
+import { PageToolbar } from "./PageToolbar";
 import { useParams, useBeforeLeave, useNavigate, useSearchParams, useLocation, A } from "@solidjs/router";
 import { ArchivedSessionBanner } from "./ArchivedSessionBanner";
 import { ScheduleAlertsBanner } from "./ScheduleAlertsBanner";
@@ -118,7 +118,7 @@ type DropZone = "history" | "composer" | "attach";
 
 export { ThinkingLine } from "./chat/ChatBlocks";
 
-export function ChatView(props: { children?: JSX.Element; shell: Component<{ toolbar: JSX.Element; children: JSX.Element }> }) {
+export function ChatView() {
   const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
   const handleCodeCopy = (event: MouseEvent) => {
@@ -507,7 +507,7 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
 
   const isOAuth = () => agent()?.authMode === "oauth";
 
-  void loadCapabilities().catch(() => undefined);
+  onMount(() => { void loadCapabilities().catch(() => undefined); });
 
   const [autoScrollPinned, setAutoScrollPinned] = createSignal(true);
   const SCROLL_THRESHOLD = 40;
@@ -1280,20 +1280,18 @@ export function ChatView(props: { children?: JSX.Element; shell: Component<{ too
     </div>
   );
 
-  const Shell = props.shell;
   return (
     <DashboardAnnotationsContext.Provider value={annotations}>
-      <Shell toolbar={toolbar()}>
-        <div class="agent-settings-host">
-          {body()}
-          <Show when={settingsOpen() && !agent.error && agent.latest}>
-            {(current) => <AgentSettingsSidebar agent={current()} onClose={requestSettingsClose} onDirty={setSettingsDirty}
-              onSaving={setSettingsSaving}
-              onAgentChanged={refreshAgentSettingsIdentity} onSaved={() => { closeSettings(); settingsButton?.focus(); }} />}
-          </Show>
-        </div>
-        <discardSettings.Dialog />
-      </Shell>
+      <PageToolbar>{toolbar()}</PageToolbar>
+      <div class="agent-settings-host">
+        {body()}
+        <Show when={settingsOpen() && !agent.error && agent.latest}>
+          {(current) => <AgentSettingsSidebar agent={current()} onClose={requestSettingsClose} onDirty={setSettingsDirty}
+            onSaving={setSettingsSaving}
+            onAgentChanged={refreshAgentSettingsIdentity} onSaved={() => { closeSettings(); settingsButton?.focus(); }} />}
+        </Show>
+      </div>
+      <discardSettings.Dialog />
     </DashboardAnnotationsContext.Provider>
   );
 }

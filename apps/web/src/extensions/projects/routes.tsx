@@ -1,7 +1,6 @@
 import { useNavigate, useParams } from "@solidjs/router";
-import { Suspense, createEffect, createMemo, lazy } from "solid-js";
+import { createEffect, createMemo, lazy } from "solid-js";
 import type { Component, JSX } from "solid-js";
-import { LeftNavShell } from "../../components/LeftNavShell";
 
 const LazyAreasOverview = lazy(() =>
   import("../../components/AreasOverview").then((mod) => ({
@@ -29,53 +28,7 @@ const LazySliceDetailPage = lazy(() =>
   }))
 );
 
-export function AreasOverviewRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyAreasOverview />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-export function ProjectsRouteShell(): JSX.Element {
-  return (
-    <Suspense>
-      <LazyProjectsBoard />
-    </Suspense>
-  );
-}
-
-export function ProjectsDetailRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyProjectsDetailRouteAdapter />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-export function ProjectsArchiveRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyProjectsArchivePage />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-export function SliceDetailRouteShell(): JSX.Element {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazySliceDetailPage />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
+export const SliceDetailRouteShell = LazySliceDetailPage;
 
 function FlatSliceRedirect(): JSX.Element {
   const params = useParams<{ sliceId: string }>();
@@ -105,15 +58,15 @@ export const webRouteExtension: {
   routes: { path: string; component: Component }[];
 } = {
   extensionId: "projects",
-  home: AreasOverviewRouteShell,
+  home: LazyAreasOverview,
   defaultHome: true,
   routes: [
-    { path: "/projects", component: ProjectsRouteShell },
-    { path: "/projects/archive", component: ProjectsArchiveRouteShell },
-    { path: "/projects/:projectId", component: ProjectsDetailRouteShell },
+    { path: "/projects", component: LazyProjectsBoard },
+    { path: "/projects/archive", component: LazyProjectsArchivePage },
+    { path: "/projects/:projectId", component: LazyProjectsDetailRouteAdapter },
     {
       path: "/projects/:projectId/slices/:sliceId",
-      component: ProjectsDetailRouteShell,
+      component: LazyProjectsDetailRouteAdapter,
     },
     { path: "/slices/:sliceId", component: FlatSliceRedirect },
   ],

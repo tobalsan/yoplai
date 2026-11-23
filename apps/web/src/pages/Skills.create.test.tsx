@@ -48,7 +48,7 @@ function click(label: string) {
 }
 describe("Create skill", () => {
   it("opens a fresh chat with the main agent and fills in the prompt without sending it", async () => {
-    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={() => <ChatView shell={ToolbarOnlyShell} />} /></Router>, root);
+    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={() => <ToolbarOnlyShell><ChatView /></ToolbarOnlyShell>} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("No skills yet."));
     click("Add skill"); click("Create skill");
     await vi.waitFor(() => expect(input()?.value).toBe(PROMPT));
@@ -57,7 +57,7 @@ describe("Create skill", () => {
   });
   it("asks for an agent when no main agent is set, then fills in the prompt", async () => {
     mainAgentId = null;
-    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={() => <ChatView shell={ToolbarOnlyShell} />} /></Router>, root);
+    dispose = render(() => <Router><Route path="/skills" component={Skills} /><Route path="/chat/:agentId" component={() => <ToolbarOnlyShell><ChatView /></ToolbarOnlyShell>} /></Router>, root);
     await vi.waitFor(() => expect(root.textContent).toContain("No skills yet."));
     click("Add skill"); click("Create skill");
     await vi.waitFor(() => expect(document.body.textContent).toContain("Create skill: choose an agent"));

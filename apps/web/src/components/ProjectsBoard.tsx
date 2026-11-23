@@ -48,7 +48,7 @@ import type {
   SubagentListItem,
   SubagentLogEvent,
 } from "../api/types";
-import { LeftNavShell } from "./LeftNavShell";
+import { PageToolbar } from "./PageToolbar";
 import { ContextPanel } from "./ContextPanel";
 import { formatCreatedRelative, formatRunRelative } from "../lib/format";
 import { extractBlockText } from "../lib/history";
@@ -1026,11 +1026,9 @@ function sortByCreatedAsc(a: ProjectListItem, b: ProjectListItem): number {
 
 export function ProjectsBoard(
   props: {
-    withSidebar?: boolean;
     suspendProjectRealtime?: boolean;
   } = {}
 ) {
-  const showSidebar = () => props.withSidebar !== false;
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const activeProjectId = createMemo(() => {
@@ -2394,7 +2392,6 @@ export function ProjectsBoard(
       </Show>
       <main class="kanban-main">
         <div class="projects-page">
-          <Show when={!showSidebar()}><header>{toolbar()}</header></Show>
 
           <Show when={projects.loading}>
             <div class="projects-loading">Loading projects...</div>
@@ -6166,5 +6163,5 @@ export function ProjectsBoard(
     </div>
   );
 
-  return showSidebar() ? <LeftNavShell toolbar={toolbar()}>{board()}</LeftNavShell> : board();
+  return <><PageToolbar>{toolbar()}</PageToolbar>{board()}</>;
 }

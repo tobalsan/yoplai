@@ -46,6 +46,7 @@ import { AgentAvatarFill } from "./AgentAvatarFill";
 
 type AgentSidebarProps = {
   collapsed: Accessor<boolean>;
+  pendingLocation?: Accessor<Pick<Location, "pathname" | "search"> | undefined>;
 };
 
 const LazySidebarAccountPanel = lazy(
@@ -102,11 +103,14 @@ export function AgentSidebar(props: AgentSidebarProps) {
   const desktopWindow = isDesktopWindow();
   const location = useLocation();
   const navigate = useNavigate();
+  const selectedLocation = () => props.pendingLocation?.() ?? location;
+  const selectedPath = () => stripBase(selectedLocation().pathname);
   // "Connect tools" only makes sense once a superadmin starred something;
   // re-read on each agent chat so new stars show without a reload.
   const [topExtensions] = createResource(
     () => (capabilities.multiUser && capabilities.user ? chatRouteSession(location.pathname, location.search).agentId : null),
-    () => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS)
+    () => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS),
+    { initialValue: EMPTY_TOP_EXTENSIONS }
   );
   // A local user with linked gateways reaches the personal Slack page of a linked gateway from the footer. The local
   // multi-user account panel stays off. A failed read gives no link.
@@ -119,11 +123,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
       } catch {
         return [];
       }
-    }
+    },
+    { initialValue: [] }
   );
+  // These optional footer actions must never suspend the authenticated frame.
   const hasTopExtensions = () => {
-    const top = topExtensions();
-    return !!top && top.extensions.length + top.mcp.length > 0;
+    const top = topExtensions.latest;
+    return top.extensions.length + top.mcp.length > 0;
   };
   const [sessions, setSessions] = createSignal<SessionSummary[]>([], {
     equals: (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
@@ -306,10 +312,11 @@ export function AgentSidebar(props: AgentSidebarProps) {
     navigate(`/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`);
   };
 
+  const selectedChat = () => chatRouteSession(selectedLocation().pathname, selectedLocation().search);
   const renderSession = (session: SessionSummary) => {
     const selected = () =>
-      currentChat().agentId === session.agentId &&
-      currentChat().sessionId === session.sessionId;
+      selectedChat().agentId === session.agentId &&
+      selectedChat().sessionId === session.sessionId;
     const descriptionId = createUniqueId();
     return (
       <div
@@ -482,7 +489,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 href="/projects"
                 class="nav-link"
                 classList={{
-                  active: stripBase(location.pathname).startsWith("/projects"),
+                  active: selectedPath().startsWith("/projects"),
                 }}
                 title="Board"
               >
@@ -495,7 +502,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 href="/orchestrator"
                 class="nav-link"
                 classList={{
-                  active: stripBase(location.pathname).startsWith("/orchestrator"),
+                  active: selectedPath().startsWith("/orchestrator"),
                 }}
                 title="Orchestrator"
               >
@@ -508,8 +515,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
               class="nav-link"
               classList={{
                 active:
-                  stripBase(location.pathname).startsWith("/agents") ||
-                  stripBase(location.pathname).startsWith("/chat"),
+                  selectedPath().startsWith("/agents") ||
+                  selectedPath().startsWith("/chat"),
               }}
               title="Agents"
             >
@@ -517,11 +524,11 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <span class="nav-full">Agents</span>
               <ScheduleAlertDot />
             </A>
-            <A href="/skills" class="nav-link" classList={{ active: stripBase(location.pathname).startsWith("/skills") }} title="Skills" data-tour="nav-skills">
+            <A href="/skills" class="nav-link" classList={{ active: selectedPath().startsWith("/skills") }} title="Skills" data-tour="nav-skills">
               <i class="fa-solid fa-book-open nav-icon" aria-hidden="true" />
               <span class="nav-full">Skills</span>
             </A>
-            <A href="/dashboards" class="nav-link" classList={{ active: stripBase(location.pathname).startsWith("/dashboards") }} title="Dashboards">
+            <A href="/dashboards" class="nav-link" classList={{ active: selectedPath().startsWith("/dashboards") }} title="Dashboards">
               <i class="fa-solid fa-chart-line nav-icon" aria-hidden="true" />
               <span class="nav-full">Dashboards</span>
             </A>
@@ -530,7 +537,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 href="/teams"
                 class="nav-link"
                 classList={{
-                  active: stripBase(location.pathname).startsWith("/teams"),
+                  active: selectedPath().startsWith("/teams"),
                 }}
                 title="Teams"
               >
@@ -547,7 +554,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 href={capabilities.multiUser ? "/admin/users" : "/admin/extensions"}
                 class="nav-link"
                 classList={{
-                  active: stripBase(location.pathname).startsWith("/admin/"),
+                  active: selectedPath().startsWith("/admin/"),
                 }}
                 title="Admin"
               >
@@ -574,7 +581,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
                   </button>
                 </div>
                 <For each={projects()}>{(project) => {
-                  const isActive = () => location.pathname === `/p/${project.id}`;
+                  const isActive = () => selectedPath() === `/p/${project.id}`;
                   return (
                     <div class="chat-project">
                     <div class="session-row-wrap">
@@ -866,12 +873,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
           </Show>
-          <Show when={!capabilities.multiUser && (relayGateways()?.length ?? 0) > 0}>
-            <A href={`/account/connections?gateway=${encodeURIComponent(relayGateways()![0])}`} class="archive-link" title="Pairings of a linked gateway">
+          <Show when={!capabilities.multiUser && relayGateways.latest[0]}>{(gateway) => (
+            <A href={`/account/connections?gateway=${encodeURIComponent(gateway())}`} class="archive-link" title="Pairings of a linked gateway">
               <i class="fa-solid fa-user-group" aria-hidden="true" />
               <span class="archive-label">Pairings</span>
             </A>
-          </Show>
+          )}</Show>
           <Show when={capabilities.relayLink?.available === true}>
             <A href="/remote-gateways" class="archive-link" title="Link a remote gateway">
               <i class="fa-solid fa-link" aria-hidden="true" />
@@ -879,7 +886,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
             </A>
           </Show>
           <Show when={!capabilities.multiUser}>
-            <A href="/archive" class="archive-link" title="Archive">
+            <A href="/archive" class="archive-link" classList={{ active: selectedPath() === "/archive" }} title="Archive">
               <i class="fa-solid fa-box-archive" aria-hidden="true" />
               <span class="archive-label">Archive</span>
             </A>
@@ -1534,7 +1541,8 @@ export function AgentSidebar(props: AgentSidebarProps) {
           outline-offset: -2px;
         }
 
-        .nav-link.active {
+        .nav-link.active,
+        .archive-link.active {
           background: var(--border-default);
           color: var(--text-primary);
         }

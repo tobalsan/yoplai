@@ -42,7 +42,7 @@ function mountChat() {
   const ChatRoute = () => {
     const location = useLocation();
     readRouteState = () => location.state;
-    return <ChatView shell={ToolbarOnlyShell} />;
+    return <ToolbarOnlyShell><ChatView /></ToolbarOnlyShell>;
   };
   const stop = render(() => <Router><Route path="/chat/:agentId/:view?" component={ChatRoute} /></Router>, container);
   const dispose = () => {

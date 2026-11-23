@@ -55,7 +55,7 @@ afterEach(() => {
 it("opens a dashboard Chat link through the real router with a usable fresh composer", async () => {
   dispose = render(() => <Router>
     <Route path="/dashboards" component={() => <a href="/chat/sage?dashboard=garden&new=1">Chat</a>} />
-    <Route path="/chat/:agentId" component={() => <Suspense><ChatView shell={ToolbarOnlyShell} /></Suspense>} />
+    <Route path="/chat/:agentId" component={() => <Suspense><ToolbarOnlyShell><ChatView /></ToolbarOnlyShell></Suspense>} />
   </Router>, root);
   getByRole(root, "link", { name: "Chat" }).click();
   await vi.waitFor(() => expect(getByTitle(root, "Dashboard dashboard").getAttribute("src")).toBe("/d/garden"));
@@ -80,7 +80,7 @@ it("keeps a linked dashboard active beside saved frames through the real reload 
     active: "yoplai\nui://yoplai/dashboard\nweather",
   }));
   try {
-    dispose = render(() => <Router><Route path="/chat/:agentId" component={() => <Suspense><ChatView shell={ToolbarOnlyShell} /></Suspense>} /></Router>, root);
+    dispose = render(() => <Router><Route path="/chat/:agentId" component={() => <Suspense><ToolbarOnlyShell><ChatView /></ToolbarOnlyShell></Suspense>} /></Router>, root);
     await vi.waitFor(() => expect(getByRole(root, "tab", { name: "Weather" })).toBeDefined());
     expect(getByRole(root, "tab", { name: "Dashboard" }).getAttribute("aria-selected")).toBe("true");
     expect(getAllByRole(root, "tab").map((tab) => tab.getAttribute("aria-label"))).toEqual(["Weather", "Dashboard"]);

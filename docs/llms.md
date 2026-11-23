@@ -90,7 +90,7 @@ Important seams:
 
 ### `apps/web`
 
-Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled.
+Solid.js SPA. It consumes `/api/capabilities` and loads optional extension routes only when enabled. The shared app route owns the authenticated shell, page Suspense, and header toolbar slot. Login, desktop setup, and gateway consent render outside the shell.
 
 Admin Quota at `/admin/quota` reads `/api/admin/model-quota` every 20 seconds. Both require superadmin in multi-user mode and allow the local operator in single-user mode. The uncached route uses only the sanitized in-memory quota store and its policy helpers; viewing never polls a vendor. The page retains last readings on refresh errors and displays server freshness, missing windows and error-only logins honestly. Usage windows use the shared `ProgressBar` primitive, with warning at 75%, critical at 90% (or exhausted), dimmed stale fills and minute-level reset times; unknown last-known readings remain text-only.
 

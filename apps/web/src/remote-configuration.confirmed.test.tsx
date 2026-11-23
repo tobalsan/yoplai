@@ -41,7 +41,7 @@ function mount(path: string, panel?: { gateway?: string }) {
   history.set({ value: path, replace: true });
   dispose = render(() => (
     <MemoryRouter history={history} root={(props: { children?: JSX.Element }) => <Suspense>{props.children}</Suspense>}>
-      {renderExtensionRoutes((Component) => <Component />)}
+      {renderExtensionRoutes()}
       <Route path="/agents/:agentId/extensions/:extensionId" component={() => <ExtensionDetails />} />
       <Route path="/schedules" component={() => <SchedulesPanel agentId="assistant@east" agentName="East Assistant" gateway={panel?.gateway ?? "east"} />} />
     </MemoryRouter>

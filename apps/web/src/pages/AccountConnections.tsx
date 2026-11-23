@@ -1,6 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { useSession } from "../auth/client";
-import { LeftNavShell } from "../components/LeftNavShell";
 import { GatewaySelect } from "../components/GatewaySelect";
 import { SlackPairingsSection } from "./SlackPairingsSection";
 import { SurfaceLinksSection } from "./SurfaceLinksSection";
@@ -18,7 +17,7 @@ export function AccountConnections() {
   const visitKey = createMemo(() => (choice.ready() ? JSON.stringify([choice.gateway() ?? null]) : undefined));
   const missing = () => { const selection = choice.selection(); return selection.state === "missing" ? selection : undefined; };
   return (
-    <LeftNavShell>
+    <>
       <main class="account-connections">
         <style>{ACCOUNT_CONNECTIONS_STYLES}</style>
         <h1>Pairings</h1>
@@ -27,7 +26,7 @@ export function AccountConnections() {
         <Show when={choice.selection().state === "loading"}><p role="status">Loading linked gateways…</p></Show>
         <Show when={visitKey()} keyed>{(_visit) => <PairingsView gateway={choice.gateway()} />}</Show>
       </main>
-    </LeftNavShell>
+    </>
   );
 }
 

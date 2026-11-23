@@ -53,7 +53,7 @@ function mount(path: string) {
       <Route path="/agents/:agentId/schedules/:jobId/runs" component={ScheduleRuns} />
       <Route path="/agents/:agentId/schedules/:jobId/runs/:runId" component={ScheduleRunTrace} />
       <Route path="/review-away" component={() => <h1>Other page</h1>} />
-      {renderExtensionRoutes((Component) => <Component />)}
+      {renderExtensionRoutes()}
     </MemoryRouter>
   ), container);
 }

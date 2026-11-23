@@ -1,8 +1,13 @@
-import { Router, Route, useLocation } from "@solidjs/router";
+import { Router, Route, useIsRouting, useLocation, type RouteSectionProps } from "@solidjs/router";
 import {
+  ErrorBoundary,
   Show,
   Suspense,
+  createComputed,
   createEffect,
+  createRenderEffect,
+  createSignal,
+  on,
   lazy,
   createMemo,
   createResource,
@@ -11,12 +16,15 @@ import {
   type JSX,
 } from "solid-js";
 import { fetchAgents } from "./api";
+import { PageNavigationContext } from "./api/core";
 import { ChatView } from "./components/ChatView";
 import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { SessionSearch } from "./components/SessionSearch";
 import { TurnNotifier } from "./components/TurnNotifier";
 import { LeftNavShell } from "./components/LeftNavShell";
+import { Button } from "./components/ui/Button";
+import { PageToolbar } from "./components/PageToolbar";
 import { NewAgent } from "./pages/NewAgent";
 import { AgentCatalog } from "./pages/AgentCatalog";
 import { MainAgentHome } from "./pages/MainAgentHome";
@@ -208,60 +216,77 @@ function GuardedRoute(props: { children?: JSX.Element }) {
   );
 }
 
+function AppFrame(props: RouteSectionProps) {
+  const location = useLocation();
+  const isRouting = useIsRouting();
+  const [pendingLocation, setPendingLocation] = createSignal<Pick<Location, "pathname" | "search">>();
+  const [showProgress, setShowProgress] = createSignal(false);
+  const pageUrl = () => location.pathname + location.search;
+  let committedUrl = pageUrl();
+  createRenderEffect(() => { committedUrl = pageUrl(); });
+  const preparingPage = () => isRouting() && pageUrl() !== committedUrl;
+
+  createComputed(on([() => location.pathname, () => location.search], ([pathname, search]) => {
+    // Publish the router's accepted destination outside its transition so the sidebar can respond immediately.
+    queueMicrotask(() => {
+      if (isRouting()) setPendingLocation({ pathname, search });
+    });
+  }, { defer: true }));
+
+  createEffect(() => {
+    if (!isRouting()) {
+      setPendingLocation(undefined);
+      setShowProgress(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setShowProgress(true), 150);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  return (
+    <GuardedRoute>
+      <LeftNavShell pendingLocation={pendingLocation}>
+        <Show when={showProgress()}>
+          <div class="navigation-progress" role="progressbar" aria-label="Loading page" />
+        </Show>
+        <ErrorBoundary fallback={(_, retry) => (
+          <div class="page-loading">
+            <p role="alert">Could not load this page.</p>
+            <Button onClick={retry}>Try again</Button>
+          </div>
+        )}>
+          <Suspense fallback={<p class="page-loading" role="status">Loading…</p>}>
+            <PageNavigationContext.Provider value={preparingPage}>
+              {props.children}
+            </PageNavigationContext.Provider>
+          </Suspense>
+        </ErrorBoundary>
+      </LeftNavShell>
+    </GuardedRoute>
+  );
+}
+
 function HomeRoute() {
   const home = capabilities.home;
   if (typeof home === "string") {
     const Home = getExtensionHome(home);
     if (Home) return <Home />;
   }
-  const defaultHome = getDefaultExtensionHome();
-  if (defaultHome) {
-    const DefaultHome = defaultHome;
-    return <DefaultHome />;
-  }
-  return <LeftNavShell><MainAgentHome /></LeftNavShell>;
+  const DefaultHome = getDefaultExtensionHome();
+  return DefaultHome ? <DefaultHome /> : <MainAgentHome />;
 }
 
-function AgentsRouteShell() {
+function AgentsRoute() {
   return (
-    <LeftNavShell toolbar={<h1 class="agents-toolbar-title">Agents</h1>}>
+    <>
+      <PageToolbar><h1 class="agents-toolbar-title">Agents</h1></PageToolbar>
       <AgentCatalog hideHeading />
-    </LeftNavShell>
+    </>
   );
 }
 
-function TeamsRouteShell() {
-  return (
-    <Show when={capabilities.multiUser} fallback={<AgentsRouteShell />}>
-      <LeftNavShell><Teams /></LeftNavShell>
-    </Show>
-  );
-}
-
-function EditAgentRouteShell() {
-  return (
-    <LeftNavShell>
-      <EditAgent />
-    </LeftNavShell>
-  );
-}
-
-function ExtensionDetailsRouteShell() {
-  return (
-    <LeftNavShell>
-      <ExtensionDetails />
-    </LeftNavShell>
-  );
-}
-function McpServerDetailsRouteShell() {
-  return (
-    <LeftNavShell>
-      <McpServerDetails />
-    </LeftNavShell>
-  );
-}
-function ChatRouteShell() {
-  return <ChatView shell={LeftNavShell} />;
+function TeamsRoute() {
+  return <Show when={capabilities.multiUser} fallback={<AgentsRoute />}><Teams /></Show>;
 }
 
 function LoginRoute() {
@@ -272,198 +297,43 @@ function LoginRoute() {
   );
 }
 
-function AdminUsersRouteShell() {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyAdminUsersPage />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-function AdminMcpServersRouteShell() {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyAdminMcpServersPage />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
-function AdminExtensionsRouteShell() {
-  return (
-    <LeftNavShell>
-      <Suspense>
-        <LazyAdminExtensionsPage />
-      </Suspense>
-    </LeftNavShell>
-  );
-}
-
 export default function App() {
-  const base = import.meta.env.BASE_URL;
   return (
-    <Router root={Layout} base={base}>
+    <Router root={Layout} base={import.meta.env.BASE_URL}>
       <Route path="/setup" component={() => <Suspense><LazyDesktopSetup /></Suspense>} />
       <Route path="/login" component={LoginRoute} />
-      <Route
-        path="/"
-        component={() => (
-          <GuardedRoute>
-            <HomeRoute />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/agents"
-        component={() => (
-          <GuardedRoute>
-            <AgentsRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/dashboards"
-        component={() => <GuardedRoute><LeftNavShell><Dashboards /></LeftNavShell></GuardedRoute>}
-      />
-      <Route
-        path="/remote-dashboards/:gateway/:id"
-        component={() => <GuardedRoute><LeftNavShell><RemoteDashboard /></LeftNavShell></GuardedRoute>}
-      />
-      <Route path={["/skills", "/skills/:id"]} component={() => <GuardedRoute><LeftNavShell><Skills /></LeftNavShell></GuardedRoute>} />
-      <Route path="/admin/skills" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminSkillsPage /></Suspense></LeftNavShell></GuardedRoute>} />
-      <Route path="/admin/agent-management" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAgentManagementPage /></Suspense></LeftNavShell></GuardedRoute>} />
-      <Route path="/admin/quota" component={() => <GuardedRoute><LeftNavShell><Suspense><LazyAdminQuotaPage /></Suspense></LeftNavShell></GuardedRoute>} />
-      <Route
-        path="/teams"
-        component={() => (
-          <GuardedRoute>
-            <TeamsRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route path="/agents/new" component={() => <GuardedRoute><LeftNavShell><NewAgent /></LeftNavShell></GuardedRoute>} />
-      <Route
-        path="/agents/:agentId/edit"
-        component={() => (
-          <GuardedRoute>
-            <EditAgentRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/agents/:agentId/schedules/:jobId/runs"
-        component={() => (
-          <GuardedRoute>
-            <LeftNavShell><ScheduleRuns /></LeftNavShell>
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/agents/:agentId/schedules/:jobId/runs/:runId"
-        component={() => (
-          <GuardedRoute>
-            <LeftNavShell><ScheduleRunTrace /></LeftNavShell>
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/agents/:agentId/mcp-servers/:serverName"
-        component={() => (
-          <GuardedRoute>
-            <McpServerDetailsRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path={["/agents/:agentId/extensions/:extensionId", "/agents/:agentId/extensions/:extensionId/config"]}
-        component={() => (
-          <GuardedRoute>
-            <ExtensionDetailsRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route path="/p/:id" component={() => <GuardedRoute><LeftNavShell><ChatProject /></LeftNavShell></GuardedRoute>} />
-      <Route path="/shared/:token" component={() => <GuardedRoute><LeftNavShell><SharedChat /></LeftNavShell></GuardedRoute>} />
-      <Route
-        path="/chat/:agentId/:view?"
-        component={() => (
-          <GuardedRoute>
-            <ChatRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      {renderExtensionRoutes((Component) => (
-        <GuardedRoute>
-          <Component />
-        </GuardedRoute>
-      ))}
-      <Route
-        path="/admin/users"
-        component={() => (
-          <GuardedRoute>
-            <AdminUsersRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/admin/extensions"
-        component={() => (
-          <GuardedRoute>
-            <AdminExtensionsRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/admin/mcp-servers"
-        component={() => (
-          <GuardedRoute>
-            <AdminMcpServersRouteShell />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/archive"
-        component={() => (
-          <GuardedRoute>
-            <SessionArchive />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/account/connections"
-        component={() => (
-          <GuardedRoute>
-            <AccountConnections />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/account/gateway-links"
-        component={() => (
-          <GuardedRoute>
-            <GatewayLinks />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/remote-gateways"
-        component={() => (
-          <GuardedRoute>
-            <RemoteGateways />
-          </GuardedRoute>
-        )}
-      />
-      <Route
-        path="/gateway-link"
-        component={() => (
-          <GuardedRoute>
-            <GatewayLink />
-          </GuardedRoute>
-        )}
-      />
+      <Route path="/gateway-link" component={() => <GuardedRoute><GatewayLink /></GuardedRoute>} />
+      <Route path="/" component={AppFrame}>
+        <Route path="/" component={HomeRoute} />
+        <Route path="/agents" component={AgentsRoute} />
+        <Route path="/dashboards" component={Dashboards} />
+        <Route path="/remote-dashboards/:gateway/:id" component={RemoteDashboard} />
+        <Route path={["/skills", "/skills/:id"]} component={Skills} />
+        <Route path="/teams" component={TeamsRoute} />
+        <Route path="/agents/new" component={NewAgent} />
+        <Route path="/agents/:agentId/edit" component={EditAgent} />
+        <Route path="/agents/:agentId/schedules/:jobId/runs" component={ScheduleRuns} />
+        <Route path="/agents/:agentId/schedules/:jobId/runs/:runId" component={ScheduleRunTrace} />
+        <Route path="/agents/:agentId/mcp-servers/:serverName" component={McpServerDetails} />
+        <Route
+          path={["/agents/:agentId/extensions/:extensionId", "/agents/:agentId/extensions/:extensionId/config"]}
+          component={() => <ExtensionDetails />}
+        />
+        <Route path="/p/:id" component={ChatProject} />
+        <Route path="/shared/:token" component={SharedChat} />
+        <Route path="/chat/:agentId/:view?" component={ChatView} />
+        {renderExtensionRoutes()}
+        <Route path="/admin/skills" component={LazyAdminSkillsPage} />
+        <Route path="/admin/agent-management" component={LazyAgentManagementPage} />
+        <Route path="/admin/quota" component={LazyAdminQuotaPage} />
+        <Route path="/admin/users" component={LazyAdminUsersPage} />
+        <Route path="/admin/extensions" component={LazyAdminExtensionsPage} />
+        <Route path="/admin/mcp-servers" component={LazyAdminMcpServersPage} />
+        <Route path="/archive" component={SessionArchive} />
+        <Route path="/account/connections" component={AccountConnections} />
+        <Route path="/account/gateway-links" component={GatewayLinks} />
+        <Route path="/remote-gateways" component={RemoteGateways} />
+      </Route>
     </Router>
   );
 }
