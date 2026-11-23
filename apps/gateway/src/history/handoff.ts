@@ -121,22 +121,32 @@ function selectRecent(transcript: TranscriptEntry[]) {
 }
 
 function omittedTurnReplies(
-  omitted: TranscriptEntry[],
-  crossesBoundary: boolean
+  transcript: TranscriptEntry[],
+  recentStart: number
 ): number[] {
+  let hasRecentReply = false;
+  for (let i = recentStart; i < transcript.length; i++) {
+    const entry = transcript[i];
+    if (entry.role === "user") break;
+    if (entry.text) {
+      hasRecentReply = true;
+      break;
+    }
+  }
+
   const replies: number[] = [];
   let turns = 0;
   let reply: number | undefined;
-  for (let i = omitted.length - 1; i >= 0 && turns < OMITTED_TURN_LIMIT; i--) {
-    const entry = omitted[i];
+  for (let i = recentStart - 1; i >= 0 && turns < OMITTED_TURN_LIMIT; i--) {
+    const entry = transcript[i];
     if (entry.role === "assistant") {
       if (entry.text) reply ??= i;
     } else {
-      if (!crossesBoundary) {
+      if (!hasRecentReply) {
         if (reply !== undefined) replies.push(reply);
         turns++;
       }
-      crossesBoundary = false;
+      hasRecentReply = false;
       reply = undefined;
     }
   }
@@ -146,7 +156,7 @@ function omittedTurnReplies(
 function selectExcerpts(
   omitted: TranscriptEntry[],
   carried: Set<string>,
-  crossesBoundary: boolean,
+  replies: number[],
   refs: HandoffMemory["topicRefs"] = []
 ): string[] {
   const excerpts = new Map<number, string>();
@@ -178,11 +188,7 @@ function selectExcerpts(
   const [first, ...rest] = users;
   if (first !== undefined)
     take([first, ...rest.reverse()], USER_TEXT_CAP, USER_EXCERPT_CHARS);
-  take(
-    omittedTurnReplies(omitted, crossesBoundary),
-    REPLY_TEXT_CAP,
-    REPLY_EXCERPT_CHARS
-  );
+  take(replies, REPLY_TEXT_CAP, REPLY_EXCERPT_CHARS);
   return [...excerpts].sort(([a], [b]) => a - b).map(([, block]) => block);
 }
 
@@ -301,7 +307,7 @@ export function buildHandoff(input: HandoffInput): {
   const older = selectExcerpts(
     omitted,
     recent.carried,
-    input.transcript[recent.start]?.role === "assistant",
+    omittedTurnReplies(input.transcript, recent.start),
     input.memory?.topicRefs
   );
   const steps = selectSteps(input.transcript, recent.start, input.templates);

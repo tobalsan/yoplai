@@ -69,7 +69,7 @@ describe("buildHandoff", () => {
     expect(text.includes("[missing]")).toBe(false);
   });
 
-  it("takes final public replies from the last three wholly omitted turns", () => {
+  it("takes final public replies from the last three omitted turns", () => {
     const { text } = buildHandoff({
       transcript: [
         user("turn-1", "First request"),
@@ -102,6 +102,30 @@ describe("buildHandoff", () => {
         /\[(?:reply-1|partial-2|empty-[34]|crosses-early)\] assistant/g
       )
     ).toBeNull();
+  });
+
+  it("carries an omitted final reply when the recent window starts with a tool-only entry", () => {
+    const { text } = buildHandoff({
+      transcript: [
+        user("request", "Check the tile order."),
+        assistant(
+          "conclusion",
+          "The blue tiles are in stock. ".padEnd(8000, "r")
+        ),
+        {
+          ...assistant("tool", ""),
+          toolCalls: [{ callId: "lookup", name: "lookup", arguments: {} }],
+        },
+        ...Array.from({ length: 10 }, (_, i) =>
+          user(`n${i}`, "p".repeat(7900))
+        ),
+      ],
+    });
+
+    const [older, recent] = text.split("## Recent messages\n");
+    expect(recent?.startsWith("[tool] assistant\n\n[n0] user\n")).toBe(true);
+    expect(older).toContain("[conclusion] assistant\nThe blue tiles are in stock.");
+    expect(older).toContain("… [+6800 chars · conclusion]");
   });
 
   it("caps each message and reports user requests that exceed the fixed excerpt budget", () => {

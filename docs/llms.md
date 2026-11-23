@@ -665,10 +665,13 @@ separators. It emits the sections in this order and skips empty sections.
 | Section | Tokens | Selection |
 | --- | ---: | --- |
 | Memory | 3,000 | Rendered memory, clipped with a marker when needed. |
-| Older excerpts | 4,000 | Fixed allowances of 4,000 chars for topic refs in topic order (500-char clips), 8,000 for omitted user messages (first, then newest first, 800-char clips), and 4,000 for final public replies of the last three wholly omitted turns (1,200-char clips). Selection deduplicates by ID in that order. Rendering is chronological. |
+| Older excerpts | 4,000 | Fixed allowances of 4,000 chars for topic refs in topic order (500-char clips), 8,000 for omitted user messages (first, then newest first, 800-char clips), and 4,000 for final public replies of the last three omitted turns (1,200-char clips). Selection deduplicates by ID in that order. Rendering is chronological. |
 | Condensed steps | 2,000 | Recent calls selected newest first, rendered chronologically with their entry IDs and the history condenser's tool labels and result sizes. |
 | Recent messages | 20,000 | Verbatim entries selected newest first, rendered chronologically, with an 8,000-char text cap per entry. The recent interval starts at its oldest selected message. |
 | Omission notice | 1,000 | Counts, ID ranges, a reference to the latest omitted tool output by call position, and recovery guidance for `session_history search`. Long ranges can be shortened to fit. |
+
+A turn counts as omitted when its final non-empty assistant reply precedes the
+recent window. For a turn without a public reply, use its user message position.
 
 The breakdown exposes `totalTokens`, `memoryTokens`, `recentTokens`,
 `excerptTokens`, `stepTokens`, and `omissionTokens`. Clipped entries show the
