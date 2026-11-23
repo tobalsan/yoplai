@@ -34,6 +34,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop MCP Connect and Reconnect open sign-in in a separate window and refresh the server status when it finishes.
 - Agent creation works over plain HTTP on a local network, including retries after a lost response.
 - The catalog status check waits for a running install or removal, so it no longer reports an install that is then rolled back.
 - Desktop agent creation still succeeds when an unrelated extension's reload hook fails.

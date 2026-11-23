@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
 import { render } from "solid-js/web";
 import { createStore } from "solid-js/store";
+import { createFakePopup } from "../remote-gateway.fixture";
 
 const route = createStore({ agentId: "scribe", serverName: "docs" });
 
@@ -68,6 +69,102 @@ beforeEach(() => {
 beforeEach(() => setCapabilitiesForTests({ multiUser: true }));
 afterEach(resetCapabilitiesForTests);
 afterEach(() => { dispose?.(); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe("local MCP sign-in", () => {
+  const authorizeUrl = "/api/mcp/oauth/authorize?agent=scribe&server=docs&scope=team";
+  const pendingMessage = "Finish the sign-in in the new window.";
+  const serverStatus = (state: "disconnected" | "needs_reconnect" | "connected") => ({
+    canConfigureTeam: true,
+    servers: [{ name: "docs", type: "http", url: "https://docs.test/mcp", auth: "oauth", state, teamState: state, readOnly: false }],
+  });
+
+  beforeEach(() => setCapabilitiesForTests({ multiUser: false }));
+  afterEach(() => document.documentElement.removeAttribute("data-yoplai-desktop"));
+
+  function stubNavigation() {
+    const assign = vi.fn();
+    vi.stubGlobal("location", {
+      href: "http://localhost/agents/scribe/mcp-servers/docs?keep=yes#settings",
+      pathname: "/agents/scribe/mcp-servers/docs", search: "?keep=yes", hash: "#settings", assign,
+    });
+    return assign;
+  }
+
+  it.each([
+    { label: "Connect Docs", state: "disconnected" },
+    { label: "Reconnect", state: "needs_reconnect" },
+  ] as const)("opens desktop $label in the OAuth window", async ({ label, state }) => {
+    document.documentElement.setAttribute("data-yoplai-desktop", "");
+    fetchMcpServersMock.mockResolvedValue(serverStatus(state));
+    const open = vi.spyOn(window, "open").mockReturnValue(createFakePopup() as unknown as Window);
+    const assign = stubNavigation();
+    await mount();
+
+    button(label)!.click();
+
+    expect(open).toHaveBeenCalledWith(authorizeUrl, "yoplai-oauth", expect.any(String));
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("lets the desktop user retry after closing the sign-in window", async () => {
+    document.documentElement.setAttribute("data-yoplai-desktop", "");
+    fetchMcpServersMock.mockResolvedValue(serverStatus("disconnected"));
+    const popup = createFakePopup();
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    await mount();
+
+    button("Connect Docs")!.click();
+    window.dispatchEvent(new Event("focus"));
+    expect(container.textContent).toContain(pendingMessage);
+
+    popup.close();
+    await vi.waitFor(() => expect(container.textContent).not.toContain(pendingMessage));
+    expect(button("Connect Docs")?.disabled).toBe(false);
+  });
+
+  it("shows Connected after the MCP callback returns to the desktop page", async () => {
+    document.documentElement.setAttribute("data-yoplai-desktop", "");
+    fetchMcpServersMock.mockResolvedValue(serverStatus("disconnected"));
+    const popup = createFakePopup() as unknown as Window;
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    await mount();
+    button("Connect Docs")!.click();
+    fetchMcpServersMock.mockResolvedValue(serverStatus("connected"));
+
+    window.dispatchEvent(new MessageEvent("message", {
+      source: popup,
+      data: { type: "yoplai-oauth", extension: "mcp", server: "docs", success: true },
+    }));
+
+    await vi.waitFor(() => expect(button("Disconnect")).toBeDefined());
+    expect(container.textContent).toContain("Connected");
+    expect(container.textContent).not.toContain(pendingMessage);
+  });
+
+  it("keeps Connect available if the desktop sign-in window cannot open", async () => {
+    document.documentElement.setAttribute("data-yoplai-desktop", "");
+    fetchMcpServersMock.mockResolvedValue(serverStatus("disconnected"));
+    vi.spyOn(window, "open").mockReturnValue(null);
+    await mount();
+
+    button("Connect Docs")!.click();
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not open the sign-in window. Try again.");
+    expect(button("Connect Docs")?.disabled).toBe(false);
+  });
+
+  it("redirects browser sign-in with the full return path", async () => {
+    fetchMcpServersMock.mockResolvedValue(serverStatus("disconnected"));
+    const open = vi.spyOn(window, "open");
+    const assign = stubNavigation();
+    await mount();
+
+    button("Connect Docs")!.click();
+
+    expect(assign).toHaveBeenCalledWith(`${authorizeUrl}&returnTo=%2Fagents%2Fscribe%2Fmcp-servers%2Fdocs%3Fkeep%3Dyes%23settings`);
+    expect(open).not.toHaveBeenCalled();
+  });
+});
 
 describe("McpServerDetails", () => {
   it("connects, disconnects only the selected scope, and removes after confirmation", async () => {
