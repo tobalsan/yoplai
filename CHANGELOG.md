@@ -34,6 +34,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Desktop MCP Connect and Reconnect open sign-in in a separate window and refresh the server status when it finishes.
 - HTML sent in chat has a readable inline preview and fills the side panel. File previews also work for agents on linked gateways.
 
 - Agent creation works over plain HTTP on a local network, including retries after a lost response.
