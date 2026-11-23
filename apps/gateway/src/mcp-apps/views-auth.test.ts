@@ -114,6 +114,7 @@ describe("MCP Apps authenticated ownership", () => {
     expect(await response.json()).toEqual({
       server: "private-boards",
       tool: "create_board",
+      resourceUri: "ui://boards/private",
       args: { board: 17 },
       result: { content: [{ type: "text", text: "Private result" }], _meta: { revision: 2 } },
     });

@@ -355,7 +355,7 @@ describe("desktop relay: chat relay", () => {
   });
 
   it.each([
-    ["a non-file result", { server: "yoplai", tool: "dashboard_link", args: {}, result: { structuredContent: { uri: "ui://dashboard/example" } } }],
+    ["a non-file result", { server: "yoplai", tool: "dashboard_link", resourceUri: "ui://yoplai/dashboard", args: {}, result: { structuredContent: { uri: "ui://dashboard/example" } } }],
     ["an older gateway without server identity", { args: {}, result: fileResult }],
     ["a file-shaped result from another server", { server: "example", tool: "send_file", args: {}, result: fileResult }],
   ])("relays the original view for %s", async (_name, data) => {
@@ -397,6 +397,143 @@ describe("desktop relay: chat relay", () => {
       expect(await response.json()).toEqual({ error: "untrusted_origin" });
     });
   }, 7000);
+
+  const linkedAppPath = "/api/agents/example%40widgets/sessions/chat-one/mcp-apps/call-one";
+  const remoteAppPath = "/api/agents/example/sessions/chat-one/mcp-apps/call-one";
+  const widgetData = {
+    server: "example", tool: "show_board", resourceUri: "ui://example/board",
+    args: { board: 1 }, result: { content: [{ type: "text", text: "Board created" }] },
+  };
+
+  it("serves a linked MCP app from the local apps origin with its declared content policy", async () => {
+    const html = "<!doctype html><title>Example board</title>";
+    await withFakeGateway("widgets", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === remoteAppPath + "/data") res.end(JSON.stringify(widgetData));
+      else if (req.url === remoteAppPath + "/rpc") res.end(JSON.stringify({
+        jsonrpc: "2.0", id: 1, result: { contents: [{
+          uri: "ui://example/board", mimeType: "text/html;profile=mcp-app", text: html,
+          _meta: { ui: { csp: { connectDomains: ["https://board.example"] }, prefersBorder: true } },
+        }] },
+      }));
+      else {
+        res.statusCode = 403;
+        res.end('{"error":"untrusted_origin"}');
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + linkedAppPath + "/view", {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(200);
+      const view = await response.json();
+      const appsOrigin = `http://127.0.0.1:${localAppsPort}`;
+      expect(view).toMatchObject({
+        available: true, appsOrigin, server: "example", toolName: "show_board", args: { board: 1 },
+        result: { content: [{ type: "text", text: "Board created" }] },
+        csp: { connectDomains: ["https://board.example"] }, prefersBorder: true,
+      });
+      const sandboxUrl = new URL(view.sandboxUrl);
+      expect(sandboxUrl.origin).toBe(appsOrigin);
+      expect(sandboxUrl.pathname).toMatch(/^\/sandbox\/[0-9a-f]{64}$/);
+      const sandbox = await fetch(sandboxUrl);
+      expect(sandbox.status).toBe(200);
+      const sandboxPolicy = sandbox.headers.get("content-security-policy");
+      expect(sandboxPolicy).toContain("frame-ancestors http://localhost:3000");
+      expect(sandboxPolicy).not.toContain("https://board.example");
+      const content = await fetch(new URL(sandboxUrl.pathname.replace("/sandbox/", "/content/"), sandboxUrl));
+      expect(content.status).toBe(200);
+      expect(content.headers.get("content-security-policy")).toContain("connect-src https://board.example");
+      expect(await content.text()).toBe(html);
+      expect(fake.requests.map(({ method, url, headers }) => [method, url, headers.origin])).toEqual([
+        ["POST", remoteAppPath + "/data", undefined],
+        ["POST", remoteAppPath + "/rpc", undefined],
+      ]);
+      expect(fake.requests[1].headers["content-type"]).toBe("application/json");
+      expect(JSON.parse(fake.requests[1].body)).toEqual({
+        jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: "ui://example/board" },
+      });
+    });
+  });
+
+  it.each([
+    ["the upstream reason", { error: { code: -32000, message: "Read failed", data: { reason: "not_connected" } } }, "not_connected"],
+    ["a generic upstream reason", { error: { code: -32000, message: "Read failed" } }, "upstream"],
+    ["an invalid resource reason", { result: { contents: [{ mimeType: "text/html", text: "<h1>Board</h1>" }] } }, "invalid_resource"],
+  ])("returns %s for an unavailable linked MCP app", async (_name, rpc, reason) => {
+    await withFakeGateway("widgets", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === remoteAppPath + "/data") res.end(JSON.stringify(widgetData));
+      else res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, ...rpc }));
+    }, async (fake) => {
+      const response = await fetch(localBase + linkedAppPath + "/view", {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ available: false, reason });
+      expect(fake.requests.map(({ url }) => url)).toEqual([remoteAppPath + "/data", remoteAppPath + "/rpc"]);
+    });
+  });
+
+  it("rejects untrusted chat origins before reading the linked MCP resource", async () => {
+    await withFakeGateway("widgets", (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(widgetData));
+    }, async (fake) => {
+      for (const origin of ["https://untrusted.example", "http://localhost:9876"]) {
+        const response = await fetch(localBase + linkedAppPath + "/view", {
+          method: "POST", headers: { Origin: origin },
+        });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "untrusted_origin" });
+      }
+      expect(fake.requests.map(({ url }) => url)).toEqual([remoteAppPath + "/data"]);
+    });
+  });
+
+  it.each([
+    ["an older linked gateway", { server: "example", tool: "show_board", args: {}, result: {} }, ["/data", "/view"]],
+    ["a disconnected resource read", widgetData, ["/data", "/rpc", "/view"]],
+  ])("forwards the original view after %s", async (_name, data, operations) => {
+    await withFakeGateway("widgets", (req, res) => {
+      if (req.url === remoteAppPath + "/rpc") {
+        req.socket.destroy();
+        return;
+      }
+      res.setHeader("content-type", "application/json");
+      if (req.url === remoteAppPath + "/data") res.end(JSON.stringify(data));
+      else {
+        res.statusCode = 403;
+        res.end('{"error":"untrusted_origin"}');
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + linkedAppPath + "/view", {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "untrusted_origin" });
+      expect(fake.requests.map(({ url }) => url)).toEqual(operations.map((operation) => remoteAppPath + operation));
+    });
+  });
+
+  it("forwards a linked MCP app's model context to the same remote session", async () => {
+    const update = JSON.stringify({
+      jsonrpc: "2.0", id: "edit", method: "ui/update-model-context",
+      params: { content: [{ type: "text", text: "Added a node to the board" }] },
+    });
+    await withFakeGateway("widgets", (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end('{"jsonrpc":"2.0","id":"edit","result":{}}');
+    }, async (fake) => {
+      const response = await fetch(localBase + linkedAppPath + "/rpc", {
+        method: "POST", headers: { Origin: "http://localhost:3000", "content-type": "application/json" }, body: update,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: "edit", result: {} });
+      expect(fake.requests.map(({ method, url, body }) => [method, url, body])).toEqual([
+        ["POST", remoteAppPath + "/rpc", update],
+      ]);
+    });
+  });
 
   it("refuses to relay for a page of another site and relays for a loopback page", async () => {
     const list = async (origin?: string) =>

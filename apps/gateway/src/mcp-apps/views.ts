@@ -242,6 +242,20 @@ function issueView(
   return { available: true, sandboxUrl: `${origin}/sandbox/${id}`, appsOrigin: origin, server: data.server, toolName: data.tool, args: data.args, result: data.result, csp, prefersBorder };
 }
 
+function appHtml(contents: unknown): { html: string; meta: unknown } | undefined {
+  if (!Array.isArray(contents) || contents.length !== 1) return;
+  const content = object(contents[0]);
+  if (content.mimeType !== "text/html;profile=mcp-app") return;
+  const maxHtmlBytes = 5 * 1024 * 1024;
+  let html = typeof content.text === "string" ? content.text : undefined;
+  if (html === undefined && typeof content.blob === "string" && content.blob.length <= Math.ceil(maxHtmlBytes / 3) * 4 && content.blob.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(content.blob)) {
+    const bytes = Buffer.from(content.blob, "base64");
+    if (bytes.byteLength <= maxHtmlBytes) html = bytes.toString("utf8");
+  }
+  if (html === undefined || Buffer.byteLength(html) > maxHtmlBytes) return;
+  return { html, meta: content._meta };
+}
+
 /** Only the local viewer bundle is eligible. The linked gateway still authorizes and serves file reads. */
 export async function createRelayedFileView(
   config: GatewayConfig,
@@ -263,6 +277,36 @@ export async function createRelayedFileView(
     server: record.server, tool: typeof record.tool === "string" ? record.tool : "send_file",
     args: record.args, result: record.result,
   }, { html: fileViewerHtml, meta: fileViewerMeta }));
+}
+
+/** Check the chat origin before reading HTML from the linked gateway. */
+export async function createRelayedMcpView(
+  config: GatewayConfig,
+  c: Context,
+  scope: SessionScope,
+  toolCallId: string,
+  data: unknown,
+  readResource: (uri: string) => Promise<unknown>,
+): Promise<Response | undefined> {
+  const { server, tool, resourceUri, args, result } = object(data);
+  if (typeof server !== "string" || server === "yoplai" || typeof tool !== "string" || typeof resourceUri !== "string") return;
+  const authorization = await ticketOrigin(config, c);
+  if ("reason" in authorization) {
+    if (authorization.status === 403) return c.json({ error: authorization.reason }, 403);
+    return c.json({ available: false, reason: authorization.reason });
+  }
+  if (c.req.raw.signal.aborted) return c.json({ available: false, reason: "aborted" });
+  const rpc = await readResource(resourceUri);
+  if (c.req.raw.signal.aborted) return c.json({ available: false, reason: "aborted" });
+  if (rpc === undefined) return;
+  const response = object(rpc);
+  if (response.jsonrpc !== "2.0" || response.id !== 1 || "error" in response) {
+    const { reason } = object(object(response.error).data);
+    return c.json({ available: false, reason: typeof reason === "string" ? reason : "upstream" });
+  }
+  const content = appHtml(object(response.result).contents);
+  if (!content) return c.json({ available: false, reason: "invalid_resource" });
+  return c.json(issueView(scope, toolCallId, authorization, { server, tool, args, result }, content));
 }
 
 async function readJson(request: Request, maxBytes: number, signal?: AbortSignal): Promise<unknown> {
@@ -346,7 +390,7 @@ export function createMcpAppRoutes(deps: {
       Object.assign(audit, { server: record.server, tool: record.tool, resource: record.resourceUri });
       if (operation === "data") {
         audit.outcome = "ok";
-        return c.json({ server: record.server, tool: record.tool, args: record.args, result: record.result });
+        return c.json({ server: record.server, tool: record.tool, resourceUri: record.resourceUri, args: record.args, result: record.result });
       }
       const mcpApps = record.server === "yoplai" ? createFileAppProvider(record)
         : deps.getRuntime().getLoadedExtensions().find((extension) => extension.mcpApps)?.mcpApps;
@@ -456,19 +500,12 @@ export function createMcpAppRoutes(deps: {
       try {
         ({ contents } = await deadline(c.req.raw.signal, (signal) => mcpApps.readResource({ agentId, ...(userId ? { userId } : {}), signal }, record.server, record.resourceUri)));
       } catch (error) { return unavailable(mcpError(error).reason); }
-      const content = contents?.[0];
-      if (!Array.isArray(contents) || contents.length !== 1 || content?.mimeType !== "text/html;profile=mcp-app") return unavailable("invalid_resource");
-      const maxHtmlBytes = 5 * 1024 * 1024;
-      let html = typeof content.text === "string" ? content.text : undefined;
-      if (html === undefined && typeof content.blob === "string" && content.blob.length <= Math.ceil(maxHtmlBytes / 3) * 4 && content.blob.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(content.blob)) {
-        const bytes = Buffer.from(content.blob, "base64");
-        if (bytes.byteLength <= maxHtmlBytes) html = bytes.toString("utf8");
-      }
-      if (html === undefined || Buffer.byteLength(html) > maxHtmlBytes) return unavailable("invalid_resource");
+      const content = appHtml(contents);
+      if (!content) return unavailable("invalid_resource");
       if (pending?.revoked) return unavailable("session_deleted");
       if (c.req.raw.signal.aborted) return unavailable("aborted");
       audit.outcome = "ok";
-      return c.json(issueView({ agentId, sessionId, ownerUserId: userId }, toolCallId, authorization, record, { html, meta: content._meta }));
+      return c.json(issueView({ agentId, sessionId, ownerUserId: userId }, toolCallId, authorization, record, content));
     } finally {
       if (pending) pendingViews.delete(pending);
       logInfo("MCP Apps operation", { ...audit, duration: Date.now() - startedAt });
