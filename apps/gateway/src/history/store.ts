@@ -20,6 +20,7 @@ import { getSessionCreatedAt } from "../sessions/store.js";
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { getMediaFileMetadata } from "../media/metadata.js";
 import { logWarn } from "../logging.js";
+import { orderMessagesByTimestamp, parseHistoryJsonl } from "./legacy-transcript.js";
 
 const resolvedHistoryFileCache = new Map<string, string>();
 const sessionMetaWrites = new Map<string, Promise<void>>();
@@ -129,18 +130,6 @@ type HistoryEntry =
   | UserHistoryEntry
   | AssistantHistoryEntry
   | ToolResultHistoryEntry;
-
-function orderMessagesByTimestamp<T extends { timestamp: number }>(
-  messages: T[]
-): T[] {
-  return messages
-    .map((message, index) => ({ message, index }))
-    .sort((a, b) => {
-      const diff = a.message.timestamp - b.message.timestamp;
-      return diff === 0 ? a.index - b.index : diff;
-    })
-    .map((entry) => entry.message);
-}
 
 // Meta entry for session-level metadata (e.g., thinkingLevel changes)
 type MetaEntry = {
@@ -878,61 +867,9 @@ export async function getFullHistory(
   userId?: string
 ): Promise<FullHistoryMessage[]> {
   const file = await resolveHistoryFile(agentId, sessionId, userId);
-  const messages: FullHistoryMessage[] = [];
-
+  let content: string;
   try {
-    const content = await fs.readFile(file, "utf-8");
-    const lines = content.trim().split("\n");
-
-    for (const line of lines) {
-      if (!line) continue;
-      try {
-        const entry = JSON.parse(line) as HistoryEntry;
-        if (entry.type !== "history") continue;
-
-        if (entry.role === "system") {
-          messages.push({
-            role: "system",
-            content: entry.content,
-            timestamp: entry.timestamp,
-            context: entry.context,
-            ...(entry.compaction ? { compaction: entry.compaction } : {}),
-          });
-        } else if (entry.role === "user") {
-          messages.push({
-            role: "user",
-            content: entry.content,
-            timestamp: entry.timestamp,
-          });
-        } else if (entry.role === "assistant") {
-          messages.push({
-            role: "assistant",
-            content: entry.content,
-            timestamp: entry.timestamp,
-            meta: entry.meta,
-          });
-        } else if (entry.role === "toolResult") {
-          messages.push({
-            role: "toolResult",
-            toolCallId: entry.toolCallId,
-            parentToolCallId: entry.parentToolCallId,
-            toolName: entry.toolName,
-            content: entry.content,
-            isError: entry.isError,
-            details: entry.details,
-            view: entry.view,
-            timestamp: entry.timestamp,
-          });
-        }
-      } catch (err) {
-        // Expected: malformed JSON lines in history file
-        logWarn("[history] Skipping malformed line in full history", {
-          agentId,
-          sessionId,
-          error: String(err),
-        });
-      }
-    }
+    content = await fs.readFile(file, "utf-8");
   } catch (err) {
     // Expected: history file may not exist yet for new sessions
     logWarn("[history] Could not read full history file", {
@@ -940,9 +877,14 @@ export async function getFullHistory(
       sessionId,
       error: String(err),
     });
+    return [];
   }
 
-  return orderMessagesByTimestamp(messages);
+  const { messages, errors } = parseHistoryJsonl(content);
+  for (const error of errors) {
+    logWarn("[history] Skipping malformed line in full history", { agentId, sessionId, error });
+  }
+  return messages;
 }
 
 export async function appendCanonicalCompaction(params: {
