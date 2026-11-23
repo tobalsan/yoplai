@@ -39,8 +39,11 @@ it("uses the shared picker and saves only the fallback provider and model", asyn
     const search = getByRole(root, "combobox", { name: "Search models" });
     fireEvent.input(search, { target: { value: "haiku" } });
     fireEvent.click(getByRole(root, "option", { name: "Claude Haiku 5.5" }));
+    const chosen = () => getByRole(root, "button", { name: /Fallback model: Claude Haiku 5\.5.*Claude Code/ });
+    expect(chosen()).toBe(trigger);
     fireEvent.click(getByRole(root, "button", { name: "Save" }));
     await waitFor(() => expect(patches).toEqual([{ fallbackModel: model }]));
+    expect(chosen()).toBe(trigger);
 
     dispose();
     dispose = mount();

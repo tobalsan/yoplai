@@ -84,6 +84,8 @@ describe("completeMaintenance", () => {
   it.each([
     ["Use the board plan.\n\n- The project", "Use the board plan."],
     ["# Role\n\n- The project", "Q3 deck"],
+    ["````md\n```\n\n  \n````\n\nUse the board plan.\n\n- The project", "````md\n```\n\n  \n````\n\nUse the board plan."],
+    ["Use the board plan.\n\n~~~md\nDo not save this.\n\n- The project", "Use the board plan."],
   ])("discards the last block of a project draft cut short by the token limit", async (text, expected) => {
     const deps = {
       getConfig: () => config(),

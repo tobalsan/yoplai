@@ -68,7 +68,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
   const [fields, setFields] = createSignal(initialFields);
   const [model, setModel] = createSignal(initial.model);
   const [fallbackOn, setFallbackOn] = createSignal(!!initial.fallbackModel);
-  const [fallback, setFallback] = createSignal(initial.fallbackModel ?? undefined);
+  const [fallback, setFallback] = createSignal<NonNullable<AgentSettings["fallbackModel"]> & Pick<ModelChoice, "source"> | undefined>(initial.fallbackModel ?? undefined);
   const [avatar, setAvatar] = createSignal(initialAvatar);
   const [disabled, setDisabled] = createSignal(initialDisabled);
   const [selected, setSelected] = createSignal(initialUserSkills);
@@ -200,7 +200,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
             <div>
               <ModelField label="Fallback model" models={models.error ? [] : models.latest ?? []} value={fallback()} authMode={props.agent.authMode}
                 disabled={models.state !== "ready" || saving()} local={!props.agent.gateway} onAccessChanged={retryModels}
-                onChange={({ provider, model }) => setFallback({ provider, model })} />
+                onChange={setFallback} />
               <p>Used when the main model fails, for example during an outage or a rate limit.</p>
             </div>
           </Show>
