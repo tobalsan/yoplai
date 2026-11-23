@@ -57,10 +57,11 @@ export const FIRST_RESPONSE_TIMEOUT_MS = 30_000;
 export async function fetchRemote(
   gateway: RemoteGateway,
   pathAndQuery: string,
-  init: RequestInit & { duplex?: "half" } = {}
+  init: RequestInit & { duplex?: "half" } = {},
+  firstResponseTimeoutMs = FIRST_RESPONSE_TIMEOUT_MS,
 ): Promise<Response> {
   const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(), FIRST_RESPONSE_TIMEOUT_MS);
+  const timer = setTimeout(() => deadline.abort(), firstResponseTimeoutMs);
   try {
     return await fetch(remoteHttpUrl(gateway, pathAndQuery), {
       ...init,

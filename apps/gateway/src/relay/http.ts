@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { getAgent, loadConfig } from "../config/index.js";
-import { createRelayedFileView } from "../mcp-apps/views.js";
+import { createRelayedFileView, createRelayedMcpView } from "../mcp-apps/views.js";
 import { addGatewaySuffix, isSupportedRemoteAgentId } from "./agent-id.js";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
 import { getLinkedGateways, isLoopbackForwardedFor, isTrustedRequest, resolveRemoteAgent } from "./state.js";
@@ -21,6 +21,8 @@ type RemoteAgent = { id: string; avatar?: string } & Record<string, unknown>;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SEARCH_LIMIT = 50;
+// The linked RPC route has a 30-second deadline. Allow time for transport too.
+const MCP_APP_RESOURCE_TIMEOUT_MS = 32_000;
 const AGGREGATE_SEGMENTS = new Set(["status", "sessions"]);
 const DROPPED_REQUEST_HEADERS = ["connection", "content-length", "accept-encoding"];
 const DROPPED_RESPONSE_HEADERS = ["content-encoding", "content-length", "transfer-encoding", "connection", "set-cookie"];
@@ -277,6 +279,22 @@ export function relayConfigurationHttp(): MiddlewareHandler {
   };
 }
 
+async function readLinkedMcpApp(gateway: RemoteGateway, path: string, uri: string, requestSignal: AbortSignal): Promise<unknown> {
+  const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(MCP_APP_RESOURCE_TIMEOUT_MS)]);
+  try {
+    const response = await fetchRemote(gateway, path, {
+      method: "POST", headers: { "content-type": "application/json" }, signal,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri } }),
+    }, MCP_APP_RESOURCE_TIMEOUT_MS);
+    if (response.ok) return await response.json() as unknown;
+    await response.body?.cancel();
+    return null;
+  } catch (error) {
+    // A transport failure allows the existing forwarded-view fallback.
+    return error instanceof SyntaxError ? null : undefined;
+  }
+}
+
 /** Sends `/api/agents/:id` calls for remote agents to their gateway and merges remote entries into the lists. */
 export function relayHttp(): MiddlewareHandler {
   return async (c, next) => {
@@ -301,7 +319,8 @@ export function relayHttp(): MiddlewareHandler {
         const remoteSegments = [...segments];
         remoteSegments[3] = encodeURIComponent(target.agentId);
         if (isView) {
-          const dataPath = `${remoteSegments.slice(0, -1).join("/")}/data${url.search}`;
+          const appPath = remoteSegments.slice(0, -1).join("/");
+          const dataPath = `${appPath}/data${url.search}`;
           const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(LIST_TIMEOUT_MS)]);
           const data: unknown = await fetchRemote(gateway, dataPath, { method: "POST", signal })
             .then(async (response) => {
@@ -312,7 +331,11 @@ export function relayHttp(): MiddlewareHandler {
           if (data) {
             // Linked gateways are available only in single-user mode.
             const scope = { agentId: first, sessionId: decodeURIComponent(segments[5]) };
-            const view = await createRelayedFileView(loadConfig(), c, scope, decodeURIComponent(segments[7]), data);
+            const config = loadConfig();
+            const toolCallId = decodeURIComponent(segments[7]);
+            const view = await createRelayedFileView(config, c, scope, toolCallId, data)
+              ?? await createRelayedMcpView(config, c, scope, toolCallId, data, (uri) =>
+                readLinkedMcpApp(gateway, `${appPath}/rpc${url.search}`, uri, c.req.raw.signal));
             if (view) return view;
           }
         }
