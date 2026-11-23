@@ -3,8 +3,11 @@ import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
 import {
   completeMaintenance,
   resetMaintenanceCompletionDepsForTests,
+  setMaintenanceCompletionDepsForTests,
   sessionHeaders,
 } from "./completion.js";
+
+import { draftProjectInstructions } from "./project-instructions.js";
 
 const agent = {
   id: "assistant",
@@ -76,6 +79,21 @@ describe("completeMaintenance", () => {
     expect(modelRuntime.getModel).toHaveBeenCalledWith("maintenance-provider", "maintenance-model");
     expect(completeSimple).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ systemPrompt: "Return a label" }), expect.objectContaining({ maxRetries: 0 }));
     expect(completeSimple.mock.calls[0][2]).not.toHaveProperty("temperature");
+  });
+
+  it.each([
+    ["Use the board plan.\n\n- The project", "Use the board plan."],
+    ["# Role\n\n- The project", "Q3 deck"],
+  ])("discards the last block of a project draft cut short by the token limit", async (text, expected) => {
+    const deps = {
+      getConfig: () => config(),
+      getAgent: () => agent,
+      createRuntime: async () => runtime({ provider: "agent-provider", id: "agent-model", baseUrl: "http://localhost" }) as never,
+      completeSimple: async () => ({ stopReason: "length", content: [{ type: "text", text }] }) as never,
+    };
+    setMaintenanceCompletionDepsForTests(deps);
+    await expect(draftProjectInstructions("Q3 deck", agent.id, "p1")).resolves.toBe(expected);
+    await expect(completeMaintenance(params())).resolves.toBe(text);
   });
 
   it("falls back to the session agent model", async () => {

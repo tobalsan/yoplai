@@ -1,4 +1,5 @@
 import { MaintenanceCompletion } from "./completion.js";
+import { completeInstructionBlocks } from "./instruction-blocks.js";
 
 const INSTRUCTIONS_PROMPT =
   "You write starting instructions for a chat project that AI agents read before working in it. " +
@@ -46,6 +47,7 @@ export async function draftProjectInstructions(
       prompt: trimmed,
       maxTokens: INSTRUCTIONS_MAX_TOKENS,
       timeoutMs: INSTRUCTIONS_TIMEOUT_MS,
+      onLength: completeInstructionBlocks,
     });
     return drafted?.trim() || trimmed;
   } catch {

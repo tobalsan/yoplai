@@ -21,14 +21,28 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-function successfulCall() {
-  const item = { id: "fixture", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "OK", annotations: [] }] };
+function successfulCall(text = "OK", status: "completed" | "incomplete" = "completed") {
+  const item = { id: "fixture", type: "message", role: "assistant", status, content: [{ type: "output_text", text, annotations: [] }] };
   const events = [
     { type: "response.output_item.done", output_index: 0, item },
-    { type: "response.completed", response: { id: "fixture", status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
+    { type: `response.${status}`, response: { id: "fixture", status, incomplete_details: status === "incomplete" ? { reason: "max_output_tokens" } : null, output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
   ];
   return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
+
+it.each([
+  ["completed", "Use the project plan.", { text: "Use the project plan.\n", source: "model" }],
+  ["incomplete", "Use the project plan.\n\n- The project", { text: "Use the project plan.\n", source: "model" }],
+  ["incomplete", "# Role\n\n- The project", { text: "You are Fixture.\nAsk for details when you need them.\n", source: "template" }],
+] as const)("writes clean instructions for a %s model reply", async (status, reply, expected) => {
+  await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-picker-key" } }));
+  vi.stubGlobal("fetch", async () => successfulCall(reply, status));
+  const { createModelAccess } = await import("./model-access.js");
+  const { createInstructionWriter } = await import("./agent-instructions.js");
+  const model = { provider: "openai", model: "gpt-4.1-mini" };
+  const { getAuth } = createModelAccess(home);
+  await expect(createInstructionWriter(getAuth)({ name: "Fixture", model })).resolves.toEqual(expected);
+});
 
 it("lists a default without calling the model and marks it ready after a successful check", async () => {
   await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-picker-key" } }));

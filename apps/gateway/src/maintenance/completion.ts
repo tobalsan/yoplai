@@ -17,6 +17,7 @@ export type MaintenanceCompletionParams = {
   prompt: string;
   maxTokens: number;
   timeoutMs: number;
+  onLength?: (text: string) => string;
 };
 
 type MaintenanceCompletionDeps = {
@@ -166,7 +167,7 @@ export async function completeMaintenance(
       const text = responseText(response);
       if (!text) throw new Error("Maintenance completion returned no text");
       phase = "done";
-      return text;
+      return response.stopReason === "length" && params.onLength ? params.onLength(text) : text;
     })();
     return await Promise.race([run, timedOut]);
   } catch (error) {

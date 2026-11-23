@@ -316,10 +316,11 @@ export async function createModelAuth(options: {
   return { runtime, resolveModelAuth, requireModelAuth };
 }
 
-export async function completeModelOnce(runtime: Awaited<ReturnType<typeof createModelAuth>>["runtime"], model: Model<Api>, text: string, signal = AbortSignal.timeout(20_000), maxTokens = 256) {
+export async function completeModelOnce(runtime: Awaited<ReturnType<typeof createModelAuth>>["runtime"], model: Model<Api>, text: string, signal = AbortSignal.timeout(20_000), maxTokens = 256, onLength?: (text: string) => string) {
   const result = await runtime.completeSimple(model, { messages: [{ role: "user", content: text, timestamp: Date.now() }] }, { maxTokens, signal, ...(model.provider === "openai-codex" && { transport: "sse" }) });
   if (result.stopReason === "aborted" || result.stopReason === "error") throw new Error(isSafeModelAccessError(result.errorMessage) ? result.errorMessage : "The model call failed.");
-  return result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+  const output = result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+  return result.stopReason === "length" && onLength ? onLength(output) : output;
 }
 
 type ModelHeaderConfig = {
