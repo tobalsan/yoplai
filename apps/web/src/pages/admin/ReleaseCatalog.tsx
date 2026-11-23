@@ -73,7 +73,13 @@ export function ReleaseCatalog(props: {
       window.dispatchEvent(new CustomEvent(releaseCatalogChanged, { detail: gateway }));
       if (mine !== visit) return;
       const previous = data();
-      if (previous && entry) mutate({ key: gatewayKey(gateway), data: { ...previous, entries: previous.entries.map((old) => old.id === entry.id ? entry : old) } });
+      if (previous && entry) {
+        const entries = previous.entries.map((old) => old.id === entry.id ? {
+          ...entry,
+          iconDataUri: entry.iconDataUri ?? (old.iconUrl === entry.iconUrl ? old.iconDataUri : undefined),
+        } : old);
+        mutate({ key: gatewayKey(gateway), data: { ...previous, entries } });
+      }
       props.onChange();
       await refetch();
     } catch (error) {
@@ -113,7 +119,7 @@ export function ReleaseCatalog(props: {
           <For each={entries()} fallback={<p class="top-empty" role="status">{search().trim() || category() ? "No extensions match. Change the search or category." : "No extensions are available. Check the catalog source."}</p>}>{(entry) => (
             <article class="release-catalog-row" aria-label={label(entry)}>
               <div class="top-row">
-                {props.icon(entry.iconUrl)}
+                {props.icon(entry.iconDataUri)}
                 <div class="top-info">
                   <button type="button" class="release-catalog-title" aria-expanded={selected() === entry.id}
                     onClick={() => setSelected(selected() === entry.id ? undefined : entry.id)}>{label(entry)}</button>

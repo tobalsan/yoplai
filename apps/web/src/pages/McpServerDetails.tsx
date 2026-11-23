@@ -20,7 +20,8 @@ import { CredentialScopeTabs, preferredScope, STATUS_CONNECTED, STATUS_NOT_SET_U
 import { McpIcon } from "../components/McpExtensionCard";
 import { OAUTH_CONNECT_CARD_STYLES } from "../components/OAuthConnectCard";
 import { EXTENSION_DETAILS_STYLES } from "./ExtensionDetails";
-import { onOAuthReturn } from "../lib/oauth-popup";
+import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
+import { isDesktopWindow } from "../lib/desktop-window";
 import { readOAuthResult } from "../lib/oauth-return";
 import { showToast } from "../lib/toast";
 import { decodeRouteParam } from "../lib/path";
@@ -131,6 +132,7 @@ export function McpServerDetails() {
   };
   // Show feedback while the provider sign-in page loads. Reset it when Back restores this page from the bfcache.
   const [redirecting, setRedirecting] = createSignal(false);
+  const [desktopPopup, setDesktopPopup] = createSignal<Window | null>(null);
   const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) setRedirecting(false); };
   window.addEventListener("pageshow", onPageShow);
   onCleanup(() => window.removeEventListener("pageshow", onPageShow));
@@ -151,10 +153,28 @@ export function McpServerDetails() {
   createEffect(() => {
     void [params.agentId, params.serverName, gateway(), scope()];
     flow.cancel();
+    onCleanup(() => {
+      desktopPopup()?.close();
+      setDesktopPopup(null);
+    });
   });
 
   createEffect(() => {
-    onCleanup(onOAuthReturn(() => { void refetch(); }, { extension: "mcp" }));
+    const popup = desktopPopup();
+    if (!popup) return;
+    const timer = setInterval(() => {
+      if (!popup.closed) return;
+      setDesktopPopup(null);
+      void refetch();
+    }, 300);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  createEffect(() => {
+    onCleanup(onOAuthReturn((event) => {
+      if (event instanceof MessageEvent && event.source === desktopPopup()) setDesktopPopup(null);
+      void refetch();
+    }, { extension: "mcp" }));
   });
 
   const tabStatus = (target: McpScope): ScopeStatus | undefined => {
@@ -191,16 +211,22 @@ export function McpServerDetails() {
     });
   };
   const flowBusy = () => flow.state().phase === "preparing" || flow.state().phase === "waiting";
-  const pendingConnect = () => redirecting() || flowBusy();
-  const connectingLabel = () => (flowBusy() ? "Waiting for sign-in…" : "Redirecting…");
+  const waitingForSignIn = () => flowBusy() || desktopPopup() !== null;
+  const pendingConnect = () => redirecting() || waitingForSignIn();
+  const connectingLabel = () => (waitingForSignIn() ? "Waiting for sign-in…" : "Redirecting…");
 
   const connect = () => {
     if (gateway() !== undefined) return connectRemote();
+    const authorizeUrl = `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}`;
+    if (isDesktopWindow()) {
+      const popup = openOAuthPopup(authorizeUrl);
+      setDesktopPopup(popup);
+      setError(popup ? undefined : "Could not open the sign-in window. Try again.");
+      return;
+    }
     setRedirecting(true);
     const returnTo = window.location.pathname + window.location.search + window.location.hash;
-    window.location.assign(
-      `/api/mcp/oauth/authorize?agent=${encodeURIComponent(params.agentId)}&server=${encodeURIComponent(params.serverName)}&scope=${scope()}&returnTo=${encodeURIComponent(returnTo)}`
-    );
+    window.location.assign(`${authorizeUrl}&returnTo=${encodeURIComponent(returnTo)}`);
   };
 
   const disconnect = async () => {
@@ -362,6 +388,9 @@ export function McpServerDetails() {
           )}
         </Show>
         <Show when={(server()?.auth === "oauth" || oauthResult) && (!server()?.shared || server()?.enabled)}>
+          <Show when={desktopPopup()}>
+            <div class="oauth-quiet" role="status">Finish the sign-in in the new window.</div>
+          </Show>
           <Show when={flowBusy()}>
             <div class="oauth-quiet" role="status">Finish the sign-in in the new window. This page confirms the connection. <button type="button" class="oauth-btn" onClick={() => flow.cancel()}>Cancel</button></div>
           </Show>
