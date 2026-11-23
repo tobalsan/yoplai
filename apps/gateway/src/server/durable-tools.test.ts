@@ -134,6 +134,7 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
       async execute(_args, run) {
         const resource = resources.get(run.userId ?? "");
         if (!resource || resource.token !== token || !run.conversationFiles) throw new Error("Wrong resource scope.");
+        if (run.env?.HTTP_PROXY || process.env.HTTP_PROXY !== "http://foreign.test:8000") throw new Error("Wrong environment scope.");
         const folder = run.conversationFiles.hostPath;
         const filename = path.join(folder, "report.txt");
         await fs.writeFile(filename, resource.label);
@@ -149,14 +150,16 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
     fixtureExtensions: [extension],
   });
   try {
+    vi.stubEnv("HTTP_PROXY", "http://foreign.test:8000");
     for (const [user, label] of [["alice", "Alice's basil"], ["bob", "Bob's mint"]] as const) {
       const token = "fixture-token-" + user;
       resources.set(gateway.accountId(user), { token, label });
       await gateway.seedPersonalToken(user, "greenhouse", token);
     }
+    const direct = { tool: "greenhouse_resource" };
+    const nested = { tool: "codemode", args: { code: "console.log(await tools.greenhouse_resource({}));" } };
     gateway.script(
-      { tool: "greenhouse_resource" },
-      { tool: "codemode", args: { code: "console.log(await tools.greenhouse_resource({}));" } },
+      nested, direct,
       "Report checked.", "Report checked.",
     );
     const alice = gateway.send("alice", "Read my basil report.", { clientSendId: "alice-resource" });
@@ -171,6 +174,10 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
     release.resolve();
     const responses = await Promise.all([alice, bob]);
     expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    gateway.script(direct, "Report checked.", nested, "Report checked.");
+    expect((await gateway.send("alice", "Read my report directly.", { clientSendId: "alice-direct" })).status).toBe(200);
+    expect((await gateway.send("bob", "Read my report from a script.", { clientSendId: "bob-nested" })).status).toBe(200);
+    expect(arrived.slice(2)).toEqual(arrived.slice(0, 2));
     const aliceHistory = JSON.stringify(await gateway.history("alice", "?view=full"));
     const bobHistory = JSON.stringify(await gateway.history("bob", "?view=full"));
     expect(aliceHistory).toContain("Alice's basil");
