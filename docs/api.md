@@ -130,6 +130,8 @@ Each row includes `id`, `usedByAgents`, and `state`: `available`, `installed`,
 `update`, `manual`, or `incompatible`. A row can also include `installedVersion`.
 Catalog metadata includes `name`, `tagline`, `description`, `category`, `version`,
 `minYoplai`, `url`, `size`, `sha256`, and optional `iconUrl` and `docsUrl`.
+List and refresh rows include `iconDataUri` when the gateway can fetch a PNG
+or SVG icon from its HTTPS URL within the 256 KiB limit.
 Local entries without a catalog match can omit catalog metadata.
 
 If a catalog fetch fails, list and refresh return `200` with `stale: true` and

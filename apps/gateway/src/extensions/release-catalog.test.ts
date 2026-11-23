@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GatewayConfigSchema } from "@yoplai/shared";
+import { listReleaseCatalog } from "./release-catalog.js";
 import { fetchReleaseCatalog } from "./release-catalog-fetch.js";
 import { fixtureRelease, packFixture } from "./release-bundle.fixture.js";
 import { extractReleaseBundle } from "./release-bundle.js";
@@ -9,6 +11,9 @@ import { extractReleaseBundle } from "./release-bundle.js";
 let root: string;
 const source = "http://127.0.0.1:4400";
 const fixture = fixtureRelease(source, "1.0.0");
+const listConfig = () => GatewayConfigSchema.parse({
+  version: 3, agents: [], extensionsPath: root, extensionCatalog: { url: source },
+});
 beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "release-catalog-")); });
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -16,6 +21,87 @@ afterEach(async () => {
 });
 
 describe("release catalog", () => {
+  it("inlines SVG bytes even when the asset is served as application/octet-stream", async () => {
+    const iconUrl = "https://assets.example.test/v1/sample.svg";
+    const svg = '<?xml version="1.0"?><?icon fixture?><!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>';
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({
+        ...fixture.catalog, extensions: [{ ...fixture.entry, iconUrl }],
+      }))
+      .mockResolvedValueOnce(new Response(svg, { headers: { "content-type": "application/octet-stream" } })));
+
+    expect((await listReleaseCatalog(listConfig())).entries).toMatchObject([{
+      id: "sample", iconUrl,
+      iconDataUri: "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIj8+PD9pY29uIGZpeHR1cmU/PjwhRE9DVFlQRSBzdmc+PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxIDEiPjxwYXRoIGQ9Ik0wIDBoMXYxSDB6Ii8+PC9zdmc+",
+    }]);
+  });
+
+  it("inlines PNG bytes regardless of the asset name or media type", async () => {
+    const iconUrl = "https://assets.example.test/v1/png-icon.svg";
+    const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQI12NgYPj/HwADAgH/HXJk1AAAAABJRU5ErkJggg==";
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({
+        ...fixture.catalog, extensions: [{ ...fixture.entry, iconUrl }],
+      }))
+      .mockResolvedValueOnce(new Response(Uint8Array.from(Buffer.from(pixel, "base64")), {
+        headers: { "content-type": "image/svg+xml" },
+      })));
+
+    expect((await listReleaseCatalog(listConfig())).entries[0]?.iconDataUri).toBe(`data:image/png;base64,${pixel}`);
+  });
+
+  it("reuses a successfully fetched icon for shared rows, later lists, and refresh", async () => {
+    const iconUrl = "https://assets.example.test/v2/shared.svg";
+    const config = listConfig();
+    const fetch = vi.fn<typeof globalThis.fetch>(async (target) => {
+      if (String(target) === iconUrl) return new Response("<svg/>");
+      return Response.json({ ...fixture.catalog, extensions: [
+        { ...fixture.entry, iconUrl }, { ...fixture.entry, id: "other", iconUrl },
+      ] });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    for (const refresh of [false, false, true]) {
+      expect((await listReleaseCatalog(config, refresh)).entries).toMatchObject([
+        { id: "sample", iconDataUri: "data:image/svg+xml;base64,PHN2Zy8+" },
+        { id: "other", iconDataUri: "data:image/svg+xml;base64,PHN2Zy8+" },
+      ]);
+    }
+    expect(fetch.mock.calls.map(([target]) => String(target))).toEqual([`${source}/`, iconUrl, `${source}/`]);
+  });
+
+  it.each([
+    { name: "404", response: () => new Response("Missing", { status: 404 }) },
+    { name: "oversize SVG", response: () => new Response(`<svg>${" ".repeat(256 * 1024)}</svg>`) },
+    { name: "non-image bytes", response: () => new Response("<html><svg/></html>", {
+      headers: { "content-type": "image/svg+xml" },
+    }) },
+  ])("keeps the row and the rest of the list when an icon returns $name", async ({ response }) => {
+    const iconUrl = "https://assets.example.test/v1/bad.svg";
+    vi.stubGlobal("fetch", vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({
+        ...fixture.catalog, extensions: [fixture.entry, { ...fixture.entry, id: "bad", iconUrl }],
+      }))
+      .mockResolvedValueOnce(response()));
+
+    const result = await listReleaseCatalog(listConfig());
+    expect(result).toMatchObject({ stale: false, entries: [{ id: "sample" }, { id: "bad", iconUrl }] });
+    expect(result.entries[1]).not.toHaveProperty("iconDataUri");
+  });
+
+  it("keeps a row with a loopback HTTP icon without requesting that icon", async () => {
+    const iconUrl = `${source}/icon.svg`;
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({
+      ...fixture.catalog, extensions: [{ ...fixture.entry, iconUrl }],
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await listReleaseCatalog(listConfig());
+    expect(result.entries).toMatchObject([{ id: "sample", iconUrl }]);
+    expect(result.entries[0]).not.toHaveProperty("iconDataUri");
+    expect(fetch.mock.calls.map(([target]) => String(target))).toEqual([`${source}/`]);
+  });
+
   it("uses the ETag and returns the last copy when offline", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>()
       .mockResolvedValueOnce(Response.json(fixture.catalog, { headers: { etag: '"first"' } }))

@@ -9,10 +9,15 @@ import {
 import {
   getExternalExtensionsPath, getLoadedExtensions, reconcileExternal, reservedExtensionIds, withExtensionMutation,
 } from "./registry.js";
-import { defaultCatalogUrl, fetchReleaseCatalog } from "./release-catalog-fetch.js";
+import { MAX_ICON_BYTES } from "./catalog.js";
+import { catalogUrl, defaultCatalogUrl, fetchCatalogAsset, fetchReleaseCatalog, readCatalogBytes } from "./release-catalog-fetch.js";
 import { stageReleaseBundle } from "./release-bundle.js";
 
 const { version: gatewayVersion } = createRequire(import.meta.url)("../../package.json") as { version: string };
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+// Allow an XML prolog, but require SVG to be the root element.
+const svgRoot = /^(?:\s|<\?(?:[^?]|\?(?!>))*\?>|<!--(?:[^-]|-(?!->))*-->|<!DOCTYPE\s+svg(?=[\s>])[^>]*>)*<svg(?=[\s/>])/;
+const catalogIcons = new Map<string, Promise<string | undefined>>();
 
 function compareVersions(left: string, right: string): number {
   const split = (v: string) => v.split("+", 1)[0].split(/-(.*)/, 2);
@@ -87,6 +92,34 @@ function row(config: GatewayConfig, id: string, entry?: ReleaseCatalogEntry, ins
   return { ...entry, id, state, installedVersion: installed?.version, usedByAgents };
 }
 
+async function loadCatalogIcon(iconUrl: string): Promise<string | undefined> {
+  try {
+    catalogUrl(iconUrl, false);
+    const response = await fetchCatalogAsset(iconUrl);
+    if (!response.ok) {
+      await response.body?.cancel();
+      return undefined;
+    }
+    const bytes = await readCatalogBytes(response, MAX_ICON_BYTES);
+    const mime = bytes.subarray(0, pngSignature.length).equals(pngSignature) ? "image/png"
+      : svgRoot.test(bytes.toString("utf8")) ? "image/svg+xml" : undefined;
+    if (mime) return `data:${mime};base64,${bytes.toString("base64")}`;
+  } catch {
+    // A missing icon should not make the catalog unavailable.
+  }
+}
+
+function catalogIcon(iconUrl: string): Promise<string | undefined> {
+  const cached = catalogIcons.get(iconUrl);
+  if (cached) return cached;
+  const pending = loadCatalogIcon(iconUrl).then((iconDataUri) => {
+    if (!iconDataUri) catalogIcons.delete(iconUrl);
+    return iconDataUri;
+  });
+  catalogIcons.set(iconUrl, pending);
+  return pending;
+}
+
 export async function listReleaseCatalog(config: GatewayConfig, refresh = false): Promise<ReleaseCatalogView> {
   const root = getExternalExtensionsPath(config);
   const { source, fetchedAt, stale, error, catalog } = await fetchReleaseCatalog(root, config.extensionCatalog?.url ?? defaultCatalogUrl, refresh);
@@ -118,6 +151,10 @@ export async function listReleaseCatalog(config: GatewayConfig, refresh = false)
     entries.push({ ...row(config, id, undefined, install, !install), name: hit?.extension.displayName, description: hit?.extension.description });
     listed.add(id.toLowerCase());
   }
+  await Promise.all(entries.map(async (entry) => {
+    const iconDataUri = entry.iconUrl && await catalogIcon(entry.iconUrl);
+    if (iconDataUri) entry.iconDataUri = iconDataUri;
+  }));
   return { source, fetchedAt, stale, error, entries };
 }
 

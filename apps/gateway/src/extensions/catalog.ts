@@ -17,7 +17,7 @@ import { extensionSecretFields, getPersonalExtensionTokens, overlayOAuthPersonal
 import { CredentialStore } from "../credentials/store.js";
 
 /** Icon files above this size are skipped rather than inlined as a data URI. */
-const MAX_ICON_BYTES = 256 * 1024;
+export const MAX_ICON_BYTES = 256 * 1024;
 
 /** How many parent directories to walk while looking for `package.json`. */
 const MAX_PACKAGE_ROOT_WALK = 8;
