@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Do not save the unfinished block when a model cuts short an agent or chat project draft.
+- Use the same model picker for the main model and the fallback model in Agent settings.
 - Configure Mattermost, Slack, Telegram, Discord, IRC, and Threadit in web and desktop agent settings. Saves apply live, and incomplete setups show what is missing. Per-agent settings live under `extensions.<id>`. Deprecated top-level channel blocks still load.
 - External MCP apps from linked gateways render in desktop chat and fullscreen, with edits sent back to the linked gateway.
 - Same-page links scroll and move keyboard focus in linked dashboards without closing the dashboard on desktop.

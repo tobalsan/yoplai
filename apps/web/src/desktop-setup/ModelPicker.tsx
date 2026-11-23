@@ -63,6 +63,7 @@ type AccessActions = {
 };
 
 export function ModelPicker(props: {
+  label?: string;
   models: Model[];
   selected?: Model;
   unavailable?: { model: string; source?: ModelSource };
@@ -178,7 +179,7 @@ export function ModelPicker(props: {
     </div>
   </>;
 
-  return <SearchPicker label="Model" searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
+  return <SearchPicker label={props.label ?? "Model"} searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
     selected={props.selected && modelKey(props.selected)} selectionLabel={name() ? `${name()}, ${selectedDetail()}` : undefined}
     summary={name() ? <ModelSummary name={name()!} detail={selectedDetail()} tab={summaryTab()} model={props.selected} /> : undefined}
     onOpen={openTab} onSelect={props.onSelect} panel={{ minWidth: 380, class: "model-picker-panel", layout: renderPanel }}
@@ -196,45 +197,6 @@ export function ModelPicker(props: {
       return [...groups].map(([provider, models]) => ({
         id: provider, label: provider ? family(provider) : undefined,
         rows: models.map((model) => ({ id: modelKey(model), value: modelKey(model), content: <ModelSummary name={displayName(model)} model={model} /> })),
-      }));
-    }} />;
-}
-
-export function FallbackModelPicker(props: {
-  models: Model[];
-  value?: { provider?: string; model: string };
-  disabled: boolean;
-  onSelect: (choice: { provider: string; model: string }) => void;
-}) {
-  const key = (model: { provider?: string; model: string }) => JSON.stringify([model.provider, model.model]);
-  const choices = createMemo(() => {
-    const byModel = new Map<string, Model>();
-    for (const model of props.models) if (!byModel.has(key(model))) byModel.set(key(model), model);
-    return byModel;
-  });
-  const selected = () => props.value && choices().get(key(props.value));
-  const name = () => selected() ? displayName(selected()!) : props.value?.model;
-  const provider = () => props.value?.provider ? family(props.value.provider) : undefined;
-  return <SearchPicker label="Fallback model" searchLabel="Search models" placeholder="Select a model" disabled={props.disabled}
-    selected={props.value && key(props.value)} selectionLabel={name() ? [name(), provider()].filter(Boolean).join(" ") : undefined}
-    summary={name() ? <ModelSummary name={name()!} detail={provider()} model={selected()} /> : undefined}
-    onSelect={(value) => {
-      const model = choices().get(value);
-      if (model) props.onSelect({ provider: model.provider, model: model.model });
-    }}
-    groups={(query) => {
-      const tokens = normalize(query).split(" ").filter(Boolean);
-      const groups = new Map<string, Model[]>();
-      for (const model of choices().values()) {
-        if (!matchesSearch(searchText(model), tokens)) continue;
-        const provider = family(model.provider);
-        const rows = groups.get(provider) ?? [];
-        rows.push(model);
-        groups.set(provider, rows);
-      }
-      return [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([label, models]) => ({
-        id: label, label,
-        rows: models.map((model) => ({ id: key(model), value: key(model), content: <ModelSummary name={displayName(model)} model={model} /> })),
       }));
     }} />;
 }

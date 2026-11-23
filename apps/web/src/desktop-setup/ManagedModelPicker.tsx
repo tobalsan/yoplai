@@ -31,7 +31,7 @@ export function ManagedModelPicker(props: Omit<ComponentProps<typeof ModelPicker
     };
   };
   return <>
-    <ModelPicker models={props.models} selected={props.selected} unavailable={props.unavailable} disabled={props.disabled}
+    <ModelPicker label={props.label} models={props.models} selected={props.selected} unavailable={props.unavailable} disabled={props.disabled}
       onSelect={props.onSelect} access={actions()} />
     <Show when={localAccess() && screen()} keyed>{(mode) => <Portal>
       <AccessDialog addKey={mode === "key"} onClose={() => { setScreen(undefined); refreshInBackground(); }}

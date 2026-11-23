@@ -7,6 +7,7 @@ import type { Agent } from "../../api/types";
 import { SearchPicker } from "../SearchPicker";
 
 export function ModelField(props: {
+  label?: string;
   models: Model[];
   value?: { provider?: string; model: string; source?: ModelSource };
   authMode?: Agent["authMode"];
@@ -17,7 +18,7 @@ export function ModelField(props: {
 }) {
   const index = createMemo(() => new Map(props.models.map((model) => [modelKey(model), model])));
   const selected = createMemo(() => props.value && resolveModelChoice(props.models, props.value, props.authMode));
-  return <ManagedModelPicker models={props.models} selected={selected()} unavailable={props.value} disabled={props.disabled === true}
+  return <ManagedModelPicker label={props.label} models={props.models} selected={selected()} unavailable={props.value} disabled={props.disabled === true}
     local={props.local} onAccessChanged={props.onAccessChanged}
     onSelect={(key) => { const model = index().get(key); if (model) props.onChange({ provider: model.provider, model: model.model, source: model.source }); }} />;
 }

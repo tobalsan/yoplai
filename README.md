@@ -150,7 +150,7 @@ Choose a **main agent** on your first home visit: home then opens a fresh chat w
 
 Manage skills from **Skills** below Agents: uploads and imports start private and off, while **Create skill** opens a new chat with your main agent (or an agent picker) and fills in the interview prompt for you to send; the agent saves with `skill_save`. In multi-user mode, a superadmin can mark an agent workspace skill as **System** on **Admin → Skills**. This hides the skill from the **Skills** page. Agents still load it. Operators curate defaults in `$YOPLAI_HOME/skill-library/default/<name>/SKILL.md`, optionally adding `.yoplai.json` with `{ "agents": ["hr"] }`; user content, enable settings, sharing, import-token hashes and the last ten versions live under `skill-library/`. Existing agent workspace `skills/` folders keep loading unchanged and appear read-only; defaults and the `dashboard` and `skill-creator` built-ins are always on and appear only in **Admin → Skills**. See [Skill sources](docs/models-and-skills.md#skill-sources) for all sources and their load order.
 
-Edit `$YOPLAI_HOME/agents/my-agent/agent.yaml` to change model or agent settings. Edit prompt files in the same folder to define identity and instructions.
+Use **Agent settings** to select a main model and an optional fallback model in the same picker. Edit `$YOPLAI_HOME/agents/my-agent/agent.yaml` to change model or agent settings. Edit prompt files in the same folder to define identity and instructions.
 
 Enable optional features in root `extensions`:
 

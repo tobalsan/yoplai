@@ -393,8 +393,8 @@ describe("ChatView abort handling", () => {
         skills: { global: [], agent: [], user: [] },
       });
       if (path.endsWith("/models")) return Response.json({ models: [
-        { provider: "fictional-provider", model: "fictional-model", name: "Example Model", ready: true },
-        { provider: "fictional-provider", model: "fictional-backup", name: "Backup Model", ready: true },
+        { provider: "fictional-provider", model: "fictional-model", name: "Example Model", source: "owned", credentialType: "api_key", ready: true },
+        { provider: "fictional-provider", model: "fictional-backup", name: "Backup Model", source: "owned", credentialType: "api_key", ready: true },
       ] });
       return Response.json({});
     });
@@ -421,7 +421,7 @@ describe("ChatView abort handling", () => {
 
     open();
     await waitFor(() => expect(checkbox().checked).toBe(true));
-    expect(getByRole(panel(), "button", { name: /^Fallback model: Backup Model/ })).toBeTruthy();
+    await waitFor(() => expect(getByRole(panel(), "button", { name: /^Fallback model: Backup Model/ })).toBeTruthy());
     checkbox().click();
     save();
     await waitFor(() => expect(patches()).toEqual([

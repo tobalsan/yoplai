@@ -9,7 +9,6 @@ import { defaultAvatarNumber, defaultAvatarUrl } from "../../lib/default-avatar"
 import { Button } from "../ui/Button";
 import { AvatarField, AvatarPreview, preventFileNavigation, type AvatarDraft } from "./AvatarField";
 import { ModelField, ReasoningField } from "./ModelField";
-import { FallbackModelPicker } from "../../desktop-setup/ModelPicker";
 
 type SidebarProps = {
   agent: Agent;
@@ -199,8 +198,9 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
           </label>
           <Show when={fallbackOn()}>
             <div>
-              <FallbackModelPicker models={models.error ? [] : models.latest ?? []} value={fallback()}
-                disabled={models.state !== "ready" || saving()} onSelect={setFallback} />
+              <ModelField label="Fallback model" models={models.error ? [] : models.latest ?? []} value={fallback()} authMode={props.agent.authMode}
+                disabled={models.state !== "ready" || saving()} local={!props.agent.gateway} onAccessChanged={retryModels}
+                onChange={({ provider, model }) => setFallback({ provider, model })} />
               <p>Used when the main model fails, for example during an outage or a rate limit.</p>
             </div>
           </Show>
