@@ -112,6 +112,8 @@ describe("MCP Apps authenticated ownership", () => {
     const response = await post(alice, route + "/data");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
+      server: "private-boards",
+      tool: "create_board",
       args: { board: 17 },
       result: { content: [{ type: "text", text: "Private result" }], _meta: { revision: 2 } },
     });

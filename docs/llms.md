@@ -736,6 +736,8 @@ result reference. The reserved server name `yoplai` cannot capture external view
 The built-in provider works without the MCP extension, reads only the captured
 file URI for that record's agent and caps reads at 10 MB. It refuses tools.
 The bundled viewer renders reports, Markdown, PDF pages, images, text and data.
+Inline HTML grows with the report between 300 and 800 px. In the side panel,
+HTML, Markdown and PDF frames fill the viewer.
 HTML, sanitized Markdown and PDFs share a nested opaque script-only sandbox with
 no connections and the existing allowlist of CDN/font hosts. PDF.js 5.4.624 and
 Pele 1.9.0 load only in that frame from jsDelivr; plain Markdown loads no CDN script.
@@ -752,6 +754,11 @@ other servers retain their existing behavior.
 The viewer accepts repeated tool results; web `appViews` owns exact-filename
 reuse. Built-in resource RPC follows the last delivered result call;
 other app RPC retains its initial call identity. Media downloads use `nosniff`.
+The `data` route returns the saved `server` and `tool` with `args` and `result`.
+For a linked gateway, the local gateway issues a view ticket for a built-in
+`yoplai` file result using its own viewer bundle and trusted-origin check.
+File reads stay on the linked gateway through relayed `rpc`.
+Update the linked gateway first so its `data` response identifies the server.
 After editing `mcp-apps/file-viewer/client.ts`, regenerate its committed HTML with
 `node apps/gateway/src/mcp-apps/file-viewer/build-file-viewer.mjs` from the repo root.
 
