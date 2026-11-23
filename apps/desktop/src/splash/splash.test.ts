@@ -6,7 +6,9 @@ import { expect, it, vi } from "vitest";
 const html = fs.readFileSync(new URL("splash.html", import.meta.url), "utf8");
 
 function openSplash(mode: "splash" | "wait", reducedMotion = false) {
-  const queue: FrameRequestCallback[] = [];
+  const queue = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  let changeMotion = (_matches: boolean) => {};
   const fade = Promise.withResolvers<void>();
   const animate = vi.fn(() => ({ finished: fade.promise }));
   const getAnimations = vi.fn(() => [{ finished: fade.promise }]);
@@ -14,9 +16,19 @@ function openSplash(mode: "splash" | "wait", reducedMotion = false) {
     url: `file:///splash.html?mode=${mode}`,
     runScripts: "dangerously",
     beforeParse(window) {
-      window.matchMedia = (query: string) => ({ matches: query.includes("reduced-motion") && reducedMotion, addEventListener: vi.fn() });
-      window.requestAnimationFrame = (callback: FrameRequestCallback) => queue.push(callback);
-      window.cancelAnimationFrame = vi.fn();
+      const motion = Object.assign(new window.EventTarget(), { matches: reducedMotion });
+      changeMotion = (matches) => {
+        motion.matches = matches;
+        motion.dispatchEvent(new window.Event("change"));
+      };
+      window.matchMedia = (query: string) => query.includes("reduced-motion")
+        ? motion
+        : { matches: false, addEventListener: vi.fn() };
+      window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+        queue.set(++frameId, callback);
+        return frameId;
+      };
+      window.cancelAnimationFrame = (id: number) => queue.delete(id);
       window.HTMLElement.prototype.getAnimations = getAnimations;
       window.Path2D = class {
         moveTo() {}
@@ -31,8 +43,16 @@ function openSplash(mode: "splash" | "wait", reducedMotion = false) {
   return {
     page: dom.window.document.body,
     finish: (): Promise<void> => dom.window.yoplaiSplash.finish(),
-    frame: (now: number) => queue.shift()?.(now),
-    queued: () => queue.length,
+    frame: (now: number) => {
+      const [entry] = queue;
+      if (entry) {
+        const [id, callback] = entry;
+        queue.delete(id);
+        callback(now);
+      }
+    },
+    queued: () => queue.size,
+    changeMotion,
     animate,
     getAnimations,
     finishFade: fade.resolve,
@@ -114,6 +134,29 @@ it("reveals the loader at 250 ms and waits for its exit", async () => {
     splash.finishFade();
     await result;
     expect(loader.hidden).toBe(true);
+  } finally {
+    splash.close();
+    vi.useRealTimers();
+  }
+});
+
+it("stops the roll and hides without a shrink when the user enables reduced motion", async () => {
+  vi.useFakeTimers();
+  const splash = openSplash("wait");
+  try {
+    vi.advanceTimersByTime(250);
+    const loader = getByRole(splash.page, "status", { name: "Loading" });
+    const track = loader.querySelector<HTMLElement>(".track")!;
+    for (let now = 0; now <= 4500; now += 16) splash.frame(now);
+    expect(track.style.transform).toMatch(/^translateX\(/);
+    splash.changeMotion(true);
+    expect(splash.queued()).toBe(0);
+    expect(track.style.transform).toBe("");
+    splash.frame(4600);
+    expect(track.style.transform).toBe("");
+    await splash.finish();
+    expect(loader.hidden).toBe(true);
+    expect(splash.getAnimations).not.toHaveBeenCalled();
   } finally {
     splash.close();
     vi.useRealTimers();

@@ -30,7 +30,8 @@ if (new URLSearchParams(location.search).get('mode') === 'wait') {
   const easeIO = x => x < .5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2;
   const smooth = x => x * x * (3 - 2 * x);
   const rnd = (a, b) => a + Math.random() * (b - a);
-  const roll = { clock: 0, last: 0, raf: 0, pos: 0, seg: null, queue: [], gx: 0 };
+  const initialRoll = () => ({ clock: 0, last: 0, raf: 0, pos: 0, seg: null, queue: [], gx: 0 });
+  let roll = initialRoll();
 
   function nextSeg(t) {
     const r = roll;
@@ -79,19 +80,30 @@ if (new URLSearchParams(location.search).get('mode') === 'wait') {
   const peek = stage.querySelector('.peek');
   const eyes = stage.querySelector('.eyes');
   const rig = stage.querySelector('.rig');
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
   document.getElementById('c').hidden = true;
   stage.hidden = false;
   const reveal = setTimeout(() => stage.classList.add('revealed'), 250);
-  if (!reduced) roll.raf = requestAnimationFrame(rollFrame);
+  function updateMotion() {
+    if (motion.matches) {
+      cancelAnimationFrame(roll.raf);
+      roll = initialRoll();
+      for (const layer of [track, spin, peek]) layer.style.transform = '';
+    } else {
+      roll.raf = requestAnimationFrame(rollFrame);
+    }
+  }
+  motion.addEventListener('change', updateMotion);
+  updateMotion();
 
   let finishPromise;
   window.yoplaiSplash = {
     finish() {
       return finishPromise ??= (async () => {
         clearTimeout(reveal);
+        motion.removeEventListener('change', updateMotion);
         cancelAnimationFrame(roll.raf);
-        if (!stage.classList.contains('revealed') || reduced) {
+        if (!stage.classList.contains('revealed') || motion.matches) {
           stage.hidden = true;
           return;
         }
