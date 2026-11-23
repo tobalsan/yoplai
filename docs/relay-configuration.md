@@ -633,7 +633,8 @@ A 404 for a disabled Canvas adds `X-Yoplai-Dashboard-Embed-Reason: canvas_disabl
 An embed page that runs inside a frame posts two messages to its parent, with `targetOrigin` `*`:
 `{channel:"yoplai-embed", type:"ready"}` once when its bootstrap runs, and `{channel:"yoplai-embed", type:"link", href}` when the user clicks a link.
 `href` is the absolute `http` or `https` target, at most 2048 characters. The page stops the navigation.
-A click on a `#` link to the same document stops the navigation and scrolls to the target element, or to the top for `#` and `#top`.
+A click on a `#` link to the same document stops the navigation and scrolls to and focuses the target element, or scrolls to the top for `#` and `#top` without a target.
+Links in open shadow roots are handled. The document listener cannot see links inside closed shadow roots.
 WebKit fires a false frame load on a fragment navigation in a sandboxed frame, and the shell ends the view on a second load.
 A link to the same document without `#`, a link with another scheme, a modified click, and a link with `download` keep their default behavior.
 Both messages come from untrusted remote script. The shell treats `ready` as proof that scripts run and `link` as a request.
