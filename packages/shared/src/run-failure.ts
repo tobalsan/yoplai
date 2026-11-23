@@ -10,6 +10,7 @@ export const RunFailureKindSchema = z.enum([
   "idle_timeout",
   "safety_refusal",
   "context_overflow",
+  "provider_not_configured",
   "generic",
 ]);
 export type RunFailureKind = z.infer<typeof RunFailureKindSchema>;
@@ -114,6 +115,10 @@ export function runFailureMessage(
       return lang === "fr"
         ? "Le fichier joint ou la conversation est trop volumineux pour que le modèle le lise dans le chat. Joignez un fichier plus petit ou démarrez une nouvelle conversation."
         : "The attached file or conversation is too large for the model to read in chat. Attach a smaller file, or start a new conversation.";
+    case "provider_not_configured":
+      return lang === "fr"
+        ? "Le fournisseur du modèle n’est pas configuré pour cet agent."
+        : "The model provider is not configured for this agent.";
     case "generic":
       return lang === "fr"
         ? "Une erreur est survenue, merci de réessayer."

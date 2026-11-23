@@ -1930,6 +1930,36 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("keeps a failed Durable Main turn visible after the chat reloads history", async () => {
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
+    const { container, dispose } = renderView();
+    try {
+      await tick();
+      const composer = queryByRole(container, "textbox") as HTMLTextAreaElement;
+      composer.value = "Check the greenhouse";
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      (container.querySelector(".send-btn") as HTMLButtonElement).click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+
+      const text = "The model provider is not configured for this agent.";
+      fetchFullHistoryMock.mockResolvedValue({
+        sessionId: "durable-main", isStreaming: false, activeTurn: null,
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Check the greenhouse" }], timestamp: 1 },
+          { role: "assistant", content: [{ type: "text", text }], timestamp: 2, meta: { stopReason: "error", failure: { kind: "provider_not_configured" } } },
+        ],
+      });
+      streamMessageMock.mock.calls[0][5](text);
+      expect(container.textContent).toContain(text);
+      await tick();
+      expect(container.textContent).toContain("Check the greenhouse");
+      expect(queryAllByText(container, text)).toHaveLength(1);
+      expect(container.querySelector(".system-message")?.textContent).toContain(text);
+    } finally {
+      dispose();
+    }
+  });
+
   it("passes the project query to the first run", async () => {
     routeState.project = "project-1";
     const { container, dispose } = renderView();

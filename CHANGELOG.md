@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Show failed Durable Main turns in chat and history, log one safe warning per failed send, and tell the model when its previous reply failed.
 - Omit unfinished blocks from agent and chat project drafts. Keep closed code fences even when an unfinished paragraph immediately follows them.
 - Use the same picker for both model fields in Agent settings. Show the selected fallback source until the settings reload.
 - The agent creation screen in browser setup uses the wizard background to keep text readable.

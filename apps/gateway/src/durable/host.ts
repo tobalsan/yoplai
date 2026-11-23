@@ -8,18 +8,19 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import {
-  DURABLE_MAIN_SESSION_ID, type AgentConfig, type FullHistoryMessage,
+  classifyRunFailure, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FullHistoryMessage,
   type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { resolveWorkspaceDir } from "../config/index.js";
 import { messageText } from "../history/condense.js";
 import { activeContextUsage, historyPage } from "../history/page.js";
+import { logWarn } from "../logging.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 
 import type { WebSender } from "./contract.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
-import { InputEntry, MainMap, ReviewDoc } from "./state.js";
+import { FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 
 const context = BACKGROUND_CONTEXT;
 export type DurableHostOptions = {
@@ -236,6 +237,36 @@ export class DurableHost {
 
   private async settle(conversation: Conversation, submission: Submission): Promise<RunAgentResult> {
     const result = await submission.wait(context);
+    if (result.status === "unanswered") {
+      const kind = result.reason === "no_model" ||
+        (result.reason === "model_error" && typeof result.detail === "string" && result.detail.startsWith("Provider is not configured:"))
+        ? "provider_not_configured"
+        : classifyRunFailure(result.detail);
+      // These legacy notices describe input removal or admin notifications.
+      const durableKind = kind === "safety_refusal" || kind === "quota" ? "generic" : kind;
+      const requestId = "failed:" + submission.id;
+      const recorded = await conversation.commit(async (tx) => {
+        if (await tx.submissionByRequest(conversation.id, requestId)) return false;
+        const phrase = durableKind === "provider_not_configured" ? "model provider not configured" : "model error";
+        await conversation.submit(tx, {
+          type: "write",
+          requestId,
+          entry: {
+            kind: FailureNoteEntry.kind,
+            data: { submissionId: submission.id, kind: durableKind },
+            model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
+          },
+        });
+        return true;
+      }, context);
+      if (recorded) {
+        logWarn("Durable turn failed", {
+          agentId: this.agent.id, conversationId: conversation.id, submissionId: submission.id,
+          reason: result.reason, kind: durableKind,
+        });
+      }
+      throw new Error(runFailureMessage(durableKind, this.agent.language ?? "en"));
+    }
     if (result.status !== "done" || result.type !== "input") {
       throw new Error("Yoplai could not complete the turn.");
     }
@@ -331,6 +362,16 @@ export class DurableHost {
       for (const entry of page.items) {
         if (InputEntry.is(entry)) {
           full.push({ role: "user", content: [{ type: "text", text: entry.data.text }], timestamp: entry.data.timestamp });
+        } else if (FailureNoteEntry.is(entry)) {
+          const { kind } = entry.data;
+          const note = entry.model?.[0];
+          if (!note) continue;
+          full.push({
+            role: "assistant",
+            content: [{ type: "text", text: runFailureMessage(kind, this.agent.language ?? "en") }],
+            timestamp: note.timestamp,
+            meta: { stopReason: "error", failure: { kind } },
+          });
         } else if (AssistantEntry.is(entry) && entry.byTaskId !== undefined) {
           const decision = review?.byTask[entry.byTaskId];
           if (decision?.state !== "stream" && decision?.state !== "approved") continue;
@@ -369,7 +410,10 @@ export class DurableHost {
     const messages: (FullHistoryMessage | SimpleHistoryMessage)[] = view === "full" ? full : full.flatMap((item) => {
       if (item.role !== "user" && item.role !== "assistant") return [];
       const content = messageText(item);
-      return content ? [{ role: item.role, content, timestamp: item.timestamp }] : [];
+      return content ? [{
+        role: item.role, content, timestamp: item.timestamp,
+        ...(item.role === "assistant" && item.meta?.failure ? { meta: item.meta } : {}),
+      }] : [];
     });
     let page;
     try {
