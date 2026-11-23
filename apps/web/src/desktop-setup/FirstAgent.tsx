@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { AgentCraftingScreen, finishCrafting } from "../components/agent-management/AgentCraftingScreen";
 import { ManagedModelPicker } from "./ManagedModelPicker";
 import type { ModelChoice } from "../api/agent-management";
 import { errorText, modelKey, request, resolveModelChoice, type Model } from "./api";
@@ -36,33 +37,34 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string, ses
   const defaultModel = [...props.models].sort((a, b) => rank(a.source) - rank(b.source)).find((model) => model.default);
   const initialModel = saved ? resolveModelChoice(props.models, saved.model) : defaultModel;
   const [selected, setSelected] = createSignal(initialModel ? modelKey(initialModel) : "");
-  const [creating, setCreating] = createSignal("");
+  const [creating, setCreating] = createSignal<Draft>();
+  const [doneAt, setDoneAt] = createSignal<number>();
   const [error, setError] = createSignal("");
   const [retry, setRetry] = createSignal<Draft | undefined>(saved);
   const model = createMemo(() => props.models.find((row) => modelKey(row) === selected()));
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
-  onCleanup(() => { disposed = true; clearTimeout(timer); });
+  onCleanup(() => { disposed = true; });
   const change = () => { setRetry(undefined); setError(""); };
   const create = async (draft: Draft) => {
     if (creating()) return;
     props.onBusy(true);
     setError("");
     setRetry(undefined);
-    setCreating("Creating your agent…");
-    timer = setTimeout(() => setCreating("Writing its instructions…"), 650);
+    setDoneAt(undefined);
+    setCreating(draft);
     try {
       const sessionId = draft.sessionId ?? crypto.randomUUID();
       const turnId = draft.turnId ?? crypto.randomUUID();
       draft = { ...draft, sessionId, turnId };
       sessionStorage.setItem(draftKey, JSON.stringify(draft));
       const result = await request<{ id: string }>("agents", "POST", { requestId: draft.requestId, name: draft.name, purpose: draft.purpose, avatar: draft.avatar, model: draft.model });
+      if (disposed) return;
+      await finishCrafting(setDoneAt);
       if (!disposed) await props.onCreated(result.id, sessionId, turnId);
     } catch (cause) {
       if (!disposed) { setError(errorText(cause)); setRetry(draft); }
     } finally {
-      clearTimeout(timer);
-      if (!disposed) { setCreating(""); props.onBusy(false); }
+      if (!disposed) { setCreating(undefined); props.onBusy(false); }
     }
   };
   return <form onSubmit={(event) => {
@@ -98,7 +100,7 @@ export function FirstAgent(props: { models: Model[]; onCreated: (id: string, ses
       </div>
     </div>
     <Show when={error()}><p role="alert">{error()}</p></Show>
-    <Show when={creating()}><p role="status">{creating()}</p></Show>
+    <Show when={creating()}>{(draft) => <AgentCraftingScreen name={draft().name} face={draft().avatar} doneAt={doneAt()} />}</Show>
     <button class="setup-primary" type="submit" disabled={(!retry() && !model()) || !!creating()}>{retry() ? "Retry" : "Create agent"}</button>
   </form>;
 }

@@ -50,6 +50,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    // Keep browser tests off the development gateway port.
+    environmentOptions: { jsdom: { url: "http://localhost:49179" } },
     include: ["**/*.test.ts", "**/*.test.tsx"],
     // The desktop package script writes a gateway copy and the app bundle here.
     exclude: [...configDefaults.exclude, "apps/desktop/build/**", "apps/desktop/release/**"],

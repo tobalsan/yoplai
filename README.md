@@ -12,6 +12,7 @@ See the [desktop guide](apps/desktop/README.md) to run Yoplai in a desktop windo
 
 - Web chat with streaming, tool calls, files, and session history. Compaction preserves the transcript and adds collapsed summaries in Simple and Full views; use **Load earlier messages** to reach older messages.
 - Multiple configurable agents and external CLI subagents
+- Desktop setup and **Agents → New agent** show full-screen progress while Yoplai creates an agent.
 - Opt-in [session model routing](docs/model-routing.md) for Pi chat, with durable model locks, subscription quota selection, shadow rollout and off-mode rollback.
 - Optional Discord, Slack, Telegram, Mattermost, IRC, and webhook entry points
 - Slack credential refusals offer [one personal connection link](docs/slack-credential-connect.md) for pairing plus Google OAuth, extension tokens, or extension-owned OAuth, with a confirmation in the original thread.

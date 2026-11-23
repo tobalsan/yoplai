@@ -1696,7 +1696,7 @@ describe("ChatView abort handling", () => {
     queryByRole(container, "button", { name: "Chat settings" })!.click();
     await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Share link" }) as HTMLButtonElement)?.disabled).toBe(false));
     queryByRole(container, "menuitem", { name: "Share link" })!.click();
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("http://localhost:3000/shared/shared-token"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${location.origin}/shared/shared-token`));
     queryByRole(container, "button", { name: "Chat settings" })!.click();
     await waitFor(() => expect((queryByRole(container, "menuitem", { name: "Revoke link" }) as HTMLButtonElement)?.disabled).toBe(false));
     queryByRole(container, "menuitem", { name: "Copy link" })!.click();

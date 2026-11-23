@@ -45,7 +45,7 @@ beforeEach(() => {
   localStorage.clear(); sessionStorage.clear();
   mode = true; auth = false; available = true; wizardExited = false; firstChat = null; completed = false;
   setupReads = 0; setupWrites = []; overrides = () => undefined;
-  vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
+  vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ matches: query.includes("prefers-reduced-motion"), addEventListener() {}, removeEventListener() {} })));
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("open", vi.fn());
@@ -271,6 +271,25 @@ it("shows device tabs and selects a Pi CLI login in onboarding", async () => {
   fireEvent.click(getByRole(root, "option", { name: "External" }));
   expect(await button("Model: External, Pi CLI · ChatGPT subscription")).toBe(document.activeElement);
   expect(queryByRole(root, "listbox")).toBeNull();
+});
+
+it("shows the crafting screen until a failed create returns", async () => {
+  const create = holdReply();
+  overrides = (path, method) => {
+    if (path === "/api/agents" && method === "POST") return create.pending;
+  };
+  boot("/setup");
+  await modelScreen();
+  await click("Continue");
+  fireEvent.input(await findByRole(root, "textbox", { name: "Name" }), { target: { value: "Test Agent" } });
+  await click("Create agent");
+  const screen = await findByRole(root, "dialog", { name: "Agent creation" });
+  expect(within(screen).getByRole("status").textContent).toContain("Crafting Test Agent");
+  expect(location.pathname).toBe("/setup");
+  create.reply(response({ error: "unavailable", message: "Could not create the agent." }, 503));
+  expect((await findByRole(root, "alert")).textContent).toBe("Could not create the agent.");
+  expect(queryByRole(root, "dialog", { name: "Agent creation" })).toBeNull();
+  expect(await button("Retry")).toBeTruthy();
 });
 
 it("creates the agent after retry with the same request ID and does not send a greeting", async () => {
