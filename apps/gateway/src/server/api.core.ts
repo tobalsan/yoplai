@@ -77,6 +77,8 @@ import {
   getMediaFileMetadata,
   resolveMediaFilePath,
 } from "../media/metadata.js";
+import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import type { DurableWeb } from "../durable/web.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { historyPage, activeContextUsage } from "../history/page.js";
 import { compactAgentSession } from "../agents/compact.js";
@@ -1074,6 +1076,7 @@ api.get("/agents/:id", async (c) => {
       : {}),
     authMode: agent.auth?.mode,
     queueMode: agent.queueMode ?? "queue",
+    ...(agent.durable ? { durable: true } : {}),
   });
 });
 
@@ -1520,6 +1523,12 @@ api.post("/agents/:id/messages", async (c) => {
   try {
     const body = await c.req.json();
     const authContext = await getRequestAuthContext(c);
+    if (body?.clientSendId !== undefined && targetsDurableMain(agent, body.sessionId)) {
+      const parsed = parseDurableWebSend(body);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+      return c.json(await host.submitWeb(durableWebSender(authContext), parsed.input));
+    }
     const normalized = await normalizeRunRequest({
       agent,
       input: { agentId, ...body, deviceTurnToken: undefined },
@@ -1610,6 +1619,16 @@ api.get("/agents/:id/history", async (c) => {
   }
   const view = (c.req.query("view") ?? "simple") as HistoryViewMode;
   const userId = await getRequestUserId(c);
+  if (targetsDurableMain(agent, explicitSessionId)) {
+    const limitQuery = c.req.query("limit");
+    const limit = limitQuery ? Number(limitQuery) : undefined;
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)) {
+      return c.json({ error: "History limit must be between 1 and 200" }, 400);
+    }
+    const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+    const history = await host.history(userId ?? "local", view, limit, c.req.query("before"));
+    return c.json(history, history.error ? 400 : 200);
+  }
   const entry = explicitSessionId
     ? null
     : await getSessionEntry(agentId, sessionKey, userId);

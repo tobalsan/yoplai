@@ -24,6 +24,8 @@ import { loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
 import { getCurrentInnerApi, getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { DurableWeb } from "../durable/web.js";
+import type { DurableHostOptions } from "../durable/host.js";
 import { WsBroker, type WsBrokerAuthAdapter } from "./ws-broker.js";
 import { accessLogger } from "./access-log.js";
 import { allowedCorsOrigins } from "./origins.js";
@@ -303,7 +305,8 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress });
+  const durableWeb = (c.env as { durableWeb?: DurableWeb } | undefined)?.durableWeb;
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress, durableWeb });
 });
 
 app.all("/hooks/*", async (c) => {
@@ -351,12 +354,17 @@ function setupGracefulShutdown(server: ReturnType<typeof serve>): void {
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+  server.once("close", () => {
+    process.off("SIGTERM", shutdown);
+    process.off("SIGINT", shutdown);
+  });
 }
 
 export function startServer(
   port?: number,
   host?: string,
-  runtime: ExtensionRuntime = getExtensionRuntime()
+  runtime: ExtensionRuntime = getExtensionRuntime(),
+  durableOptions?: DurableHostOptions,
 ) {
   activeExtensionRuntime = runtime;
   const config = loadConfig();
@@ -404,8 +412,9 @@ export function startServer(
   // Port 0 (tests) means "any free port". It is not a valid env port, and loadConfig refuses it.
   if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
+  const durableWeb = new DurableWeb(runtime, durableOptions);
   const server = serve({
-    fetch: app.fetch,
+    fetch: (request, env) => app.fetch(request, { ...env, durableWeb }),
     port: resolvedPort,
     hostname: resolvedHost,
   });
@@ -432,6 +441,9 @@ export function startServer(
       : undefined
   );
   server.once("close", stopApps);
+  server.once("close", () => {
+    void durableWeb.close().catch((error) => logError("Durable host shutdown failed", error));
+  });
 
   if (webDist) {
     const uiPort = config.ui?.port ?? 3000;
@@ -471,14 +483,14 @@ export function startServer(
     canAccessAgent,
     getExtensionRuntime: currentExtensionRuntime,
   };
-  new WsBroker().attach(server as import("http").Server, wsAuthAdapter);
+  new WsBroker({ durableWeb }).attach(server as import("http").Server, wsAuthAdapter);
   server.once("close", startDeviceLinks());
 
   setupGracefulShutdown(server);
 
   void startConfiguredInternalSocket(config, resolveHomeDir());
 
-  return server;
+  return Object.assign(server, { durableWeb });
 }
 
 export { app };

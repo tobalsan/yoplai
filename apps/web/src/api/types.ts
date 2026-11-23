@@ -75,6 +75,7 @@ export type Agent = {
   workspace?: string;
   authMode?: "oauth" | "api_key" | "proxy";
   queueMode?: QueueMode; // default "queue"
+  durable?: boolean;
   isDefaultProjectManager?: boolean;
   /** Name of the linked remote gateway that hosts this agent. Absent for a local agent. */
   gateway?: string;

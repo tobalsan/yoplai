@@ -11,6 +11,7 @@ import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capab
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 const requests: string[] = [];
+const wsMessages: Array<{ type: string; clientSendId?: string; message?: string }> = [];
 class Socket {
   static OPEN = 1;
   static CONNECTING = 0;
@@ -19,13 +20,14 @@ class Socket {
   onmessage?: (event: { data: string }) => void;
   onclose?: () => void;
   constructor() { queueMicrotask(() => { this.readyState = 1; this.onopen?.(); }); }
-  send() {}
+  send(payload: string) { wsMessages.push(JSON.parse(payload)); }
   close() { this.readyState = 3; }
 }
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   requests.length = 0;
+  wsMessages.length = 0;
   setCapabilitiesForTests({ multiUser: false });
   history.replaceState({}, "", "/dashboards");
   root = document.createElement("div");
@@ -87,4 +89,48 @@ it("keeps a linked dashboard active beside saved frames through the real reload 
     expect(getByTitle(root, "Dashboard dashboard").getAttribute("src")).toBe("/d/garden");
     expect(location.search).toBe("?session=saved-session");
   } finally { measure.mockRestore(); }
+});
+
+it("keeps the restored Main when New Chat is clicked and admits one rapid composer submission", async () => {
+  history.replaceState({}, "", "/chat/sage");
+  localStorage.setItem("yoplai:sessionKey:sage", "web-greenhouse");
+  const fetchStub = vi.mocked(fetch);
+  const fallback = fetchStub.getMockImplementation()!;
+  fetchStub.mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/agents/sage") return Response.json({ id: "sage", name: "Sage", durable: true });
+    if (path.startsWith("/api/agents/sage/history?")) {
+      requests.push(path);
+      const selector = new URL(path, location.origin).searchParams;
+      if (selector.get("sessionKey") === "web-greenhouse" && !selector.has("sessionId")) {
+        return Response.json({
+          sessionId: "durable-main", isStreaming: false, activeTurn: null,
+          messages: [
+            { role: "user", timestamp: 1, content: [{ type: "text", text: "Check the greenhouse" }] },
+            { role: "assistant", timestamp: 2, content: [{ type: "text", text: "The seedlings are ready." }] },
+          ],
+        });
+      }
+      return Response.json({ messages: [] });
+    }
+    return fallback(input, init);
+  });
+  dispose = render(() => <Router>
+    <Route path="/chat/:agentId" component={() => <Suspense><ToolbarOnlyShell><ChatView /></ToolbarOnlyShell></Suspense>} />
+  </Router>, root);
+  await vi.waitFor(() => expect(root.textContent).toContain("The seedlings are ready."));
+  expect(root.textContent).toContain("Check the greenhouse");
+  expect(requests.some((path) => path.includes("sessionKey=web-greenhouse"))).toBe(true);
+  getByRole(root, "button", { name: "Start a new chat" }).click();
+  expect(root.textContent).toContain("The seedlings are ready.");
+
+  const composer = getByRole(root, "textbox") as HTMLTextAreaElement;
+  const send = () => composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  composer.value = "Water the basil";
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  send();
+  send();
+  await vi.waitFor(() => expect(wsMessages.filter((message) => message.type === "send")).toEqual([
+    expect.objectContaining({ message: "Water the basil", clientSendId: expect.any(String) }),
+  ]));
 });

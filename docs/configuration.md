@@ -107,6 +107,7 @@ Common fields:
 | `id`                                  | Unique id; must match workspace folder                      |
 | `name`                                | Display name                                                |
 | `system_files`                        | Ordered prompt files; `AGENTS.md` is prepended when present |
+| `durable`                             | Opt in to a permanent private Main for each web user. Default `false` |
 | `sdk`                                 | `pi` (default)                                            |
 | `description`, `avatar`              | Optional UI metadata                                        |
 | `model.provider`                      | Provider id; required for Pi                                |
@@ -136,6 +137,20 @@ On first run Yoplai creates missing `AGENTS.md` and `USER.md` without overwritin
 Mattermost, Slack and Telegram settings may also live under `extensions.mattermost`, `extensions.slack` and `extensions.telegram` in `agent.yaml`. The loader validates these blocks and exposes them to the per-agent bots; an existing top-level channel block takes precedence. A nested `enabled: false` prevents that bot from starting after a restart, unless a top-level block exists. Incomplete settings leave the agent available and log only the invalid field paths. Tokens may remain `$env:NAME` references resolved from the agent's `.env`; no file migration is needed.
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
+
+### Durable web pilot
+
+Set `durable: true` in the agent's `agent.yaml` and restart the gateway to pilot
+its web chat on Pi Durable. Use `sdk: pi` (the default), leave `sandbox.enabled`
+off, and configure `model.provider` and `model.model` for a built-in Pi provider
+with a provider API key in the gateway environment. Use a pilot agent dedicated
+to web chat. Removing the flag returns web sends to the legacy runner, and the
+Durable transcript stays on disk for the next time the flag is enabled.
+
+A user's web chat opens their Main even after choosing New Chat. Opening an
+explicit older session continues that legacy chat. The pilot supports plain
+text and holds drafts when a reply reviewer is configured. See
+[the API contract](api.md#durable-main) and [storage](data-layout.md#durable-web-main).
 
 ### Updating instructions from chat
 

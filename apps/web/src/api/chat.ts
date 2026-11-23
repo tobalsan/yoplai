@@ -61,6 +61,7 @@ export type StreamCallbacks = {
 };
 
 export type StreamMessageOptions = {
+  retryOnDisconnect?: boolean;
   turnId?: string;
   projectId?: string;
   attachments?: FileAttachment[];
@@ -243,9 +244,24 @@ export function streamMessage(
   callbacks?: Partial<StreamCallbacks>,
   options?: StreamMessageOptions
 ): () => void {
-  const ws = new WebSocket(getWsUrl());
+  const payload = JSON.stringify({
+    type: "send",
+    agentId,
+    sessionKey,
+    message,
+    clientSendId: crypto.randomUUID(),
+    ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+    ...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
+    ...(options?.projectId ? { projectId: options.projectId } : {}),
+    ...(options?.attachments?.length ? { attachments: options.attachments } : {}),
+    ...(options?.thinkLevel ? { thinkLevel: options.thinkLevel } : {}),
+  });
+  let ws: WebSocket;
   let terminated = false;
   let approvalsClosed = false;
+  let canRetry = options?.retryOnDisconnect === true;
+  let receivedText = "";
+  let replayPrefix = "";
   const closeApprovals = () => {
     if (approvalsClosed) return;
     approvalsClosed = true;
@@ -258,77 +274,69 @@ export function streamMessage(
     return true;
   };
 
-  ws.onopen = () => {
-    const payload: Record<string, unknown> = {
-      type: "send",
-      agentId,
-      sessionKey,
-      message,
+  function connect() {
+    const socket = new WebSocket(getWsUrl());
+    ws = socket;
+    socket.onopen = () => {
+      if (socket === ws && !terminated) socket.send(payload);
     };
-    if (options?.sessionId) payload.sessionId = options.sessionId;
-    if (options?.turnId !== undefined) payload.turnId = options.turnId;
-    if (options?.projectId) payload.projectId = options.projectId;
-    if (options?.attachments && options.attachments.length > 0) {
-      payload.attachments = options.attachments;
-    }
-    if (options?.thinkLevel) {
-      payload.thinkLevel = options.thinkLevel;
-    }
-    ws.send(JSON.stringify(payload));
-  };
-
-  ws.onmessage = (e) => {
-    if (terminated) return;
-    const event = JSON.parse(e.data) as WsStreamEvent;
-    if (event.type === "done" || event.type === "error" || event.type === "turn_exists") {
-      terminated = true;
+    const lost = (message: string) => {
+      if (socket !== ws || terminated) return;
+      if (canRetry) {
+        canRetry = false;
+        replayPrefix = receivedText;
+        connect();
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+        return;
+      }
       closeApprovals();
-    }
-    if (event.type === "turn_exists") {
-      callbacks?.onTurnExists?.();
-      return;
-    }
-    const approval = event as unknown as { type: string };
-    if (approval.type === "device_approval_request") {
-      callbacks?.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest, answerApproval);
-      return;
-    }
-    if (approval.type === "device_approval_resolved") {
-      callbacks?.onDeviceApprovalResolved?.(event as unknown as WsDeviceApprovalResolved);
-      return;
-    }
-    dispatchWsEvent(event, {
-      ...callbacks,
-      onText,
-      onDone,
-      onError,
-    });
-  };
-
-  ws.onerror = () => {
-    closeApprovals();
-    terminated = true;
-    onError("Connection error");
-  };
-
-  // If the socket closes without a terminal done/error event (e.g. network drop,
-  // server restart), surface a recoverable error so the UI can clear isStreaming.
-  ws.onclose = () => {
-    closeApprovals();
-    if (!terminated) {
       terminated = true;
-      onError("Connection closed");
-    }
-  };
+      onError(message);
+    };
+    socket.onmessage = (e) => {
+      if (socket !== ws || terminated) return;
+      const event = JSON.parse(e.data) as WsStreamEvent;
+      if (event.type === "done" || event.type === "error" || event.type === "turn_exists") {
+        terminated = true;
+        closeApprovals();
+      }
+      if (event.type === "turn_exists") {
+        callbacks?.onTurnExists?.();
+        return;
+      }
+      const approval = event as unknown as { type: string };
+      if (approval.type === "device_approval_request") {
+        callbacks?.onDeviceApprovalRequest?.(event as unknown as WsDeviceApprovalRequest, answerApproval);
+        return;
+      }
+      if (approval.type === "device_approval_resolved") {
+        callbacks?.onDeviceApprovalResolved?.(event as unknown as WsDeviceApprovalResolved);
+        return;
+      }
+      if (event.type === "text" && options?.retryOnDisconnect) {
+        if (replayPrefix.startsWith(event.data)) {
+          replayPrefix = replayPrefix.slice(event.data.length);
+          return;
+        }
+        if (!event.data.startsWith(replayPrefix)) {
+          lost("Connection closed");
+          return;
+        }
+        event.data = event.data.slice(replayPrefix.length);
+        replayPrefix = "";
+        receivedText += event.data;
+      }
+      dispatchWsEvent(event, { ...callbacks, onText, onDone, onError });
+    };
+
+    socket.onerror = () => lost("Connection error");
+    socket.onclose = () => lost("Connection closed");
+  }
+  connect();
 
   return () => {
     closeApprovals();
     terminated = true;
-    if (
-      ws.readyState === WebSocket.OPEN ||
-      ws.readyState === WebSocket.CONNECTING
-    ) {
-      ws.close();
-    }
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
   };
 }
