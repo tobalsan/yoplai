@@ -34,6 +34,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Same-page links scroll and move keyboard focus in linked dashboards without closing the dashboard on desktop.
 - Desktop MCP Connect and Reconnect open sign-in in a separate window and refresh the server status when it finishes.
 - HTML sent in chat has a readable inline preview and fills the side panel. File previews also work for agents on linked gateways.
 - SVG extension icons display in the admin catalog. Unavailable icons show the puzzle piece.

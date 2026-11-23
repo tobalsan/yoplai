@@ -92,8 +92,21 @@ function boot(html: string, documentUrl: string, framed = false) {
   const appended: object[] = [];
   const posted: Array<Record<string, unknown>> = [];
   const listeners: Array<{ type: string; handler: (event: object) => void }> = [];
+  const scrolled: string[] = [];
+  const element = (id: string) => ({
+    scrollIntoView: () => scrolled.push(id),
+    focus: () => {},
+    hasAttribute: (name: string) => name === "tabindex",
+  });
   const sandbox: Record<string, unknown> = {
-    document: { URL: documentUrl, readyState: "complete", addEventListener: (type: string, handler: (event: object) => void) => listeners.push({ type, handler }), createElement: () => ({}), body: { append: (element: object) => appended.push(element) } },
+    document: {
+      URL: documentUrl, readyState: "complete", addEventListener: (type: string, handler: (event: object) => void) => listeners.push({ type, handler }), createElement: () => ({}), body: { append: (element: object) => appended.push(element) },
+      getElementById: (id: string) => (id === "then" || id === "café" ? element(id) : null),
+      getElementsByName: (name: string) => (name === "named"
+        ? [{ ...element("same-name field"), localName: "input" }, { ...element(name), localName: "a" }]
+        : []),
+    },
+    scrollTo: () => scrolled.push("top"),
     location: { origin: new URL(documentUrl).origin },
     URL, Object, JSON, Promise, Error, console,
     fetch: async (url: string, init: { body: string }) => {
@@ -105,7 +118,23 @@ function boot(html: string, documentUrl: string, framed = false) {
   sandbox.top = framed ? {} : sandbox;
   sandbox.parent = { postMessage: (message: Record<string, unknown>, targetOrigin: string) => posted.push({ ...message, targetOrigin }) };
   vm.runInNewContext(script, sandbox);
-  return { appended, posted, listeners, yoplai: sandbox.YOPLAI as { link(slug: string, params?: Record<string, unknown>): string; edit(o: object): Promise<unknown>; canEdit: boolean; canWrite: boolean }, fetches };
+  const clickLink = (href: string, extra: Record<string, unknown> = {}) => {
+    let prevented = false;
+    const anchor = {
+      href: new URL(href, documentUrl).href,
+      matches: (selector: string) => selector === "a[href]",
+      hasAttribute: () => false,
+    };
+    listeners.find((listener) => listener.type === "click")!.handler({
+      defaultPrevented: false,
+      button: 0,
+      preventDefault: () => { prevented = true; },
+      composedPath: () => [anchor],
+      ...extra,
+    });
+    return prevented;
+  };
+  return { appended, posted, listeners, scrolled, clickLink, yoplai: sandbox.YOPLAI as { link(slug: string, params?: Record<string, unknown>): string; edit(o: object): Promise<unknown>; canEdit: boolean; canWrite: boolean }, fetches };
 }
 
 const viewerUrl = (_id: string, query = "") => `http://127.0.0.1:3000/api/relay/dashboard-views/${"G".repeat(43)}/frame${query}`;
@@ -166,12 +195,7 @@ it("tells the parent when the embed page runs and turns a link click into a requ
   const { text } = await embed(id, { user: alice });
   const framed = boot(text, viewerUrl(id), true);
   expect(framed.posted).toEqual([{ channel: "yoplai-embed", type: "ready", targetOrigin: "*" }]);
-  const click = framed.listeners.find((listener) => listener.type === "click")!.handler;
-  const clickOn = (href: string, extra: Record<string, unknown> = {}) => {
-    let prevented = false;
-    click({ defaultPrevented: false, button: 0, preventDefault: () => { prevented = true; }, target: { closest: () => ({ href, hasAttribute: () => false }) }, ...extra });
-    return prevented;
-  };
+  const clickOn = framed.clickLink;
   const sibling = `http://127.0.0.1:3000/api/relay/dashboard-views/${"S".repeat(32)}/?region=emea`;
   expect(clickOn(sibling)).toBe(true);
   expect(clickOn("https://example.test/report")).toBe(true);
@@ -181,8 +205,9 @@ it("tells the parent when the embed page runs and turns a link click into a requ
   ]);
   // The page keeps its own behavior for the same document, other schemes, and modified clicks.
   const before = framed.posted.length;
-  expect(clickOn(`${viewerUrl(id)}#section`)).toBe(false);
-  expect(clickOn("#yoplai-no-access")).toBe(false);
+  expect(clickOn(viewerUrl(id))).toBe(false);
+  expect(clickOn("#yoplai-no-access")).toBe(true);
+  expect(framed.scrolled).toEqual([]);
   expect(clickOn("mailto:a@example.test")).toBe(false);
   expect(clickOn("javascript:void(0)")).toBe(false);
   expect(clickOn(sibling, { metaKey: true })).toBe(false);
@@ -191,6 +216,23 @@ it("tells the parent when the embed page runs and turns a link click into a requ
   // A link that is too long is stopped and not sent.
   expect(clickOn(`https://example.test/${"x".repeat(2100)}`)).toBe(true);
   expect(framed.posted).toHaveLength(before);
+});
+
+it("scrolls a framed page to a `#` target on the same document instead of navigating", async () => {
+  const id = await ownedPage("overview", "<h1>Hello</h1>");
+  const { text } = await embed(id, { user: alice });
+  const framed = boot(text, viewerUrl(id), true);
+  const clickOn = framed.clickLink;
+  // WebKit fires a false frame load on a fragment navigation, and the shell ends the view on it.
+  expect(clickOn("#then")).toBe(true);
+  expect(clickOn("#caf%C3%A9")).toBe(true);
+  expect(clickOn("#named")).toBe(true);
+  expect(clickOn("#")).toBe(true);
+  expect(clickOn("#top")).toBe(true);
+  expect(clickOn("#missing")).toBe(true);
+  expect(framed.scrolled).toEqual(["then", "café", "named", "top", "top"]);
+  // A `#` link never becomes a link request.
+  expect(framed.posted).toEqual([{ channel: "yoplai-embed", type: "ready", targetOrigin: "*" }]);
 });
 
 it("posts nothing from an unframed embed page or from an ordinary page", async () => {
