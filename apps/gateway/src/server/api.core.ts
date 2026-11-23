@@ -568,7 +568,7 @@ async function requesterExtensionCatalog(c: Context, config: GatewayConfig, agen
       canConfigureTeam,
       ...(catalogEntry.oauth ? { oauthConnected: hasOAuthConnection(agent.id, catalogEntry.oauth, auth?.user.id) } : {}),
     };
-    if (!auth) return entry;
+    if (!auth || entry.teamOnly) return entry;
     const fields = extensionSecretFields(entry);
     const personal = getPersonalExtensionTokens(new CredentialStore(), agent.id, auth.user.id, entry.id);
     // OAuth extensions without credential fields still keep personal settings (e.g. Drive allowWrite).
@@ -1210,15 +1210,6 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
 
   const catalog = await buildExtensionCatalog(config, agent);
   const targetEntry = catalog.find((entry) => entry.id === extensionId);
-  if (targetEntry?.managedAtRoot) {
-    return c.json(
-      {
-        error: `${extensionId} is configured at the agent.yaml root; edit agent.yaml to change it`,
-      },
-      409
-    );
-  }
-
   let body: unknown;
   try {
     body = await c.req.json();
@@ -1242,11 +1233,22 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     userId?: unknown;
   };
 
+  const toggleOnly = typeof enabled === "boolean" && Object.keys(body).every((key) => key === "enabled");
+  if (targetEntry?.managedAtRoot && !(targetEntry.teamOnly && toggleOnly)) {
+    return c.json(
+      {
+        error: `${extensionId} is configured at the agent.yaml root; edit agent.yaml to change it`,
+      },
+      409
+    );
+  }
+
   if (userId !== undefined || (credentialScope !== undefined && credentialScope !== "personal" && credentialScope !== "team")) {
     return c.json({ error: "Invalid credential scope; requester identity is server-derived" }, 400);
   }
   const auth = await getRequestAuthContext(c);
   const personalScope = credentialScope === "personal";
+  if (personalScope && targetExtension?.teamOnly) return c.json({ error: "This extension uses team settings only" }, 400);
   if (personalScope && !isExtensionLoaded("multiUser")) return c.json({ error: "personal_scope_unavailable" }, 400);
   if (personalScope && !auth) return c.json({ error: "Personal credentials require login" }, 401);
 
@@ -1353,7 +1355,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
     agent.workspaceDir ?? agent.workspace
   );
   const env = resolveAgentEnv(agent, config);
-  const rootExtensionConfig = config.extensions?.[extensionId];
+  const rootExtensionConfig = targetExtension?.teamOnly ? undefined : config.extensions?.[extensionId];
   const before: Record<string, unknown> = {
     ...(typeof rootExtensionConfig === "object" && rootExtensionConfig !== null ? rootExtensionConfig : {}),
     ...agent.extensions?.[extensionId], enabled: targetEntry?.enabled ?? false,
@@ -1370,7 +1372,7 @@ api.patch("/agents/:id/extensions/:extensionId", async (c) => {
       const nextExtensions = nextConfig.extensions as AgentConfig["extensions"];
       const prospectiveAgent = { ...agent, extensions: nextExtensions };
       const enabled = (nextExtensions as Record<string, { enabled?: boolean }> | undefined)?.[extensionId]?.enabled !== false;
-      if (!enabled || !targetExtension?.validateAgentConfig) return;
+      if (!targetExtension?.validateAgentConfig || (toggleOnly && (targetEntry?.managedAtRoot || !enabled)) || (!enabled && !targetExtension.teamOnly)) return;
       const prospectiveEnv = {
         ...resolveAgentEnv(agent, config),
         ...pendingEnv,

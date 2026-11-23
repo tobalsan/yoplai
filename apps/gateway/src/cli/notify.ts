@@ -1,3 +1,6 @@
+import { readAgentChannelConfig as readMattermost } from "@yoplai/extension-mattermost";
+import { readAgentChannelConfig as readDiscord } from "@yoplai/extension-discord";
+import { readAgentChannelConfig as readSlack } from "@yoplai/extension-slack";
 import { Command } from "commander";
 import { notify, readEnv, type GatewayConfig, type NotifySummary } from "@yoplai/shared";
 import { loadConfig } from "../config/index.js";
@@ -50,7 +53,7 @@ export async function runNotifyCommand(
   if (agentId && !agent) {
     throw new Error(`Unknown notify agent "${agentId}"`);
   }
-  const mattermost = agent?.mattermost ?? config.extensions?.mattermost;
+  const mattermost = (agent ? readMattermost(agent) : undefined) ?? config.extensions?.mattermost;
 
   const summary = await (deps.notifyImpl ?? notify)({
     config: config.notifications,
@@ -58,8 +61,8 @@ export async function runNotifyCommand(
     message: options.message,
     surface: options.surface,
     mention: options.mention,
-    discordToken: agent?.discord?.token ?? config.extensions?.discord?.token,
-    slackToken: agent?.slack?.token ?? config.extensions?.slack?.token,
+    discordToken: (agent ? readDiscord(agent)?.token : undefined) ?? config.extensions?.discord?.token,
+    slackToken: (agent ? readSlack(agent)?.token : undefined) ?? config.extensions?.slack?.token,
     mattermostUrl: mattermost?.url,
     mattermostToken: mattermost?.token,
   });

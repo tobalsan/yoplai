@@ -144,13 +144,15 @@ function createTestAgent(discordOverrides: Partial<DiscordConfig> = {}): AgentCo
       model: "claude-sonnet-4-20250514",
     },
     queueMode: "queue",
-    discord: {
-      token: "test-token",
-      groupPolicy: "open",
-      historyLimit: 20,
-      clearHistoryAfterReply: true,
-      replyToMode: "off",
-      ...discordOverrides,
+    extensions: {
+      discord: {
+        token: "test-token",
+        groupPolicy: "open",
+        historyLimit: 20,
+        clearHistoryAfterReply: true,
+        replyToMode: "off",
+        ...discordOverrides,
+      },
     },
   };
 }

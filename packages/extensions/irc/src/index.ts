@@ -1,5 +1,6 @@
+import { ircSettings, readAgentChannelConfig } from "./config.js";
 import {
-  IrcAgentConfigSchema,
+  createChannelBotReconciler,
   IrcExtensionConfigSchema,
   type Extension,
   type ExtensionContext,
@@ -9,8 +10,9 @@ import {
 import { IrcRouter } from "./router.js";
 import { IrcService } from "./service.js";
 
-const services: IrcService[] = [];
-const routers: IrcRouter[] = [];
+const reconcileAgentBots = createChannelBotReconciler("irc", readAgentChannelConfig);
+let stopSharedBot: (() => void) | undefined;
+let hostContext: ExtensionContext | undefined;
 
 function normalizeAgentConfig(
   agentId: string,
@@ -32,18 +34,31 @@ function startService(
   ctx: ExtensionContext,
   config: IrcExtensionConfig,
   ownerAgentId?: string
-): void {
+): () => void {
   const service = new IrcService(
     { ...config, channels: Object.keys(config.channels) },
     (message) => router.handle(message)
   );
   const router = new IrcRouter(ctx, config, service, ownerAgentId);
-  services.push(service);
-  routers.push(router);
   service.start();
+  return () => {
+    router.stop();
+    service.stop();
+  };
+}
+
+async function reconcileBots(ctx?: ExtensionContext) {
+  if (!ctx) {
+    await reconcileAgentBots([], async () => undefined);
+    return;
+  }
+  await reconcileAgentBots(ctx.getAgents().filter((agent) => ctx.isAgentActive(agent.id)), async (agent, settings) =>
+    startService(ctx, normalizeAgentConfig(agent.id, settings), agent.id)
+  );
 }
 
 const ircExtension: Extension = {
+  ...ircSettings,
   id: "irc",
   displayName: "IRC",
   description: "IRC channel and direct-message routing",
@@ -70,23 +85,22 @@ const ircExtension: Extension = {
   },
   registerRoutes() {},
   async start(ctx) {
+    hostContext = ctx;
     const root = IrcExtensionConfigSchema.safeParse(
       ctx.getConfig().extensions?.irc
     );
     if (root.success && root.data.enabled !== false) {
-      startService(ctx, root.data);
+      stopSharedBot = startService(ctx, root.data);
     }
 
-    for (const agent of ctx.getAgents()) {
-      if (!ctx.isAgentActive(agent.id)) continue;
-      const parsed = IrcAgentConfigSchema.safeParse(agent.irc);
-      if (!parsed.success) continue;
-      startService(ctx, normalizeAgentConfig(agent.id, parsed.data), agent.id);
-    }
+    await reconcileBots(ctx);
   },
+  onConfigReload: () => reconcileBots(hostContext),
   async stop() {
-    for (const router of routers.splice(0)) router.stop();
-    for (const service of services.splice(0)) service.stop();
+    hostContext = undefined;
+    await reconcileBots();
+    stopSharedBot?.();
+    stopSharedBot = undefined;
   },
   capabilities() {
     return ["irc"];

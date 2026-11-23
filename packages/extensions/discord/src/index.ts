@@ -1,5 +1,8 @@
+import { readAgentChannelConfig, discordSettings } from "./config.js";
 import {
   DiscordExtensionConfigSchema,
+  createChannelBotReconciler,
+  startRegisteredChannelBot,
   type DeliverySink,
   type Extension,
   type ExtensionContext,
@@ -10,12 +13,13 @@ import {
   createDiscordComponentBot,
   type DiscordBot,
 } from "./bot.js";
-import { clearDiscordContext, setDiscordContext } from "./context.js";
+import { clearDiscordContext, getDiscordContext, setDiscordContext } from "./context.js";
 import {
   clearActiveBots,
   getActiveBot,
   getActiveBots,
-  registerActiveBot,
+  getComponentBot,
+  registerComponentBot,
 } from "./bot-registry.js";
 import {
   clearDiscordClientCache,
@@ -46,7 +50,7 @@ export async function startDiscordBots(
 
     try {
       await bot.start();
-      registerActiveBot(bot.agentId, bot);
+      registerComponentBot(bot);
       console.log("[discord] Started component bot");
     } catch (err) {
       console.error("[discord] Failed to start component bot:", err);
@@ -54,30 +58,26 @@ export async function startDiscordBots(
     return;
   }
 
-  const agents = ctx.getAgents();
-
-  for (const agent of agents) {
-    if (!ctx.isAgentActive(agent.id)) continue;
-    if (!agent.discord?.token) continue;
-
-    const bot = await createDiscordBot(agent);
-    if (!bot) continue;
-
-    try {
-      await bot.start();
-      registerActiveBot(agent.id, bot);
-      console.log(`[discord] Started bot for agent: ${agent.id}`);
-    } catch (err) {
-      console.error(
-        `[discord] Failed to start bot for agent ${agent.id}:`,
-        err
-      );
-    }
-  }
+  await reconcileBots(ctx);
 }
 
+const reconcileAgentBots = createChannelBotReconciler("discord", (agent) => {
+  const settings = readAgentChannelConfig(agent);
+  return settings?.token?.trim() ? settings : undefined;
+});
+
+async function reconcileBots(ctx?: ExtensionContext): Promise<void> {
+  const agents = ctx?.getAgents().filter((agent) => ctx.isAgentActive(agent.id)) ?? [];
+  await reconcileAgentBots(agents, (agent) => startRegisteredChannelBot(getActiveBots(), agent.id, createDiscordBot(agent)));
+}
+
+
 export async function stopDiscordBots(): Promise<void> {
-  for (const [agentId, bot] of getActiveBots()) {
+  await reconcileBots();
+  const bots = [...getActiveBots()];
+  const component = getComponentBot();
+  if (component) bots.push(["discord", component]);
+  for (const [agentId, bot] of bots) {
     try {
       await bot.stop();
       console.log(`[discord] Stopped bot for agent: ${agentId}`);
@@ -90,6 +90,7 @@ export async function stopDiscordBots(): Promise<void> {
 }
 
 const discordExtension: Extension = {
+  ...discordSettings,
   id: "discord",
   displayName: "Discord",
   description: "Discord integration for channel and DM routing",
@@ -137,6 +138,7 @@ const discordExtension: Extension = {
 
     await startDiscordBots(ctx);
   },
+  onConfigReload: () => reconcileBots(getDiscordContext()),
   async stop() {
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;
@@ -157,3 +159,5 @@ export {
   type ThreadSessionBinding,
 } from "./thread-session-bindings.js";
 export { getForumSubscribers } from "./forum-subscribers.js";
+
+export { readAgentChannelConfig } from "./config.js";

@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parseEnv } from "node:util";
 import { parseDocument, type Document } from "yaml";
-import { AgentYamlConfigSchema } from "@yoplai/shared";
+import { AgentYamlConfigSchema, isAgentChannel } from "@yoplai/shared";
 import type { ExtensionConfigPatch } from "@yoplai/shared";
 
 /**
@@ -49,12 +50,12 @@ export function secretEnvName(extensionId: string, field: string): string {
   return `${toEnvSegment(extensionId)}_${toEnvSegment(field)}`;
 }
 
-async function writeAtomic(filePath: string, content: string): Promise<void> {
+async function writeAtomic(filePath: string, content: string, mode?: number): Promise<void> {
   const tmpPath = path.join(
     path.dirname(filePath),
     `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
   );
-  await fs.writeFile(tmpPath, content, "utf8");
+  await fs.writeFile(tmpPath, content, { encoding: "utf8", mode });
   await fs.rename(tmpPath, filePath);
 }
 
@@ -105,14 +106,15 @@ export async function updateAgentConfig(
   }
 }
 
-/** Escape a value for the agent's `.env` file (dotenv KEY=value format). */
+/** Encode a value using the same dotenv grammar the gateway reads. */
 function formatEnvValue(value: string): string {
-  // Quote when the value contains characters that would break a bare
-  // assignment; escape embedded quotes and backslashes.
-  if (/[\s"'#\\]/.test(value) || value === "") {
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const delimiters = /[\s"'`#\\]/.test(value) || value === "" ? ['"', "'", "`", ""] : [""];
+  for (const delimiter of delimiters) {
+    const encoded = delimiter + value + delimiter;
+    const parsed = parseEnv(`YOPLAI_CREDENTIAL=${encoded}\n`);
+    if (Object.keys(parsed).length === 1 && parsed.YOPLAI_CREDENTIAL === value) return encoded;
   }
-  return value;
+  throw new Error("Credential cannot be represented in the agent .env file.");
 }
 
 /**
@@ -150,7 +152,7 @@ async function upsertEnvVars(
     next.push(`${key}=${formatEnvValue(value)}`);
   }
 
-  await writeAtomic(envPath, `${next.join("\n")}\n`);
+  await writeAtomic(envPath, `${next.join("\n")}\n`, 0o600);
 }
 
 /** Remove `KEY=value` lines from an env file, preserving every other line. */
@@ -163,7 +165,7 @@ async function removeEnvVars(envPath: string, keys: string[]): Promise<void> {
   }
   const lines = existing.split("\n");
   const next = lines.filter((line) => !keys.includes(/^([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1] ?? ""));
-  if (next.length !== lines.length) await writeAtomic(envPath, next.join("\n"));
+  if (next.length !== lines.length) await writeAtomic(envPath, next.join("\n"), 0o600);
 }
 
 /**
@@ -196,7 +198,9 @@ export async function updateAgentExtensionConfig(
       }
       if (patch.config) {
         for (const [key, value] of Object.entries(patch.config)) {
-          current[key] = value;
+          if (value === "") delete current[key];
+          else current[key] = value;
+          if (key === "channelIds" && isAgentChannel(extensionId)) delete current.channels;
         }
       }
 
@@ -205,6 +209,9 @@ export async function updateAgentExtensionConfig(
       const envVars: Record<string, string> = {};
       if (patch.secrets) {
         for (const [field, value] of Object.entries(patch.secrets)) {
+          if (isAgentChannel(extensionId) && /[\r\n]/.test(value)) {
+            throw new Error("Channel credentials must fit on one line.");
+          }
           const envName = secretEnvName(extensionId, field);
           current[field] = `$env:${envName}`;
           envVars[envName] = value;

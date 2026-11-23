@@ -1,3 +1,4 @@
+import { readAgentChannelConfig } from "./config.js";
 import { WebClient } from "@slack/web-api";
 import type {
   AgentConfig,
@@ -7,11 +8,10 @@ import type {
   ExtensionAgentTool,
   ExtensionContext,
   GatewayConfig,
-  SlackAgentConfig,
   SlackComponentConfig,
 } from "@yoplai/shared";
 import { z } from "zod";
-import { getActiveBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import { findSlackSender, getCachedSlackWorkspace, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
@@ -382,7 +382,7 @@ function resolveSlackToken(
   config: GatewayConfig,
   env?: Record<string, string>
 ): string | undefined {
-  const agentSlack = agent.slack as SlackAgentConfig | undefined;
+  const agentSlack = readAgentChannelConfig(agent);
   if (agentSlack?.token) return agentSlack.token;
   const component = config.extensions?.slack as
     | SlackComponentConfig
@@ -403,7 +403,7 @@ function resolveSlackClient(
   config: GatewayConfig,
   env?: Record<string, string>
 ): SlackWebClient | undefined {
-  const activeBot = getActiveBot(agent.id) ?? getActiveBot("slack");
+  const activeBot = getActiveBot(agent.id) ?? getComponentBot();
   if (activeBot) {
     return activeBot.app.client as unknown as SlackWebClient;
   }

@@ -1,7 +1,12 @@
+import { readAgentChannelConfig as readMattermost } from "../../../../packages/extensions/mattermost/src/config.js";
+import { readAgentChannelConfig as readSlack } from "../../../../packages/extensions/slack/src/config.js";
+import { readAgentChannelConfig as readTelegram } from "../../../../packages/extensions/telegram/src/config.js";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const readers = { mattermost: readMattermost, slack: readSlack, telegram: readTelegram };
 
 describe("channel extension config loading", () => {
   let home: string | undefined;
@@ -56,7 +61,7 @@ describe("channel extension config loading", () => {
     return loadConfig().agents[0];
   }
 
-  it("checks workspace authority before projection on load and plain reload", async () => {
+  it("checks workspace authority before loading channel settings on load and plain reload", async () => {
     vi.stubEnv("CANARY_SHARED_CHAT", "canary-shared-chat-value");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = await loadAgent({
@@ -80,7 +85,7 @@ describe("channel extension config loading", () => {
       token: "$env:CANARY_WORKSPACE_TOKEN",
       mentionPatterns: ["canary-literal-pattern"],
     });
-    expect(agent.slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
+    expect(readSlack(agent)?.mentionPatterns).toEqual(["canary-literal-pattern"]);
     expect(agent.extensions?.["canary-nested"]?.profiles).toEqual([{ enabled: true }]);
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/assistant.*slack.*CANARY_SHARED_CHAT/));
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/assistant.*canary-nested.*CANARY_SHARED_CHAT/));
@@ -88,23 +93,23 @@ describe("channel extension config loading", () => {
 
     const config = await resolveStartupConfig(loadConfig());
     expect(config.agents[0]).toMatchObject({
-      slack: { token: "canary-workspace-token-value", mentionPatterns: ["canary-literal-pattern"] },
-      telegram: { token: "canary-shared-chat-value" },
-      extensions: { slack: { token: "canary-workspace-token-value", mentionPatterns: ["canary-literal-pattern"] } },
+      extensions: {
+        slack: { token: "canary-workspace-token-value", mentionPatterns: ["canary-literal-pattern"] },
+        telegram: { token: "canary-shared-chat-value" },
+      },
     });
     expect(config.extensions?.["canary-root"]).toEqual({ target: "canary-shared-chat-value" });
     reloadConfig();
-    expect(loadConfig().agents[0].slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
+    expect(readSlack(loadConfig().agents[0])?.mentionPatterns).toEqual(["canary-literal-pattern"]);
     expect(loadConfig().agents[0].extensions?.slack?.mentionPatterns).toEqual(["canary-literal-pattern"]);
 
     const configFile = getConfigPath();
     const previousRoot = JSON.parse(await fs.readFile(configFile, "utf8"));
     await fs.writeFile(configFile, JSON.stringify({ ...previousRoot, extensionEnvAllowlist: ["CANARY_SHARED_CHAT"] }));
     const allowed = reloadConfig();
-    expect(allowed.agents[0].slack?.mentionPatterns).toEqual(["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"]);
+    expect(readSlack(allowed.agents[0])?.mentionPatterns).toEqual(["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"]);
     expect(allowed.agents[0].extensions?.slack?.mentionPatterns).toEqual(["$env:CANARY_SHARED_CHAT", "canary-literal-pattern"]);
     expect((await resolveStartupConfig(allowed)).agents[0]).toMatchObject({
-      slack: { mentionPatterns: ["canary-shared-chat-value", "canary-literal-pattern"] },
       extensions: { slack: { mentionPatterns: ["canary-shared-chat-value", "canary-literal-pattern"] } },
     });
   });
@@ -122,7 +127,7 @@ describe("channel extension config loading", () => {
       },
     }, { agentEnv: "CANARY_MATTERMOST_TOKEN=canary-token\n" });
 
-    expect(agent.mattermost).toEqual({
+    expect(readMattermost(agent)).toEqual({
       url: "https://chat.example.test",
       token: "$env:CANARY_MATTERMOST_TOKEN",
       channels: { "channel-a": { requireMention: false } },
@@ -149,7 +154,7 @@ describe("channel extension config loading", () => {
       },
     }, { agentEnv: "CANARY_SLACK_TOKEN=canary-token\nCANARY_SLACK_APP_TOKEN=canary-app-token\n" });
 
-    expect(agent.slack).toEqual({
+    expect(readSlack(agent)).toEqual({
       token: "$env:CANARY_SLACK_TOKEN",
       appToken: "$env:CANARY_SLACK_APP_TOKEN",
       channels: {
@@ -171,7 +176,7 @@ describe("channel extension config loading", () => {
       },
     }, { agentEnv: "CANARY_TELEGRAM_TOKEN=canary-token\n" });
 
-    expect(agent.telegram).toEqual({
+    expect(readTelegram(agent)).toEqual({
       token: "$env:CANARY_TELEGRAM_TOKEN",
       allowedUsers: [101, "user-a"],
       allowedChats: [-202, "chat-a"],
@@ -192,7 +197,7 @@ describe("channel extension config loading", () => {
         },
       });
 
-      expect(agent[channel]).toBeUndefined();
+      expect(readers[channel](agent)).toBeUndefined();
       expect(agent.extensions?.[channel]?.enabled).toBe(false);
     }
   );
@@ -222,10 +227,10 @@ describe("channel extension config loading", () => {
         },
       });
 
-      expect(agent[channel]).toEqual(expected);
+      expect(readers[channel](agent)).toEqual(expected);
     }
   );
-  it("keeps incomplete Mattermost setup and other agents available with a value-free warning", async () => {
+  it("keeps incomplete Mattermost setup and other agents available without rejecting the agent", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = await loadAgent(
       {
@@ -240,16 +245,12 @@ describe("channel extension config loading", () => {
     );
     const { loadConfig } = await import("./index.js");
 
-    expect(agent.mattermost).toBeUndefined();
+    expect(readMattermost(agent)).toBeUndefined();
     expect(loadConfig().agents.map((entry) => entry.id)).toEqual([
       "assistant",
       "healthy",
     ]);
-    expect(warn.mock.calls).toEqual([
-      [
-        '[config] agent "assistant" cannot project extension "mattermost": token',
-      ],
-    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("keeps a toggle-only Mattermost setup safe", async () => {
@@ -258,16 +259,12 @@ describe("channel extension config loading", () => {
       extensions: { mattermost: { enabled: true } },
     });
 
-    expect(agent.mattermost).toBeUndefined();
+    expect(readMattermost(agent)).toBeUndefined();
     expect(agent.extensions?.mattermost).toEqual({ enabled: true });
-    expect(warn.mock.calls).toEqual([
-      [
-        '[config] agent "assistant" cannot project extension "mattermost": url, token',
-      ],
-    ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it("never includes an invalid credential value in projection warnings", async () => {
+  it("leaves invalid nested credentials unusable without logging their values", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = await loadAgent({
       extensions: {
@@ -279,12 +276,8 @@ describe("channel extension config loading", () => {
       },
     });
 
-    expect(agent.mattermost).toBeUndefined();
-    expect(warn.mock.calls).toEqual([
-      [
-        '[config] agent "assistant" cannot project extension "mattermost": token',
-      ],
-    ]);
+    expect(readMattermost(agent)).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("loads nested Mattermost settings when enabled is omitted", async () => {
@@ -297,7 +290,7 @@ describe("channel extension config loading", () => {
       },
     }, { agentEnv: "CANARY_MATTERMOST_TOKEN=canary-token\n" });
 
-    expect(agent.mattermost).toEqual({
+    expect(readMattermost(agent)).toEqual({
       url: "https://chat.example.test",
       token: "$env:CANARY_MATTERMOST_TOKEN",
     });
@@ -313,27 +306,27 @@ describe("channel extension config loading", () => {
       },
     });
 
-    expect(agent.mattermost).toEqual({
+    expect(readMattermost(agent)).toEqual({
       url: "https://legacy.example.test",
       token: "$env:LEGACY_MATTERMOST_TOKEN",
       channels: { "legacy-channel": { requireMention: true } },
       dm: { enabled: false },
     });
-    expect(agent.extensions?.mattermost).toBeUndefined();
+    expect(agent.extensions?.mattermost?.token).toBe("$env:LEGACY_MATTERMOST_TOKEN");
   });
 
   it("leaves agents without channel blocks unchanged", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const agent = await loadAgent({});
 
-    expect(agent.mattermost).toBeUndefined();
-    expect(agent.slack).toBeUndefined();
-    expect(agent.telegram).toBeUndefined();
+    expect(readMattermost(agent)).toBeUndefined();
+    expect(readSlack(agent)).toBeUndefined();
+    expect(readTelegram(agent)).toBeUndefined();
     expect(warn).not.toHaveBeenCalled();
   });
 
   it.each(["mattermost", "slack", "telegram"] as const)(
-    "does not let the nested disable toggle override top-level %s settings",
+    "keeps the legacy %s bot off when explicitly disabled",
     async (channel) => {
       const agent = await loadAgent({
         [channel]: {
@@ -344,7 +337,40 @@ describe("channel extension config loading", () => {
         extensions: { [channel]: { enabled: false } },
       });
 
-      expect(agent[channel]?.token).toBe("legacy-token");
+      expect(readers[channel](agent)).toBeUndefined();
+      expect(agent.extensions?.[channel]?.token).toBe("legacy-token");
     }
   );
+});
+
+it("loads a deprecated channel as an extension and preserves a home env reference", async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-legacy-channel-"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    vi.stubEnv("YOPLAI_HOME", home);
+    const workspace = path.join(home, "agents", "chat");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(path.join(home, "yoplai.json"), JSON.stringify({ version: 3, agents: "agents/*" }));
+    await fs.writeFile(path.join(home, ".env"), "LEGACY_CHAT_TOKEN=fixture-home-token\n");
+    await fs.writeFile(path.join(workspace, "agent.yaml"), JSON.stringify({
+      id: "chat",
+      name: "Chat",
+      model: { provider: "test", model: "test" },
+      mattermost: { url: "https://legacy.example.test", token: "$env:LEGACY_CHAT_TOKEN" },
+      extensions: { mattermost: { enabled: false, channelIds: "ignored" } },
+    }));
+    const { loadConfig, reloadConfig } = await import("./index.js");
+    const { resolveStartupConfig } = await import("./validate.js");
+    const { agents } = await resolveStartupConfig(loadConfig());
+    expect(agents[0].extensions?.mattermost).toEqual({
+      enabled: false, url: "https://legacy.example.test", token: "fixture-home-token",
+    });
+    reloadConfig();
+    expect(warn.mock.calls).toEqual([[expect.stringMatching(/chat.*mattermost.*deprecated.*channelIds/)]]);
+  } finally {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    await fs.rm(home, { recursive: true, force: true });
+  }
 });

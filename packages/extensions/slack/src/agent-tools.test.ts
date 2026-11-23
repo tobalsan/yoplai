@@ -3,16 +3,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig, SlackAgentConfig } from "@yoplai/shared";
 import { clearSlackClientCache, slackAgentTools } from "./agent-tools.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerActiveBot, registerComponentBot } from "./bot-registry.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
 import { createSlackThreadSessionBindingStore } from "./thread-session-bindings.js";
 import type { SlackBot } from "./bot.js";
 import type { SlackWebClient } from "./types.js";
 import { trackSlackSender } from "./requester.js";
 
-function agent(id: string, slack?: AgentConfig["slack"]): AgentConfig {
+function agent(id: string, slack?: SlackAgentConfig): AgentConfig {
   return {
     id,
     name: id,
@@ -20,7 +20,7 @@ function agent(id: string, slack?: AgentConfig["slack"]): AgentConfig {
     workspaceDir: `/tmp/${id}`,
     model: { provider: "test", model: "test" },
     queueMode: "queue",
-    slack,
+    extensions: slack ? { slack } : undefined,
   };
 }
 
@@ -36,12 +36,14 @@ function config(extensionsSlack?: unknown): GatewayConfig {
 }
 
 function registerMockBot(agentId: string, client: Partial<SlackWebClient>): void {
-  registerActiveBot(agentId, {
+  const bot = {
     agentId,
     app: { client },
     start: vi.fn(),
     stop: vi.fn(),
-  } as unknown as SlackBot);
+  } as unknown as SlackBot;
+  if (agentId === "slack") registerComponentBot(bot);
+  else registerActiveBot(agentId, bot);
 }
 
 function tool(name: string) {

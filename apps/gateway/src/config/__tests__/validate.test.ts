@@ -176,9 +176,11 @@ describe("startup validation", () => {
           name: "Main",
           workspace: "~/agents/main",
           model: { provider: "anthropic", model: "claude" },
-          mattermost: {
-            url: "https://chat.example.test",
-            token: "$env:TEST_MATTERMOST_BOT_TOKEN",
+          extensions: {
+            mattermost: {
+              url: "https://chat.example.test",
+              token: "$env:TEST_MATTERMOST_BOT_TOKEN",
+            },
           },
         },
       ],
@@ -194,7 +196,7 @@ describe("startup validation", () => {
       await expect(resolveStartupConfig(config)).resolves.toMatchObject({
         agents: [
           expect.objectContaining({
-            mattermost: expect.objectContaining({ token: "mm-resolved" }),
+            extensions: { mattermost: expect.objectContaining({ token: "mm-resolved" }) },
           }),
         ],
         extensions: {
@@ -263,15 +265,17 @@ describe("startup validation", () => {
           workspace: dir,
           model: { provider: "anthropic", model: "claude" },
           onecliToken: "$env:ONECLI_TOKEN",
-          slack: {
-            token: "$env:SLACK_BOT_TOKEN",
-            appToken: "$env:SLACK_APP_TOKEN",
-          },
-          irc: {
-            host: "irc.example.com",
-            nick: "main-bot",
-            password: "$env:IRC_PASSWORD",
-            nickservPassword: "$env:IRC_NICKSERV_PASSWORD",
+          extensions: {
+            slack: {
+              token: "$env:SLACK_BOT_TOKEN",
+              appToken: "$env:SLACK_APP_TOKEN",
+            },
+            irc: {
+              host: "irc.example.com",
+              nick: "main-bot",
+              password: "$env:IRC_PASSWORD",
+              nickservPassword: "$env:IRC_NICKSERV_PASSWORD",
+            },
           },
         },
       ],
@@ -282,14 +286,14 @@ describe("startup validation", () => {
       agents: [
         expect.objectContaining({
           onecliToken: "agent-onecli",
-          slack: expect.objectContaining({
+          extensions: { slack: expect.objectContaining({
             token: "agent-slack",
             appToken: "agent-app",
           }),
           irc: expect.objectContaining({
             password: "agent-irc",
             nickservPassword: "agent-nickserv",
-          }),
+          }) },
         }),
       ],
     });

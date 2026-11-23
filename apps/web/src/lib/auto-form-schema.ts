@@ -15,6 +15,7 @@ export type AutoFormField = {
   description?: string;
   type: AutoFormFieldType;
   required: boolean;
+  defaultBoolean?: boolean;
   /** True when the field is a secret (masked input + written to .env). */
   secret: boolean;
   /** True when the extension wants this field hidden under advanced settings. */
@@ -111,6 +112,8 @@ export function buildAutoFormFields(
       description,
       type: fieldType(prop, secret),
       required: requiredSet.has(name) || secretSet.has(name),
+      ...(primitiveType(prop) === "boolean" && typeof prop.default === "boolean"
+        ? { defaultBoolean: prop.default } : {}),
       secret,
       advanced: advancedSet.has(name),
     });
@@ -164,4 +167,13 @@ export function splitAutoFormValues(
   }
 
   return { config, secrets };
+}
+
+export function missingChannelSettings(entry: {
+  configJsonSchema: Record<string, unknown> | null;
+  missingConfig: string[];
+}): string {
+  const fields = buildAutoFormFields(entry.configJsonSchema);
+  const labels = new Set(entry.missingConfig.map((name) => fields.find((field) => field.name === name)?.label ?? "config"));
+  return `Enabled, not connected: missing ${[...labels].join(", ") || "config"}`;
 }

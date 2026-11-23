@@ -125,7 +125,7 @@ describe("telegram extension", () => {
     expect(componentStart).toHaveBeenCalledOnce();
   });
 
-  it("starts a per-agent bot from agents[n].telegram.token", async () => {
+  it("starts a per-agent bot from extensions.telegram.token", async () => {
     const { startTelegramBots } = await import("./index.js");
     const config = GatewayConfigSchema.parse({
       version: 2,
@@ -135,7 +135,7 @@ describe("telegram extension", () => {
           name: "Main",
           workspace: "~/main",
           model: { provider: "anthropic", model: "claude" },
-          telegram: { token: "agent-token" },
+          extensions: { telegram: { token: "agent-token" } },
         },
       ],
       extensions: {},
@@ -157,7 +157,7 @@ describe("telegram extension", () => {
           name: "Main",
           workspace: "~/main",
           model: { provider: "anthropic", model: "claude" },
-          telegram: { token: "agent-token" },
+          extensions: { telegram: { token: "agent-token" } },
         },
       ],
       extensions: {},

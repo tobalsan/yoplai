@@ -986,6 +986,25 @@ describe("EditAgent", () => {
     expect(link.textContent).toContain("Needs configuration");
   });
 
+  it("shows missing channel settings and uses the configured check only when complete", async () => {
+    setSession("admin");
+    fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);
+    const channel = { builtIn: true, enabled: true, teamOnly: true, requiredSecrets: [], tier: "auto-form" };
+    fetchAgentExtensionsMock.mockResolvedValue([
+      {
+        ...channel, id: "mattermost", displayName: "Mattermost", configured: false, missingConfig: ["token"],
+        configJsonSchema: { properties: { token: { type: "string", title: "Bot token", writeOnly: true } } },
+      },
+      { ...channel, id: "discord", displayName: "Discord", configured: true, missingConfig: [] },
+    ]);
+    await mountEdit("scribe");
+
+    const link = container.querySelector('a[href="/agents/scribe/extensions/mattermost"]');
+    expect(link?.textContent).toContain("Enabled, not connected: missing Bot token");
+    expect(container.querySelector('[aria-label="Mattermost configured"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Discord configured"]')).not.toBeNull();
+  });
+
   it("routes a needs-configuration bespoke extension to its config surface", async () => {
     setSession("admin");
     fetchAgentsMock.mockResolvedValue([agent({ id: "scribe" })]);

@@ -1,3 +1,4 @@
+import { isAgentChannel } from "@yoplai/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Hono } from "hono";
 import path from "node:path";
@@ -137,7 +138,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     load: () =>
       import("@yoplai/extension-irc").then((module) => module.ircExtension),
     getConfig: (config) => {
-      const hasPerAgent = config.agents?.some((agent) => agent.irc);
+      const hasPerAgent = config.agents?.some((agent) => agent.extensions?.irc?.enabled !== false && !!agent.extensions?.irc?.host);
       const rootConfig = config.extensions?.irc;
       if (rootConfig && (rootConfig.enabled !== false || !hasPerAgent)) {
         return { ...rootConfig, _perAgentFallback: hasPerAgent };
@@ -170,7 +171,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         (module) => module.discordExtension
       ),
     getConfig: (config) => {
-      const hasPerAgent = config.agents?.some((a) => a.discord?.token);
+      const hasPerAgent = config.agents?.some((a) => a.extensions?.discord?.enabled !== false && !!a.extensions?.discord?.token);
       if (config.extensions?.discord) {
         return { ...config.extensions.discord, _perAgentFallback: hasPerAgent };
       }
@@ -183,7 +184,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
     load: () =>
       import("@yoplai/extension-slack").then((module) => module.slackExtension),
     getConfig: (config) => {
-      const hasPerAgent = config.agents?.some((a) => a.slack?.token);
+      const hasPerAgent = config.agents?.some((a) => a.extensions?.slack?.enabled !== false && !!a.extensions?.slack?.token);
       if (config.extensions?.slack) {
         return { ...config.extensions.slack, _perAgentFallback: hasPerAgent };
       }
@@ -198,7 +199,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         (module) => module.telegramExtension
       ),
     getConfig: (config) => {
-      const hasPerAgent = config.agents?.some((a) => a.telegram?.token);
+      const hasPerAgent = config.agents?.some((a) => a.extensions?.telegram?.enabled !== false && !!a.extensions?.telegram?.token);
       if (config.extensions?.telegram) {
         return {
           ...config.extensions.telegram,
@@ -216,7 +217,7 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
         (module) => module.mattermostExtension
       ),
     getConfig: (config) => {
-      const hasPerAgent = config.agents?.some((a) => a.mattermost?.token);
+      const hasPerAgent = config.agents?.some((a) => a.extensions?.mattermost?.enabled !== false && !!a.extensions?.mattermost?.token);
       if (config.extensions?.mattermost) {
         return {
           ...config.extensions.mattermost,
@@ -319,31 +320,9 @@ const EXTENSION_REGISTRY: Record<string, ExtensionRegistration> = {
   }),
 };
 
-/**
- * Stock extensions that can also be configured at the agent.yaml root (for
- * example, `agent.slack`) instead of under `agent.extensions`. Heartbeat is
- * omitted because it is factory-only and never appears in the catalog.
- */
-const AGENT_ROOT_CONFIG_KEYS: Record<string, string> = {
-  discord: "discord",
-  slack: "slack",
-  telegram: "telegram",
-  irc: "irc",
-  mattermost: "mattermost",
-  webhooks: "webhooks",
-};
-
-export function hasAgentRootConfig(
-  agent: AgentConfig,
-  extensionId: string
-): boolean {
-  const key = AGENT_ROOT_CONFIG_KEYS[extensionId];
-  if (!key) return false;
-  const value = (agent as Record<string, unknown>)[key];
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return Object.keys(value).length > 0;
+export function hasAgentRootConfig(agent: AgentConfig, extensionId: string): boolean {
+  return agent.legacyChannelExtensions?.some((id) => id === extensionId) === true ||
+    (extensionId === "webhooks" && Object.keys(agent.webhooks ?? {}).length > 0);
 }
 
 const extensionRuntime = new ExtensionRuntime(getKnownExtensionRouteMetadata());
@@ -635,7 +614,7 @@ async function deriveExtensionsToLoad(
     if (!agentExtensions) continue;
     for (const [id, value] of Object.entries(agentExtensions)) {
       if (toRecord(value).enabled === false) continue;
-      if (!loadedExtensionIds.has(id) && !unavailableOptionalExtensions.has(id)) {
+      if (!loadedExtensionIds.has(id) && !unavailableOptionalExtensions.has(id) && !isAgentChannel(id)) {
         const key = JSON.stringify([agent.id, id]);
         if (!warnedUnknownExtensions.has(key)) {
           warnedUnknownExtensions.add(key);

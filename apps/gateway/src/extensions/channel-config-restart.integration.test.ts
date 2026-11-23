@@ -43,11 +43,6 @@ it("loads Mattermost after saving agent settings and resolves its agent-local to
 
   const { loadConfig } = await import("../config/index.js");
   const config = loadConfig();
-  expect(config.agents[0].mattermost).toEqual({
-    url: "https://chat.example.test",
-    token: "$env:MATTERMOST_TOKEN",
-    channels: { "sales-channel": { requireMention: true } },
-  });
   expect(config.agents[0].extensions?.mattermost).toMatchObject({
     enabled: true, token: "$env:MATTERMOST_TOKEN",
   });
@@ -62,7 +57,7 @@ it("loads Mattermost after saving agent settings and resolves its agent-local to
 
   const { resolveStartupConfig } = await import("../config/validate.js");
   const resolved = await resolveStartupConfig(config);
-  expect(resolved.agents[0].mattermost?.token).toBe("invented-mattermost-token");
+  expect(resolved.agents[0].extensions?.mattermost?.token).toBe("invented-mattermost-token");
 });
 
 it("still loads Mattermost for an existing top-level-only agent", async () => {

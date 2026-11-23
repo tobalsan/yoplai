@@ -1,10 +1,11 @@
 import type {
+  AgentConfig,
   Extension,
   GatewayConfig,
   ValidationResult,
 } from "@yoplai/shared";
 import { resolveAgentEnv } from "./index.js";
-import { resolveConfigSecrets } from "./secrets.js";
+import { isEnvRef, resolveConfigSecrets, resolveEnvRefSync } from "./secrets.js";
 import { logError } from "../logging.js";
 import { extensionSecretFields, resolveExtensionTokenConfig } from "../credentials/extension-tokens.js";
 import { createModelRoutingCatalog, validateModelRouting } from "../model-routing/validate.js";
@@ -173,13 +174,42 @@ export async function prepareStartupConfig(
   };
 }
 
+const channelConnectionFields = {
+  mattermost: ["url", "token"],
+  slack: ["token", "appToken"],
+  telegram: ["token"],
+  discord: ["token"],
+  irc: ["host", "nick", "password", "nickservPassword"],
+  threadit: ["baseUrl", "token"],
+};
+
+function omitUnsetChannelSettings(agent: AgentConfig, env: Record<string, string>): AgentConfig {
+  if (!agent.extensions) return agent;
+  const extensions = { ...agent.extensions };
+  for (const [id, fields] of Object.entries(channelConnectionFields)) {
+    const block = extensions[id];
+    if (!block) continue;
+    const unset = fields.filter((field) => {
+      const value = block[field];
+      return isEnvRef(value) && resolveEnvRefSync(value, env) === undefined;
+    });
+    if (unset.length === 0) continue;
+    extensions[id] = { ...block };
+    for (const field of unset) delete extensions[id][field];
+  }
+  return { ...agent, extensions };
+}
+
 export async function resolveStartupConfig(
   config: GatewayConfig
 ): Promise<GatewayConfig> {
   const { agents, ...rest } = config;
   const resolvedRest = await resolveConfigSecrets(rest);
   const resolvedAgents = await Promise.all(
-    agents.map((agent) => resolveConfigSecrets(agent, resolveAgentEnv(agent, config)))
+    agents.map((agent) => {
+      const env = resolveAgentEnv(agent, config);
+      return resolveConfigSecrets(omitUnsetChannelSettings(agent, env), env);
+    })
   );
   return { ...resolvedRest, agents: resolvedAgents };
 }

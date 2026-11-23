@@ -530,3 +530,37 @@ describe("ExtensionConfigForm", () => {
     expect(container.querySelector<HTMLInputElement>("#ext-field-allowWrite")!.checked).toBe(false);
   });
 });
+
+it("names missing channel settings, uses the TLS default, and saves a cleared channel list", async () => {
+  const irc = exaEntry({
+    id: "irc",
+    displayName: "IRC",
+    enabled: true,
+    teamOnly: true,
+    configured: false,
+    missingConfig: ["nick"],
+    requiredSecrets: [],
+    configValues: { channelIds: "#team" },
+    configJsonSchema: { properties: {
+      nick: { type: "string", title: "Nickname" },
+      tls: { type: "boolean", title: "Use TLS", default: true },
+      channelIds: { type: "string", title: "Channels" },
+    } },
+  });
+  fetchAgentExtensionMock.mockResolvedValue(irc);
+  patchAgentExtensionMock.mockResolvedValue([{ ...irc, configValues: { tls: false } }]);
+  await mount("scribe", "irc");
+
+  expect(container.textContent).toContain("Enabled, not connected: missing Nickname");
+  expect(container.textContent).not.toContain("Just me");
+  const tls = container.querySelector<HTMLInputElement>("#ext-field-tls")!;
+  expect(tls.checked).toBe(true);
+  tls.click();
+  const channels = container.querySelector<HTMLInputElement>("#ext-field-channelIds")!;
+  channels.value = "";
+  channels.dispatchEvent(new Event("input", { bubbles: true }));
+  container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await vi.waitFor(() => expect(patchAgentExtensionMock).toHaveBeenCalledWith("scribe", "irc", {
+    enabled: true, config: { tls: false, channelIds: "" }, secrets: {},
+  }, undefined));
+});

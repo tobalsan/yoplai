@@ -75,10 +75,12 @@ describe("notify CLI", () => {
           name: "Pom",
           workspace: "~/pom",
           model: { provider: "anthropic", model: "claude" },
-          discord: { token: "agent-discord-token" },
-          slack: {
-            token: "agent-slack-token",
-            appToken: "agent-slack-app-token",
+          extensions: {
+            discord: { token: "agent-discord-token" },
+            slack: {
+              token: "agent-slack-token",
+              appToken: "agent-slack-app-token",
+            },
           },
         },
       ],
@@ -127,7 +129,7 @@ describe("notify CLI", () => {
           name: "Pom",
           workspace: "~/pom",
           model: { provider: "anthropic", model: "claude" },
-          discord: { token: "agent-discord-token" },
+          extensions: { discord: { token: "agent-discord-token" } },
         },
       ],
       extensions: {
@@ -169,14 +171,14 @@ describe("notify CLI", () => {
           name: "Casey",
           workspace: "~/casey",
           model: { provider: "anthropic", model: "claude" },
-          discord: { token: "explicit-agent-token" },
+          extensions: { discord: { token: "explicit-agent-token" } },
         },
         {
           id: "pom",
           name: "Pom",
           workspace: "~/pom",
           model: { provider: "anthropic", model: "claude" },
-          discord: { token: "env-agent-token" },
+          extensions: { discord: { token: "env-agent-token" } },
         },
       ],
       notifications: {
@@ -288,9 +290,11 @@ describe("notify CLI", () => {
         name: "Notifier",
         workspace: "/nonexistent/notify-test-agent",
         model: { provider: "anthropic", model: "claude" },
-        mattermost: {
-          url: "https://agent.mattermost.example.com",
-          token: "fake-agent-mattermost-token",
+        extensions: {
+          mattermost: {
+            url: "https://agent.mattermost.example.com",
+            token: "fake-agent-mattermost-token",
+          },
         },
       }],
       extensions: {
@@ -356,7 +360,7 @@ describe("notify CLI", () => {
         name: "Notifier",
         workspace: "/nonexistent/notify-test-agent",
         model: { provider: "anthropic", model: "claude" },
-        mattermost: { url: "$env:TEST_NOTIFY_MM_URL", token: "$env:TEST_NOTIFY_MM_TOKEN" },
+        extensions: { mattermost: { url: "$env:TEST_NOTIFY_MM_URL", token: "$env:TEST_NOTIFY_MM_TOKEN" } },
       }],
       env: {
         TEST_NOTIFY_MM_URL: "https://agent.mattermost.example.com",

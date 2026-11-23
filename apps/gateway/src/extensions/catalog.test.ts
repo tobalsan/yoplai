@@ -306,23 +306,21 @@ describe("buildExtensionCatalog", () => {
   });
 
   it("reports root-configured stock extensions as enabled and managed", async () => {
-    const agent = makeAgent(undefined, {
-      slack: { token: "x", appToken: "x" },
-    });
+    const agent = makeAgent({ slack: { token: "x", appToken: "x" } }, { legacyChannelExtensions: ["slack"] });
     const catalog = await buildExtensionCatalog(configWith(agent, root), agent);
     const slack = catalog.find((entry) => entry.id === "slack");
 
     expect(slack).toMatchObject({ enabled: true, managedAtRoot: true });
   });
 
-  it("gives explicit agent extension config precedence over root config", async () => {
+  it("keeps a legacy Slack setup managed after toggling it", async () => {
     const disabled = makeAgent(
-      { slack: { enabled: false } },
-      { slack: { token: "x", appToken: "x" } }
+      { slack: { enabled: false, token: "x", appToken: "x" } },
+      { legacyChannelExtensions: ["slack"] }
     );
     const enabled = makeAgent(
-      { slack: {} },
-      { slack: { token: "x", appToken: "x" } }
+      { slack: { token: "x", appToken: "x" } },
+      { legacyChannelExtensions: ["slack"] }
     );
 
     const disabledEntry = (
@@ -334,9 +332,9 @@ describe("buildExtensionCatalog", () => {
 
     expect(disabledEntry).toMatchObject({
       enabled: false,
-      managedAtRoot: false,
+      managedAtRoot: true,
     });
-    expect(enabledEntry).toMatchObject({ enabled: true, managedAtRoot: false });
+    expect(enabledEntry).toMatchObject({ enabled: true, managedAtRoot: true });
   });
 
   it("requires non-empty root config and ignores extensions without root keys", async () => {

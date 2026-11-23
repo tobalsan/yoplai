@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig, Extension, GatewayConfig } from "@yoplai/shared";
 import {
+  channelSetting,
   discoverExternalExtensions,
   resolveAgentConfigRoute,
   resolveExtensionOAuth,
@@ -117,6 +118,7 @@ export type ExtensionCatalogEntry = {
   requiredSecrets: string[];
   /** Field names a UI should collapse under advanced settings. */
   advancedConfigFields: string[];
+  teamOnly?: boolean;
   /** Existing per-agent config values, with credentials masked and setting references intact. */
   configValues: Record<string, unknown>;
   /**
@@ -207,16 +209,31 @@ function maskConfigFields(
 function configValuesForAgent(
   agent: AgentConfig | undefined,
   extension: Extension,
-  gatewayConfig: GatewayConfig | null
+  gatewayConfig: GatewayConfig | null,
+  env: Record<string, string>
 ): Record<string, unknown> {
   const value = agent?.extensions?.[extension.id];
+  const secretFields = extensionSecretFields(extension);
+  if (extension.teamOnly) {
+    const properties = extension.configJsonSchema?.properties ?? {};
+    const flat = Object.fromEntries(Object.entries(value ?? {}).filter(([field, setting]) =>
+      Object.hasOwn(properties, field) &&
+      (secretFields.includes(field) ? channelSetting(setting, env) !== undefined
+        : typeof setting === "string" || typeof setting === "number" || typeof setting === "boolean")
+    ));
+    if (extension.id === "threadit" && flat.baseUrl === undefined) {
+      const baseUrl = gatewayConfig?.extensions?.threadit?.baseUrl;
+      if (baseUrl !== undefined) flat.baseUrl = baseUrl;
+    }
+    return maskConfigFields(flat, extension.configJsonSchema, secretFields);
+  }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
   const root = gatewayConfig?.extensions?.[extension.id];
   const config = { ...(typeof root === "object" && root !== null ? root : {}), ...(value as Record<string, unknown>) };
   delete config.enabled;
-  return maskConfigFields(config, extension.configJsonSchema, extensionSecretFields(extension));
+  return maskConfigFields(config, extension.configJsonSchema, secretFields);
 }
 
 /** Config as it resolves for the requester's own grant, whether or not they have connected yet. */
@@ -256,10 +273,12 @@ function toCatalogEntry(
   const configRoutePath =
     resolveAgentConfigRoute(extension.configRoute, agent.id) ?? null;
   const scoped = requesterUserId ? resolveExtensionTokenConfig(extension, agent, config, requesterUserId) : { agent, config, missing: [] };
+  const env = resolveAgentEnv(agent, config);
+  const missingSettings = extension.missingAgentSettings?.(agent, config, env) ?? [];
   const validation = extension.validateAgentConfig?.(
     scoped.agent,
     scoped.config,
-    resolveAgentEnv(agent, config)
+    env
   );
   // Without credential fields the team scopes ignore the requester's personal settings.
   const teamScoped = extensionSecretFields(extension).length ? scoped : { agent, config };
@@ -279,14 +298,15 @@ function toCatalogEntry(
     description: extension.description,
     builtIn,
     enabled: isEnabledForAgent(agent, extension.id),
-    configured: scoped.missing.length === 0 && (validation?.valid ?? true),
-    missingConfig: [...new Set([...scoped.missing, ...validationFields])],
+    configured: scoped.missing.length === 0 && missingSettings.length === 0 && (validation?.valid ?? true),
+    missingConfig: [...new Set([...scoped.missing, ...missingSettings, ...validationFields])],
     configurable,
-    managedAtRoot: !hasExplicitConfig && hasAgentRootConfig(agent, extension.id),
+    ...(extension.teamOnly ? { teamOnly: true } : {}),
+    managedAtRoot: (!hasExplicitConfig || extension.teamOnly === true) && hasAgentRootConfig(agent, extension.id),
     configJsonSchema,
     requiredSecrets: oauth ? [] : extension.requiredSecrets ?? [],
     advancedConfigFields: extension.advancedConfigFields ?? [],
-    configValues: configValuesForAgent(displayAgent, extension, displayConfig),
+    configValues: configValuesForAgent(displayAgent, extension, displayConfig, env),
     configRoutePath,
     oauth: oauth
       ? {

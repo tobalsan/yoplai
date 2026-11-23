@@ -87,9 +87,11 @@ describe("mattermost extension", () => {
       agents: [
         {
           ...agent,
-          mattermost: {
-            url: "https://chat.example.test",
-            token: "agent-token",
+          extensions: {
+            mattermost: {
+              url: "https://chat.example.test",
+              token: "agent-token",
+            },
           },
         },
       ],

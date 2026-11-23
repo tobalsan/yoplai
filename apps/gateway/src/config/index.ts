@@ -13,10 +13,10 @@ import {
   readEnv,
   resolveHomeDir,
   type AgentConfig,
+  type AgentYamlConfig,
   type GatewayConfig,
   type SubagentConfig,
 } from "@yoplai/shared";
-import { projectChannelExtensionBlocks } from "./channel-extension-config.js";
 import { envRefName, isEnvRef } from "./secrets.js";
 
 export const CONFIG_DIR = resolveHomeDir();
@@ -26,6 +26,7 @@ let cachedConfig: GatewayConfig | null = null;
 let rawLoadedConfig: GatewayConfig | null = null;
 let singleAgentId: string | null = null;
 let warnedLegacyPool = false;
+const warnedLegacyChannels = new Set<string>();
 const agentEnvDigests = new Map<string, string>();
 
 export function getConfigPath(): string {
@@ -202,8 +203,11 @@ function discoverAgents(
         );
       }
       seen.set(parsed.data.id, agentPath);
-      const agent = { ...parsed.data, workspace: workspaceDir, workspaceDir };
-      agents.push(projectChannelExtensionBlocks(filterAgentExtensionEnvRefs(agent, extensionEnvAllowlist)));
+      const { discord, slack, telegram, irc, mattermost, ...settings } = parsed.data;
+      const legacy = { discord, slack, telegram, irc, mattermost };
+      const agent = { ...settings, workspace: workspaceDir, workspaceDir };
+      const unfiltered = new Set(Object.entries(legacy).flatMap(([id, block]) => block === undefined ? [] : [id]));
+      agents.push(foldLegacyChannels(filterAgentExtensionEnvRefs(agent, extensionEnvAllowlist, unfiltered), legacy));
     }
   }
 
@@ -214,6 +218,28 @@ function discoverAgents(
   }
 
   return agents.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function foldLegacyChannels(
+  agent: AgentConfig,
+  legacy: Pick<AgentYamlConfig, "discord" | "slack" | "telegram" | "irc" | "mattermost">
+): AgentConfig {
+  const channels = ["discord", "slack", "telegram", "irc", "mattermost"] as const;
+  const legacyChannelExtensions = channels.filter((id) => legacy[id] !== undefined);
+  if (legacyChannelExtensions.length === 0) return agent;
+  const extensions = { ...agent.extensions };
+  for (const id of legacyChannelExtensions) {
+    const { enabled, ...ignored } = extensions[id] ?? {};
+    extensions[id] = { ...legacy[id], ...(enabled === undefined ? {} : { enabled }) };
+    const key = JSON.stringify([agent.workspace, id]);
+    if (!warnedLegacyChannels.has(key)) {
+      warnedLegacyChannels.add(key);
+      const fields = Object.keys(ignored).sort();
+      const details = fields.length ? `; ignored extensions.${id} fields: ${fields.join(", ")}` : "";
+      console.warn(`[config] agent "${agent.id}" top-level "${id}" is deprecated; use extensions.${id}${details}`);
+    }
+  }
+  return { ...agent, extensions, legacyChannelExtensions };
 }
 
 function readEnvFile(envPath: string): {
@@ -231,7 +257,7 @@ function readEnvFile(envPath: string): {
   };
 }
 
-function filterAgentExtensionEnvRefs(agent: AgentConfig, allowlist: ReadonlySet<string>): AgentConfig {
+function filterAgentExtensionEnvRefs(agent: AgentConfig, allowlist: ReadonlySet<string>, ignored: ReadonlySet<string>): AgentConfig {
   if (!agent.extensions || Object.keys(agent.extensions).length === 0) return agent;
   const workspaceEnv = readEnvFile(path.join(agent.workspaceDir ?? agent.workspace, ".env")).env;
 
@@ -256,7 +282,7 @@ function filterAgentExtensionEnvRefs(agent: AgentConfig, allowlist: ReadonlySet<
   }
 
   const extensions = Object.fromEntries(
-    Object.entries(agent.extensions).map(([id, block]) => [id, filter(block, id) as typeof block])
+    Object.entries(agent.extensions).map(([id, block]) => [id, ignored.has(id) ? block : filter(block, id) as typeof block])
   );
   return { ...agent, extensions };
 }

@@ -5,7 +5,7 @@ import { GatewayConfigSchema } from "@yoplai/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mattermostAgentTools } from "./agent-tools.js";
 import { createMattermostBot, type MattermostBot } from "./bot.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerComponentBot } from "./bot-registry.js";
 import { clearMattermostContext, setMattermostContext } from "./context.js";
 import {
   CHANNEL,
@@ -78,7 +78,7 @@ describe("Mattermost tool cancellation", () => {
     sockets.last().open();
     sockets.last().hello("conn-1");
     await started;
-    registerActiveBot("mattermost", bot);
+    registerComponentBot(bot);
   });
   afterEach(async () => {
     await bot.stop();

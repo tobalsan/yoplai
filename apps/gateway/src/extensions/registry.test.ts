@@ -177,7 +177,7 @@ describe("extension registry", () => {
     expect(isExtensionLoaded("multiUser")).toBe(false);
   });
 
-  it("auto-loads IRC from top-level agent config", async () => {
+  it("loads IRC from per-agent extension config", async () => {
     const config = GatewayConfigSchema.parse({
       version: 2,
       agents: [
@@ -186,10 +186,12 @@ describe("extension registry", () => {
           name: "Main",
           workspace: "~/agents/main",
           model: { provider: "anthropic", model: "claude" },
-          irc: {
-            host: "irc.example.com",
-            nick: "main-bot",
-            channels: { "#team": { mode: "reply-all" } },
+          extensions: {
+            irc: {
+              host: "irc.example.com",
+              nick: "main-bot",
+              channels: { "#team": { mode: "reply-all" } },
+            },
           },
         },
       ],
@@ -207,7 +209,7 @@ describe("extension registry", () => {
           name: "Main",
           workspace: "~/agents/main",
           model: { provider: "anthropic", model: "claude" },
-          irc: { host: "irc.example.com", nick: "main-bot" },
+          extensions: { irc: { host: "irc.example.com", nick: "main-bot" } },
         },
       ],
       extensions: {
@@ -351,9 +353,11 @@ describe("extension registry", () => {
           name: "Main",
           workspace: "~/agents/main",
           model: { provider: "anthropic", model: "claude" },
-          slack: {
-            token: "xoxb-test",
-            appToken: "xapp-test",
+          extensions: {
+            slack: {
+              token: "xoxb-test",
+              appToken: "xapp-test",
+            },
           },
           webhooks: {
             notion: {

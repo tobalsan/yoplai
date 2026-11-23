@@ -3,7 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, ExtensionContext, GatewayConfig } from "@yoplai/shared";
 import { clearSlackClientCache, createSlackDeliverySink, getSlackDeliveryOffer } from "./agent-tools.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerActiveBot, registerComponentBot } from "./bot-registry.js";
 import { clearSlackContext, setSlackContext } from "./context.js";
 import { createProactiveDmNoteStore } from "./proactive-dm-notes.js";
 import type { SlackBot } from "./bot.js";
@@ -39,12 +39,14 @@ function config(): GatewayConfig {
 }
 
 function registerMockBot(agentId: string, client: Partial<SlackWebClient>): void {
-  registerActiveBot(agentId, {
+  const bot = {
     agentId,
     app: { client },
     start: vi.fn(),
     stop: vi.fn(),
-  } as unknown as SlackBot);
+  } as unknown as SlackBot;
+  if (agentId === "slack") registerComponentBot(bot);
+  else registerActiveBot(agentId, bot);
 }
 
 function ctx(): ExtensionContext {
@@ -63,7 +65,7 @@ describe("slack delivery sink", () => {
     vi.stubEnv("SLACK_TOKEN", "fake-env-token");
     try {
       expect(await getSlackDeliveryOffer(agent("alpha"), config())).toBeUndefined();
-      expect(await getSlackDeliveryOffer({ ...agent("alpha"), slack: { token: "fake-agent-token", appToken: "fake-app-token" } }, config())).toEqual({ label: "Slack", channel: true });
+      expect(await getSlackDeliveryOffer({ ...agent("alpha"), extensions: { slack: { token: "fake-agent-token", appToken: "fake-app-token" } } }, config())).toEqual({ label: "Slack", channel: true });
       expect(await getSlackDeliveryOffer(agent("alpha"), { ...config(), extensions: { slack: { token: "fake-component-token", appToken: "fake-app-token" } } })).toEqual({ label: "Slack", channel: true });
       registerMockBot("slack", {});
       expect(await getSlackDeliveryOffer(agent("alpha"), config())).toEqual({ label: "Slack", channel: true });

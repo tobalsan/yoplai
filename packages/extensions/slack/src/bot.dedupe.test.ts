@@ -26,6 +26,7 @@ type MockSlackApp = {
   message: ReturnType<typeof vi.fn>;
   event: ReturnType<typeof vi.fn>;
   command: ReturnType<typeof vi.fn>;
+  init: ReturnType<typeof vi.fn>;
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
 };
@@ -77,6 +78,7 @@ vi.mock("@slack/bolt", () => ({
       message: vi.fn(),
       event: vi.fn(),
       command: vi.fn(),
+      init: vi.fn().mockResolvedValue(undefined),
       start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
     };
@@ -418,13 +420,15 @@ describe("Slack inbound event claim release on failure", () => {
 describe("per-agent Slack bot inbound event deduplication", () => {
   const slackAgent: AgentConfig = {
     ...agent,
-    slack: {
-      token: "xoxb-agent",
-      appToken: "xapp-agent",
-      channels: {
-        C1: {
-          requireMention: false,
-          reactionNotifications: "off",
+    extensions: {
+      slack: {
+        token: "xoxb-agent",
+        appToken: "xapp-agent",
+        channels: {
+          C1: {
+            requireMention: false,
+            reactionNotifications: "off",
+          },
         },
       },
     },

@@ -1,9 +1,11 @@
+import { readAgentChannelConfig } from "./config.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { AbortController as TelegramAbortController } from "abort-controller";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Context } from "grammy";
 import type {
   AgentConfig,
   FileAttachment,
-  TelegramAgentConfig,
   TelegramComponentConfig,
 } from "@yoplai/shared";
 import {
@@ -26,7 +28,7 @@ import {
 export type TelegramBot = {
   bot: Bot;
   agentId: string;
-  start: () => Promise<void>;
+  start: (signal?: AbortSignal) => Promise<void>;
   stop: () => Promise<void>;
 };
 
@@ -168,9 +170,22 @@ function createBot(
   turnOptions: TelegramTurnOptions = {}
 ): TelegramBot {
   const bot = new Bot(token);
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    if (method !== "getUpdates" || signal) return prev(method, payload, signal);
+    // grammY's final offset confirmation has no polling abort signal.
+    const controller = new TelegramAbortController();
+    const timer = setTimeout(() => controller.abort(), 3_000);
+    try {
+      return await prev(method, payload, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
   const logPrefix = `[telegram:${agentId}]`;
+  let running = false;
 
   const onMessage = async (ctx: Context) => {
+    if (!running) return;
     const data = toMessageData(ctx);
     if (!data) return;
     await handleTelegramMessage(
@@ -238,19 +253,29 @@ function createBot(
     console.error(`${logPrefix} Error while handling update:`, cause);
   });
 
-  let running = false;
-
   return {
     bot,
     agentId,
-    start: async () => {
+    start: async (signal) => {
       // bot.init() surfaces a fatal startup failure (e.g. bad token) to the
       // caller. Transient network blips here are retried so a hiccup during
       // startup doesn't abort the whole bot.
-      await withRetry(() => bot.init(), {
-        logPrefix,
-        label: "init",
-      });
+      const controller = new TelegramAbortController();
+      const abort = () => controller.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      try {
+        await withRetry(() => {
+          signal?.throwIfAborted();
+          return bot.init(controller.signal);
+        }, {
+          logPrefix,
+          label: "init",
+          sleep: (ms) => sleep(ms, undefined, { signal }),
+        });
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
+      signal?.throwIfAborted();
       running = true;
       // bot.start() resolves only on stop; run it in the background. grammY's
       // long-polling loop retries failed getUpdates calls internally, so a brief
@@ -268,7 +293,13 @@ function createBot(
     stop: async () => {
       if (!running) return;
       running = false;
-      await bot.stop();
+      try {
+        await bot.stop();
+      } catch {
+        // Long polling has already stopped. A failed final offset write can
+        // leave the last update unacknowledged.
+        console.warn(`${logPrefix} Could not confirm the last polling offset`);
+      }
     },
   };
 }
@@ -280,9 +311,7 @@ export function createTelegramBot(
   if (!componentConfig.token) return null;
   const agent = agents[0];
   if (!agent) return null;
-  // Register the shared component bot under the literal "telegram" id (mirrors
-  // the discord/slack house style), so proactive tools can resolve it via
-  // getActiveBot("telegram").
+  // The shared bot has its own registry entry.
   return createBot(
     componentConfig.token,
     agent,
@@ -296,7 +325,7 @@ export function createTelegramBot(
 }
 
 export function createTelegramAgentBot(agent: AgentConfig): TelegramBot | null {
-  const config = agent.telegram as TelegramAgentConfig | undefined;
+  const config = readAgentChannelConfig(agent);
   if (!config?.token) return null;
   return createBot(
     config.token,

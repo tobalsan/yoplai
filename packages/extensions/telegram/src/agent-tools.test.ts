@@ -1,12 +1,12 @@
-import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import type { AgentConfig, GatewayConfig, TelegramAgentConfig } from "@yoplai/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getTelegramDeliveryOffer, telegramAgentTools } from "./agent-tools.js";
-import { clearActiveBots, registerActiveBot } from "./bot-registry.js";
+import { clearActiveBots, registerActiveBot, registerComponentBot } from "./bot-registry.js";
 import type { TelegramBot } from "./bot.js";
 
 type MockApi = { sendMessage: ReturnType<typeof vi.fn> };
 
-function agent(id: string, telegram?: AgentConfig["telegram"]): AgentConfig {
+function agent(id: string, telegram?: TelegramAgentConfig): AgentConfig {
   return {
     id,
     name: id,
@@ -14,8 +14,8 @@ function agent(id: string, telegram?: AgentConfig["telegram"]): AgentConfig {
     workspaceDir: `/tmp/${id}`,
     model: { provider: "test", model: "test" },
     queueMode: "queue",
-    telegram,
-  } as unknown as AgentConfig;
+    extensions: telegram ? { telegram } : undefined,
+  };
 }
 
 function config(extensionsTelegram?: unknown): GatewayConfig {
@@ -30,12 +30,14 @@ function config(extensionsTelegram?: unknown): GatewayConfig {
 }
 
 function registerMockBot(agentId: string, api: MockApi): void {
-  registerActiveBot(agentId, {
+  const bot = {
     agentId,
     bot: { api },
     start: vi.fn(),
     stop: vi.fn(),
-  } as unknown as TelegramBot);
+  } as unknown as TelegramBot;
+  if (agentId === "telegram") registerComponentBot(bot);
+  else registerActiveBot(agentId, bot);
 }
 
 function tool(name: string) {

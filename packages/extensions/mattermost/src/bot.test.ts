@@ -836,7 +836,7 @@ describe("Mattermost bot", () => {
       const config =
         mode === "shared"
           ? gatewayConfig(settings)
-          : gatewayConfig(undefined, { mattermost: settings });
+          : gatewayConfig(undefined, { extensions: { mattermost: settings } });
       setMattermostContext(buildFakeContext({ config, dataDir }));
       const options = {
         fetch: async () =>
@@ -902,11 +902,11 @@ describe("Mattermost bot", () => {
       reply: { body: agentBot },
     });
     const config = gatewayConfig(undefined, {
-      mattermost: {
+      extensions: { mattermost: {
         url: URL_,
         token: TOKEN,
         channels: { [CHANNEL]: { threadUnlock: true } },
-      },
+      } },
     });
     const ctx = buildFakeContext({ config, dataDir });
     setMattermostContext(ctx);
@@ -933,11 +933,11 @@ describe("Mattermost bot", () => {
 
   it("serves only the agent's own channels with a per-agent bot", async () => {
     const config = gatewayConfig(undefined, {
-      mattermost: {
+      extensions: { mattermost: {
         url: URL_,
         token: TOKEN,
         channels: { [CHANNEL]: { requireMention: false } },
-      },
+      } },
     });
     const ctx = buildFakeContext({ config, dataDir });
     setMattermostContext(ctx);

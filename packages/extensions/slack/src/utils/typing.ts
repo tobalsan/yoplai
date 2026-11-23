@@ -4,6 +4,7 @@ import { getSlackContext } from "../context.js";
 const THINKING_REACTION = "thinking_face";
 
 type ThinkingEntry = {
+  client: SlackWebClient;
   unsubscribe: () => void;
 };
 
@@ -78,7 +79,7 @@ export async function startThinkingReaction(
     stopThinkingReaction(client, channel, timestamp);
   });
 
-  activeThinking.set(activeKey, { unsubscribe });
+  activeThinking.set(activeKey, { client, unsubscribe });
 }
 
 export async function stopThinkingReaction(
@@ -93,8 +94,9 @@ export async function stopThinkingReaction(
   await removeThinkingReaction(client, channel, timestamp);
 }
 
-export function stopAllThinkingReactions(): void {
+export function stopAllThinkingReactions(client: SlackWebClient): void {
   for (const [activeKey, entry] of activeThinking) {
+    if (entry.client !== client) continue;
     entry.unsubscribe();
     activeThinking.delete(activeKey);
   }

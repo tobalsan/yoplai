@@ -14,6 +14,7 @@ export type ExtensionCatalogEntry = {
   missingConfig: string[];
   configurable: boolean;
   managedAtRoot: boolean;
+  teamOnly?: boolean;
   configJsonSchema: Record<string, unknown> | null;
   requiredSecrets: string[];
   /** Present in multi-user mode; contains field names only. */
