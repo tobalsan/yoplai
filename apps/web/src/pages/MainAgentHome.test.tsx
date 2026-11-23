@@ -34,6 +34,11 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("WebSocket", class {
+    static readonly OPEN = 1;
+    readonly readyState = 0;
+    close() {}
+  });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     const method = init?.method ?? "GET";

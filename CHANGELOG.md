@@ -37,6 +37,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- The agent creation screen in browser setup uses the wizard background to keep text readable.
 - Configure Mattermost, Slack, Telegram, Discord, IRC, and Threadit in web and desktop agent settings. Saves apply live, and incomplete setups show what is missing. Per-agent settings live under `extensions.<id>`. Deprecated top-level channel blocks still load.
 - External MCP apps from linked gateways render in desktop chat and fullscreen, with edits sent back to the linked gateway.
 - Same-page links scroll and move keyboard focus in linked dashboards without closing the dashboard on desktop.

@@ -12,7 +12,7 @@
   border: 0;
   overflow: hidden;
   outline: none;
-  background: var(--bg-base);
+  background: var(--setup-paper, var(--bg-base));
   color: var(--text-primary);
 }
 

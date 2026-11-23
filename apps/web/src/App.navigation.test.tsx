@@ -38,6 +38,11 @@ beforeEach(() => {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("scrollTo", vi.fn());
+  vi.stubGlobal("WebSocket", class {
+    static readonly OPEN = 1;
+    readonly readyState = 0;
+    close() {}
+  });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const { pathname, search } = new URL(String(input), location.origin);
     const waiting = delayed;
