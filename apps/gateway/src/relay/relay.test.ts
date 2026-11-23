@@ -107,6 +107,7 @@ describe("desktop relay: chat relay", () => {
   let remote: { child: ChildProcess; port: number };
   let localServer: ReturnType<typeof import("../server/index.js").startServer>;
   let localBase: string;
+  let localAppsPort: number;
   let remoteBase: string;
   let saveGateway: (gateway: { name: string; url: string; token?: string }) => void;
   let removeGateway: (name: string) => boolean;
@@ -120,8 +121,13 @@ describe("desktop relay: chat relay", () => {
     const localHome = path.join(tmpDir, "local");
     process.env.YOPLAI_HOME = path.join(localHome, ".yoplai");
     process.env.HOME = localHome;
+    const probe = net.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    localAppsPort = (probe.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
     await writeTestV3Config(process.env.YOPLAI_HOME, {
       agents: [{ id: "local" }, { id: "twin" }, { id: "pom@loc" }],
+      extraConfig: { apps: { port: localAppsPort } },
     });
     vi.resetModules();
     const { piAdapter } = await import("../sdk/pi/adapter.js");
@@ -297,6 +303,100 @@ describe("desktop relay: chat relay", () => {
       fake.close();
     }
   }
+
+  const fileViewPath = "/api/agents/pom%40file/sessions/chat-one/mcp-apps/call-one/view";
+  const fileDataPath = "/api/agents/pom/sessions/chat-one/mcp-apps/call-one/data";
+  const fileResult = {
+    content: [{ type: "text", text: "File sent to user" }],
+    structuredContent: { uri: "yoplai-file://example", filename: "report.html", mimeType: "text/html", size: 24 },
+  };
+
+  it("issues a local sandbox ticket for a linked gateway's sent file", async () => {
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === fileDataPath) {
+        res.end(JSON.stringify({ server: "yoplai", tool: "send_file", args: {}, result: fileResult }));
+      } else {
+        res.statusCode = 403;
+        res.end(JSON.stringify({ error: "untrusted_origin" }));
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + fileViewPath, { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      expect(response.status).toBe(200);
+      const view = await response.json();
+      const appsOrigin = `http://127.0.0.1:${localAppsPort}`;
+      expect(view).toMatchObject({
+        available: true, appsOrigin, server: "yoplai", toolName: "send_file", args: {}, result: fileResult, prefersBorder: true,
+      });
+      const sandbox = new URL(view.sandboxUrl);
+      expect(sandbox.origin).toBe(appsOrigin);
+      expect(sandbox.pathname).toMatch(/^\/sandbox\/[0-9a-f]{64}$/);
+      expect((await fetch(sandbox)).status).toBe(200);
+      const content = await fetch(new URL(sandbox.pathname.replace("/sandbox/", "/content/"), sandbox));
+      expect(content.headers.get("content-security-policy")).toContain("frame-ancestors http://localhost:3000 " + appsOrigin);
+      expect(content.headers.get("content-security-policy")).toContain("https://cdn.jsdelivr.net");
+      expect(await content.text()).toContain("<title>File viewer</title>");
+      expect(fake.requests.map(({ method, url, headers }) => [method, url, headers.origin])).toEqual([["POST", fileDataPath, undefined]]);
+    });
+  });
+
+  it("rejects untrusted origins locally for a linked file view", async () => {
+    await withFakeGateway("file", (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ server: "yoplai", tool: "send_file", args: {}, result: fileResult }));
+    }, async (fake) => {
+      for (const origin of ["http://localhost:9876", "https://untrusted.example"]) {
+        const response = await fetch(localBase + fileViewPath, { method: "POST", headers: { Origin: origin } });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "untrusted_origin" });
+      }
+      expect(fake.requests.map(({ url, headers }) => [url, headers.origin])).toEqual([[fileDataPath, undefined]]);
+    });
+  });
+
+  it.each([
+    ["a non-file result", { server: "yoplai", tool: "dashboard_link", args: {}, result: { structuredContent: { uri: "ui://dashboard/example" } } }],
+    ["an older gateway without server identity", { args: {}, result: fileResult }],
+    ["a file-shaped result from another server", { server: "example", tool: "send_file", args: {}, result: fileResult }],
+  ])("relays the original view for %s", async (_name, data) => {
+    const remoteError = { error: "untrusted_origin" };
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === fileDataPath) res.end(JSON.stringify(data));
+      else {
+        res.statusCode = 403;
+        res.end(JSON.stringify(remoteError));
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + fileViewPath, { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual(remoteError);
+      expect(fake.requests.map(({ method, url, headers }) => [method, url, headers.origin])).toEqual([
+        ["POST", fileDataPath, undefined],
+        ["POST", "/api/agents/pom/sessions/chat-one/mcp-apps/call-one/view", undefined],
+      ]);
+    });
+  });
+
+  it("falls back to the remote view when stored data stops streaming", async () => {
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === fileDataPath) res.write('{"server":');
+      else {
+        res.statusCode = 403;
+        res.end('{"error":"untrusted_origin"}');
+      }
+    }, async (fake) => {
+      const pending = fetch(localBase + fileViewPath, {
+        method: "POST", headers: { Origin: "http://localhost:3000" }, signal: AbortSignal.timeout(6000),
+      });
+      await waitFor(() => fake.requests.length === 1);
+      expect((await fetch(localBase + "/health")).status).toBe(200);
+      const response = await pending;
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "untrusted_origin" });
+    });
+  }, 7000);
 
   it("refuses to relay for a page of another site and relays for a loopback page", async () => {
     const list = async (origin?: string) =>

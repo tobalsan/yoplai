@@ -7,6 +7,8 @@ const content = document.querySelector<HTMLElement>("main")!;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: unknown) => void; timer: ReturnType<typeof setTimeout> }>();
 let nextId = 0;
 let reportFrame: HTMLIFrameElement | undefined;
+let reportMinHeight = 40;
+let fullscreen = false;
 let pdfFile: FileInfo | undefined;
 let lastHeight = 0;
 let renderGeneration = 0;
@@ -242,7 +244,8 @@ async function render(value: unknown) {
       const frame = document.createElement("iframe");
       frame.title = file.title || file.filename;
       frame.setAttribute("sandbox", "allow-scripts");
-      frame.style.height = "40px";
+      reportMinHeight = mime === "text/html" || mime === "application/xhtml+xml" ? 300 : 40;
+      frame.style.height = fullscreen ? "100%" : `${reportMinHeight}px`;
       if (mime === "application/pdf" && typeof item.blob === "string") {
         pdfFile = file;
         const data = Uint8Array.from(atob(item.blob), (char) => char.charCodeAt(0)).buffer;
@@ -282,9 +285,12 @@ async function render(value: unknown) {
     else content.textContent = "Could not read this file. Send it again to retry.";
   } finally { if (generation === renderGeneration) sizeChanged(); }
 }
+function clampHeight(measured: number, minimum: number) {
+  return Math.max(minimum, Math.min(800, Math.ceil(measured)));
+}
 function sizeChanged(measured = Math.max(content.scrollHeight, content.offsetHeight)) {
-  if (disposed) return;
-  const height = Math.max(40, Math.min(800, Math.ceil(measured)));
+  if (disposed || fullscreen) return;
+  const height = clampHeight(measured, reportFrame ? reportMinHeight : 40);
   if (height !== lastHeight) { lastHeight = height; notify("ui/notifications/size-changed", { height }); }
 }
 const sizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => sizeChanged()) : undefined;
@@ -306,7 +312,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     return;
   }
   if (message.type === "yoplai-file-height" && typeof message.height === "number" && Number.isFinite(message.height)) {
-    const height = Math.max(40, Math.min(800, Math.ceil(message.height)));
+    if (fullscreen) return;
+    const height = clampHeight(message.height, reportMinHeight);
     reportFrame.style.height = `${height}px`;
     sizeChanged(height);
   } else if (message.type === "yoplai-file-link" && typeof message.url === "string") openLink(message.url);
@@ -327,4 +334,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     pending.clear();
   }
 });
-void request("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "Yoplai file viewer", version: "1" }, appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] } }).then(() => notify("ui/notifications/initialized")).catch(() => { if (!disposed) content.textContent = "File viewer could not connect. Reload to retry."; });
+void request("ui/initialize", { protocolVersion: "2026-01-26", appInfo: { name: "Yoplai file viewer", version: "1" }, appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] } }).then((result) => {
+  fullscreen = object(object(result).hostContext).displayMode === "fullscreen";
+  document.documentElement.classList.toggle("fullscreen", fullscreen);
+  notify("ui/notifications/initialized");
+}).catch(() => { if (!disposed) content.textContent = "File viewer could not connect. Reload to retry."; });
