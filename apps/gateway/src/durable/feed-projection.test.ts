@@ -88,3 +88,44 @@ it("remembers a synthetic result's hidden call when the current tool catalog has
   const decisions: Record<string, ReviewDecision> = { [task]: { state: "stream", hiddenTools: ["internal_probe"] } };
   expect(feedItems(projectRecords([answer, result], decisions, new Set(), "en"))).toEqual([]);
 });
+
+it("places one localized notice per interrupted result between the tool round and the reply", () => {
+  const round = entry(31, AssistantEntry.kind, {
+    model: [fauxAssistantMessage([
+      fauxToolCall("record_seedlings", { bed: "basil" }, { id: "basil" }),
+      fauxToolCall("internal_probe", { input: "private probe input" }, { id: "probe" }),
+      fauxToolCall("count_seedlings", {}, { id: "count" }),
+    ], { stopReason: "toolUse", timestamp: 310 })],
+  });
+  const interrupted = (id: number, toolCallId: string, toolName: string, text: string) => entry(id, ToolResultEntry.kind, {
+    data: { diagnostics: [{ code: "interrupted", severity: "error", message: "Private interruption diagnostic." }] },
+    model: [{
+      role: "toolResult", toolCallId, toolName, timestamp: id * 10, isError: true,
+      content: [{ type: "text", text }, { type: "text", text: "Private interruption diagnostic." }],
+    }],
+  });
+  const completed = entry(34, ToolResultEntry.kind, {
+    model: [{
+      role: "toolResult", toolCallId: "count", toolName: "count_seedlings", timestamp: 340, isError: false,
+      content: [{ type: "text", text: "Six seedlings." }],
+    }],
+  });
+  const answer = entry(35, AssistantEntry.kind, { model: [fauxAssistantMessage("I’ll verify the record.", { timestamp: 350 })] });
+  const records = projectRecords([
+    round, interrupted(32, "basil", "record_seedlings", "Partial receipt."), interrupted(33, "probe", "internal_probe", "Private probe result."),
+    completed, answer,
+  ], { [task]: { state: "stream" } }, new Set(["internal_probe"]), "fr");
+
+  expect(records.map(({ kind }) => kind)).toEqual(["assistant", "result", "result", "failure", "failure", "assistant"]);
+  expect(feedItems(records)).toEqual([
+    { id: "m_31", role: "assistant", text: "", timestamp: 310, toolCallCount: 2 },
+    { id: "m_32", role: "failure", kind: "tool_interrupted", timestamp: 320, text: "Un outil a été interrompu par un redémarrage et a peut-être été exécuté en partie. Vérifiez ses effets." },
+    { id: "m_33", role: "failure", kind: "tool_interrupted", timestamp: 330, text: "Un outil a été interrompu par un redémarrage et a peut-être été exécuté en partie. Vérifiez ses effets." },
+    { id: "m_35", role: "assistant", text: "I’ll verify the record.", timestamp: 350, toolCallCount: 0 },
+  ]);
+  expect(feedDetail(records, "m_31")?.toolCalls).toMatchObject([
+    { id: "basil", status: "error", result: { text: "Partial receipt." } },
+    { id: "count", status: "done", result: { text: "Six seedlings." } },
+  ]);
+  expect(JSON.stringify(records)).not.toMatch(/Private|private probe/);
+});

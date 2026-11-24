@@ -79,6 +79,7 @@ import {
 } from "../media/metadata.js";
 import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
+import type { OpsMetrics } from "./ops-metrics.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { historyPage, activeContextUsage } from "../history/page.js";
 import { compactAgentSession } from "../agents/compact.js";
@@ -297,6 +298,13 @@ async function isSuperadminRequest(c: Context): Promise<boolean> {
   const role = (await getRequestAuthContext(c))?.user.role;
   return Array.isArray(role) ? role.includes("superadmin") : role === "superadmin";
 }
+
+api.get("/ops/metrics", async (c) => {
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+  c.header("Cache-Control", "no-store");
+  const opsMetrics = (c.env as { opsMetrics?: OpsMetrics } | undefined)?.opsMetrics;
+  return c.json({ metrics: opsMetrics?.snapshot() ?? [] });
+});
 
 async function getAgentManagementRequest(c: Context) {
   const multiUser = loadConfig().extensions?.multiUser?.enabled === true;

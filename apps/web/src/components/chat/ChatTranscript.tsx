@@ -181,7 +181,11 @@ export function ChatTranscript(props: { agentId: string; gateway?: string; gatew
                           {(item) => (
                             <div
                               class={`message ${item().role}${skipAnim ? " no-anim" : ""}`}
-                              classList={{ "system-message": !!item().meta?.failure }}
+                              classList={{
+                                "system-message": !!item().meta?.failure,
+                                "tool-interrupted": item().meta?.failure?.kind === "tool_interrupted",
+                              }}
+                              role={item().meta?.failure?.kind === "tool_interrupted" ? "status" : undefined}
                             >
                               {item().role === "assistant" ? (
                                 <>
@@ -254,8 +258,16 @@ export function ChatTranscript(props: { agentId: string; gateway?: string; gatew
                               FullDisplayRow,
                               { kind: "assistant-content" }
                             >;
+                          const interrupted = () => assistantRow().meta?.failure?.kind === "tool_interrupted";
                           return (
-                            <div class="message assistant full-message" classList={{ "system-message": !!assistantRow().meta?.failure }}>
+                            <div
+                              class="message assistant full-message"
+                              classList={{
+                                "system-message": !!assistantRow().meta?.failure,
+                                "tool-interrupted": interrupted(),
+                              }}
+                              role={interrupted() ? "status" : undefined}
+                            >
                               <Show
                                 when={assistantRow().block.type === "text"}
                                 fallback={
@@ -273,7 +285,7 @@ export function ChatTranscript(props: { agentId: string; gateway?: string; gatew
                                     ).text} options={{ copyCode: true }} />
                               </Show>
                               <Show when={assistantRow().footer}>
-                                {assistantRow().meta && (
+                                {assistantRow().meta && !interrupted() && (
                                   <ModelMetaDisplay
                                     meta={assistantRow().meta!}
                                   />

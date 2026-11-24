@@ -1,7 +1,7 @@
 import { AssistantEntry, ToolResultEntry, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
 import {
   McpAppViewReferenceSchema, runFailureMessage, type ContentBlock, type FeedDetail, type FeedHit, type FeedItem, type FeedLive, type FeedToolCall, type FullHistoryMessage,
-  type McpAppViewReference, type ModelMeta, type ToolCallBlock,
+  type McpAppViewReference, type ModelMeta, type RunFailureKind, type ToolCallBlock,
 } from "@yoplai/shared";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { draftDigest } from "./review.js";
@@ -34,6 +34,14 @@ type PublicRecord =
   | { kind: "failure"; id: string; message: PublicAssistant & { meta: { failure: NonNullable<ModelMeta["failure"]>; stopReason: "error" } } }
   | { kind: "assistant"; id: string; message: PublicAssistant }
   | { kind: "result"; message: PublicResult };
+type FailureRecord = Extract<PublicRecord, { kind: "failure" }>;
+
+function failureRecord(id: EntryRecord["id"], timestamp: number, kind: RunFailureKind, text: string): FailureRecord {
+  return { kind: "failure", id: "m_" + id, message: {
+    role: "assistant", timestamp, content: [{ type: "text", text }],
+    meta: { stopReason: "error", failure: { kind } },
+  } };
+}
 
 export function feedBoundary(entry: EntryRecord) {
   return InputEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
@@ -138,10 +146,10 @@ export function projectRecords(
 ): PublicRecord[] {
   const records: PublicRecord[] = [];
   let anchor: string | undefined;
-  let pending: { entry: EntryRecord; results: Map<string, ToolResult | null> } | undefined;
+  let pending: { entry: EntryRecord; results: Map<string, ToolResult | null>; interruptions: FailureRecord[] } | undefined;
   const flush = () => {
     if (!pending) return;
-    const { entry, results } = pending;
+    const { entry, results, interruptions } = pending;
     const decision = entry.byTaskId === undefined ? undefined : byTask[entry.byTaskId];
     const invisible = decision?.hiddenTools ? new Set(decision.hiddenTools) : hiddenNames;
     for (const message of entry.model ?? []) {
@@ -169,6 +177,10 @@ export function projectRecords(
         for (const nested of result.nested) records.push({ kind: "result", message: nested.message });
       }
     }
+    if (interruptions.length) {
+      records.push(...interruptions);
+      anchor = undefined;
+    }
     pending = undefined;
   };
   for (const entry of entries) {
@@ -184,18 +196,19 @@ export function projectRecords(
       const note = entry.model?.[0];
       if (!note) continue;
       const { kind, accessError } = entry.data;
-      records.push({ kind: "failure", id: "m_" + entry.id, message: {
-        role: "assistant", timestamp: note.timestamp,
-        content: [{ type: "text", text: isSafeModelAccessError(accessError) ? accessError : runFailureMessage(kind, language) }],
-        meta: { stopReason: "error", failure: { kind } },
-      } });
+      records.push(failureRecord(entry.id, note.timestamp, kind,
+        isSafeModelAccessError(accessError) ? accessError : runFailureMessage(kind, language)));
     } else if (AssistantEntry.is(entry) && entry.byTaskId !== undefined) {
       flush();
       anchor ??= "m_" + entry.id;
-      pending = { entry, results: new Map() };
+      pending = { entry, results: new Map(), interruptions: [] };
     } else if (ToolResultEntry.is(entry) && pending) {
       for (const message of entry.model ?? []) {
         if (message.role !== "toolResult") continue;
+        if (entry.data?.diagnostics?.some(({ code }) => code === "interrupted")) {
+          pending.interruptions.push(failureRecord(entry.id, message.timestamp, "tool_interrupted",
+            runFailureMessage("tool_interrupted", language)));
+        }
         const details = message.details as ToolDetails | undefined;
         if (details?.hidden === true) {
           pending.results.set(message.toolCallId, null);
@@ -349,6 +362,7 @@ export function projectLive(
         results.set(record.message.toolCallId, record.message);
         continue;
       }
+      if (record.kind === "failure" && record.message.meta.failure.kind === "tool_interrupted") continue;
       if (record.kind === "assistant") {
         for (const block of record.message.content) if (block.type === "toolCall") calls.set(block.id, block);
       }

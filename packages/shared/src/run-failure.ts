@@ -6,6 +6,7 @@ export const RunFailureKindSchema = z.enum([
   "quota",
   "overloaded",
   "tool_deadline",
+  "tool_interrupted",
   "max_run_time",
   "idle_timeout",
   "safety_refusal",
@@ -101,6 +102,10 @@ export function runFailureMessage(
       return lang === "fr"
         ? "Le quota du service IA pour cet espace est épuisé. Votre administrateur a été prévenu."
         : "The AI service quota for this workspace is exhausted. Your administrator has been notified.";
+    case "tool_interrupted":
+      return lang === "fr"
+        ? "Un outil a été interrompu par un redémarrage et a peut-être été exécuté en partie. Vérifiez ses effets."
+        : "A tool was interrupted by a restart and may have partly run. Check its effects.";
     case "tool_deadline":
     case "max_run_time":
     case "idle_timeout":
