@@ -15,12 +15,19 @@ const stop = "/api/agents/pilot/stop";
 
 it("stops the caller's live Main and settles the send as aborted", async () => {
   const releaseRound = latch();
+  const releaseBoundary = latch();
   const secondRound = latch();
   const releaseSecondRound = latch();
   const gateway = await startDurableTestGateway({
     extraYaml: "toolDeferral: { enabled: false }",
     fixture: { extension: defineExtension({
       name: "round-barrier",
+      hooks: [hook(GenerationTask, {
+        async afterTools() {
+          await releaseBoundary.promise;
+          return undefined;
+        },
+      })],
       tools: [
         defineTool({
           name: "wait_for_round", description: "Wait for the test to release the first round.", parameters: { type: "object" },
@@ -51,21 +58,30 @@ it("stops the caller's live Main and settles the send as aborted", async () => {
       "The run should have stopped.",
     );
     const sender = await gateway.send("local", "Wait for the timer", { clientSendId: "timer" }, "ws");
-    await vi.waitFor(() => expect(turns.events).toContainEqual(expect.objectContaining({
-      type: "active_turn", runId: expect.any(String), toolCalls: [expect.objectContaining({ id: "first-round", status: "running" })],
-    })));
-    const observed = turns.events.find((event) => event.type === "active_turn" &&
-      event.toolCalls.some(({ id }) => id === "first-round"));
-    const runId = observed?.type === "active_turn" ? observed.runId : undefined;
-    expect(runId).toEqual(expect.any(String));
+    const runId = await vi.waitFor(() => {
+      const observed = turns.events.find((event) => event.type === "active_turn" &&
+        event.toolCalls.some(({ id, status }) => id === "first-round" && status === "running"));
+      expect(observed).toEqual(expect.objectContaining({ runId: expect.any(String) }));
+      return observed?.type === "active_turn" ? observed.runId : undefined;
+    });
+    // Let the first tool settle and drain its snapshots while afterTools holds
+    // the boundary. The steer's admission then publishes the next snapshot.
+    const finishedFirstRound = expect.objectContaining({
+      type: "active_turn", runId, toolCalls: [expect.objectContaining({ id: "first-round", status: "done" })],
+    });
+    releaseRound.resolve();
+    await vi.waitFor(() => expect(turns.events).toContainEqual(finishedFirstRound));
     turns.events.length = 0;
     const steer = await gateway.send("local", "Use the short timer", { clientSendId: "shorter-timer" }, "ws");
-    await vi.waitFor(() => expect(turns.events).toContainEqual(expect.objectContaining({ type: "active_turn", runId })));
-    releaseRound.resolve();
+    await vi.waitFor(() => expect(turns.events).toContainEqual(finishedFirstRound));
+    releaseBoundary.resolve();
     await vi.waitFor(() => expect(observer.events).toContainEqual(expect.objectContaining({
       live: expect.objectContaining({ runId, toolCalls: [expect.objectContaining({ id: "blocked", status: "running" })] }),
     })));
     await secondRound.promise;
+    expect(gateway.requests[1]?.messages.filter(({ role }) => role === "user").map(({ content }) => content)).toEqual([
+      "[from Local user via web]\nWait for the timer", "[from Local user via web]\nUse the short timer",
+    ]);
     const live = (await (await gateway.request("local", feed)).json() as FeedWindow).live;
     expect(live?.runId).toBe(runId);
     expect((await gateway.request("local", stop, { method: "POST", body: '{"runId":null}' })).status).toBe(400);
@@ -74,8 +90,8 @@ it("stops the caller's live Main and settles the send as aborted", async () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "stopped" });
-    for (const socket of [sender, steer]) {
-      await vi.waitFor(() => expect(socket.events).toContainEqual(expect.objectContaining({
+    for (const [label, socket] of [["original", sender], ["steer", steer]] as const) {
+      await vi.waitFor(() => expect(socket.events, label).toContainEqual(expect.objectContaining({
         type: "done", meta: expect.objectContaining({ aborted: true }),
       })));
     }
@@ -84,12 +100,10 @@ it("stops the caller's live Main and settles the send as aborted", async () => {
     await gateway.setDurableMode("local", false);
     expect((await gateway.request("local", stop, { method: "POST" })).status).toBe(404);
     expect((await gateway.request("local", "/api/agents/missing/stop", { method: "POST" })).status).toBe(404);
-    expect(gateway.requests[1]?.messages.filter(({ role }) => role === "user").map(({ content }) => content)).toEqual([
-      "[from Local user via web]\nWait for the timer", "[from Local user via web]\nUse the short timer",
-    ]);
     expect(gateway.callCount()).toBe(2);
   } finally {
     releaseRound.resolve();
+    releaseBoundary.resolve();
     releaseSecondRound.resolve();
     await gateway.close();
   }
