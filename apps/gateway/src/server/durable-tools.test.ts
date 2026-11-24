@@ -1,9 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Extension, ExtensionAgentTool } from "@yoplai/shared";
-import { expect, it, vi } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { startDurableTestGateway } from "../test-utils/durable-gateway.js";
+
+beforeAll(async () => {
+  // Warm the gateway imports so the first test fits the default timeout.
+  await import("./index.js");
+  await import("../config/index.js");
+  await import("../extensions/registry.js");
+  await import("../durable/faux.js");
+});
 
 function latch() {
   let resolve!: () => void;
