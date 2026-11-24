@@ -23,8 +23,14 @@ export function isSafeRemotePath(pathAndQuery: string): boolean {
   const path = pathAndQuery.split("?")[0];
   if (!path.startsWith("/") || path.startsWith("//") || /[\\#\s\p{Cc}]/u.test(path)) return false;
   try {
-    return path.split("/").slice(1).every((part) => {
-      return isCarriedPathSegment(decodeURIComponent(part));
+    const parts = path.split("/");
+    const isMcpAppPath = parts.length === 9 && parts[1] === "api" && parts[2] === "agents"
+      && parts[3] && parts[4] === "sessions" && parts[5] && parts[6] === "mcp-apps" && parts[8];
+    return parts.every((part, index) => {
+      const decoded = decodeURIComponent(part);
+      // A nested Code Mode call ID contains a slash but travels as one encoded segment.
+      if (isMcpAppPath && index === 7) return decoded.split("/").every(isCarriedPathSegment);
+      return isCarriedPathSegment(decoded);
     });
   } catch {
     return false;

@@ -340,6 +340,51 @@ describe("desktop relay: chat relay", () => {
     });
   });
 
+  it("issues a local sandbox ticket for a linked gateway's nested sent file", async () => {
+    const viewPath = "/api/agents/pom%40file/sessions/chat-one/mcp-apps/script-1%2F1/view";
+    const dataPath = "/api/agents/pom/sessions/chat-one/mcp-apps/script-1%2F1/data";
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === dataPath) {
+        res.end(JSON.stringify({ server: "yoplai", tool: "send_file", args: {}, result: fileResult }));
+      } else {
+        res.statusCode = 404;
+        res.end("{}");
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + viewPath, { method: "POST", headers: { Origin: "http://localhost:3000" } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ available: true, server: "yoplai" });
+      expect(fake.requests.map(({ method, url }) => [method, url])).toEqual([["POST", dataPath]]);
+    });
+  });
+
+  it("reads a linked gateway's nested sent file through RPC", async () => {
+    const remotePath = "/api/agents/pom/sessions/chat-one/mcp-apps/script-1%2F1/rpc";
+    const uri = "yoplai-file://example";
+    const request = { jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri } };
+    const result = { contents: [{ uri, mimeType: "text/html", text: "<h1>Nested report</h1>" }] };
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST" && req.url === remotePath) {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+      } else {
+        res.statusCode = 404;
+        res.end("{}");
+      }
+    }, async (fake) => {
+      const response = await fetch(localBase + "/api/agents/pom%40file/sessions/chat-one/mcp-apps/script-1%2F1/rpc", {
+        method: "POST", headers: { Origin: "http://localhost:3000", "content-type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ jsonrpc: "2.0", id: 1, result });
+      expect(fake.requests.map(({ method, url, body }) => [method, url, JSON.parse(body)])).toEqual([
+        ["POST", remotePath, request],
+      ]);
+    });
+  });
+
   it("rejects untrusted origins locally for a linked file view", async () => {
     await withFakeGateway("file", (_req, res) => {
       res.setHeader("content-type", "application/json");
