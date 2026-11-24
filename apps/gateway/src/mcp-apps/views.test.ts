@@ -164,6 +164,64 @@ describe("MCP Apps gateway views", () => {
     expect(await opened.text()).toBe("%PDF-1.7\nRiverstone");
   });
 
+  it("serves a linked PDF inline and revokes its ticket when the linked session is deleted", async () => {
+    const fileId = "7ed99053-212b-4003-b148-60c6fb1869b1";
+    const sessionPath = "/api/agents/harbor/sessions/linked-pdf";
+    let finishDownload = () => {};
+    const remote = http.createServer((req, res) => {
+      if (req.url === sessionPath + "/mcp-apps/file-call/data") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({
+          server: "yoplai", tool: "send_file", args: {},
+          result: { structuredContent: { uri: `yoplai-file://${fileId}`, filename: "harbor.pdf", mimeType: "application/octet-stream" } },
+        }));
+      } else if (req.url === `/api/media/download/${fileId}`) {
+        res.setHeader("Content-Disposition", 'attachment; filename="harbor.pdf"');
+        res.write("%PDF-1.7\n");
+        finishDownload = () => res.end("Harbor");
+      } else if (req.method === "DELETE" && req.url === sessionPath) {
+        res.setHeader("Content-Type", "application/json");
+        res.end('{"ok":true}');
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    });
+    await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+    const { getRemoteGatewayStore } = await import("../relay/state.js");
+    const links = getRemoteGatewayStore();
+    links.save({ name: "dock", url: `http://127.0.0.1:${(remote.address() as AddressInfo).port}` });
+    try {
+      const session = gatewayUrl + "/api/agents/harbor%40dock/sessions/linked-pdf";
+      const issued = await (await fetch(session + "/mcp-apps/file-call/open", {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      })).json();
+      const opened = await fetch(issued.url, { signal: AbortSignal.timeout(3000) });
+      expect(opened.status).toBe(200);
+      expect(opened.headers.get("content-type")).toBe("application/pdf");
+      expect(opened.headers.get("content-disposition")).toBe("inline");
+      expect(opened.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'none'; sandbox");
+      const reader = opened.body!.getReader();
+      const decoder = new TextDecoder();
+      expect(decoder.decode((await reader.read()).value)).toBe("%PDF-1.7\n");
+      finishDownload();
+      let remainder = "";
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        remainder += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(remainder + decoder.decode()).toBe("Harbor");
+
+      expect((await fetch(session, { method: "DELETE" })).status).toBe(200);
+      const revoked = await fetch(issued.url, { signal: AbortSignal.timeout(3000) });
+      await revoked.body?.cancel();
+      expect(revoked.status).toBe(404);
+    } finally {
+      links.remove("dock");
+      remote.closeAllConnections();
+      await new Promise<void>((resolve) => remote.close(() => resolve()));
+    }
+  });
+
   it("opens supported raster images in their own media type", async () => {
     for (const [filename, mimeType, expectedType] of [
       ["riverstone.png", "application/octet-stream", "image/png"],

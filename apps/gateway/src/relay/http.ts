@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { getAgent, loadConfig } from "../config/index.js";
-import { createRelayedFileView, createRelayedMcpView } from "../mcp-apps/views.js";
+import { createRelayedFileOpen, createRelayedFileView, createRelayedMcpView, revokeMcpAppSession } from "../mcp-apps/views.js";
 import { addGatewaySuffix, isSupportedRemoteAgentId } from "./agent-id.js";
 import { MAX_UPLOAD_SIZE_BYTES } from "../media/upload.js";
 import { getLinkedGateways, isLoopbackForwardedFor, isTrustedRequest, resolveRemoteAgent } from "./state.js";
@@ -8,6 +8,7 @@ import {
   fetchRemote,
   fetchRemoteJson,
   fetchRemoteWithRedirects,
+  isSafeRemotePath,
   LIST_TIMEOUT_MS,
   UnsafeRemoteRedirectError,
   suffixAgentIds,
@@ -303,10 +304,13 @@ export function relayHttp(): MiddlewareHandler {
     const url = new URL(c.req.url);
     const segments = url.pathname.split("/");
     const method = c.req.method;
-    const isView = method === "POST" && segments.length === 9 && segments[4] === "sessions" && segments[6] === "mcp-apps" && segments[8] === "view";
+    const appOperation = method === "POST" && segments.length === 9 && segments[4] === "sessions" && segments[6] === "mcp-apps"
+      ? segments[8] : undefined;
+    const isView = appOperation === "view";
+    const isOpen = appOperation === "open";
     const forwardedFor = c.req.header("x-forwarded-for");
     const trusted = isTrustedRequest(c.req.header("origin"), forwardedFor);
-    if (!trusted && (!isView || !isLoopbackForwardedFor(forwardedFor))) return next();
+    if (!trusted && (!(isView || isOpen) || !isLoopbackForwardedFor(forwardedFor))) return next();
 
     if (segments[1] === "api" && segments[2] === "agents" && segments[3] !== undefined) {
       const first = decodeURIComponent(segments[3]);
@@ -318,28 +322,39 @@ export function relayHttp(): MiddlewareHandler {
         if (!trusted) return c.json({ error: "untrusted_origin" }, 403);
         const remoteSegments = [...segments];
         remoteSegments[3] = encodeURIComponent(target.agentId);
-        if (isView) {
+        if (isView || isOpen) {
           const appPath = remoteSegments.slice(0, -1).join("/");
           const dataPath = `${appPath}/data${url.search}`;
           const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(LIST_TIMEOUT_MS)]);
-          const data: unknown = await fetchRemote(gateway, dataPath, { method: "POST", signal })
+          const readData = (): Promise<unknown> => fetchRemote(gateway, dataPath, { method: "POST", signal })
             .then(async (response) => {
               if (response.ok) return response.json();
               await response.body?.cancel();
             })
             .catch(() => undefined);
-          if (data) {
+          if (isOpen && isSafeRemotePath(dataPath)) {
             // Linked gateways are available only in single-user mode.
             const scope = { agentId: first, sessionId: decodeURIComponent(segments[5]) };
-            const config = loadConfig();
-            const toolCallId = decodeURIComponent(segments[7]);
-            const view = await createRelayedFileView(config, c, scope, toolCallId, data)
-              ?? await createRelayedMcpView(config, c, scope, toolCallId, data, (uri) =>
-                readLinkedMcpApp(gateway, `${appPath}/rpc${url.search}`, uri, c.req.raw.signal));
-            if (view) return view;
+            const open = await createRelayedFileOpen(loadConfig, c, scope, { gateway, agentId: target.agentId }, readData);
+            if (open) return open;
+          } else if (isView) {
+            const data = await readData();
+            if (data) {
+              const scope = { agentId: first, sessionId: decodeURIComponent(segments[5]) };
+              const config = loadConfig();
+              const toolCallId = decodeURIComponent(segments[7]);
+              const view = await createRelayedFileView(config, c, scope, toolCallId, data)
+                ?? await createRelayedMcpView(config, c, scope, toolCallId, data, (uri) =>
+                  readLinkedMcpApp(gateway, `${appPath}/rpc${url.search}`, uri, c.req.raw.signal));
+              if (view) return view;
+            }
           }
         }
-        return forward(c.req.raw, gateway, `${remoteSegments.join("/")}${url.search}`, segments.length === 4);
+        const response = await forward(c.req.raw, gateway, `${remoteSegments.join("/")}${url.search}`, segments.length === 4);
+        if (response.ok && method === "DELETE" && segments.length === 6 && segments[4] === "sessions") {
+          revokeMcpAppSession({ agentId: first, sessionId: decodeURIComponent(segments[5]) });
+        }
+        return response;
       }
     }
 

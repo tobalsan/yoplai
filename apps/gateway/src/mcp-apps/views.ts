@@ -12,12 +12,22 @@ import { fileViewerHtml } from "./file-viewer-page.js";
 import { getMediaFileMetadata, resolveMediaFilePath } from "../media/metadata.js";
 import { logInfo, logWarn } from "../logging.js";
 import { accessLogger } from "../server/access-log.js";
+import { fetchRemoteWithRedirects } from "../relay/remote.js";
+import { getLinkedGateways, resolveRemoteAgent } from "../relay/state.js";
+import type { RemoteGateway } from "../relay/store.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 
 type SessionScope = { agentId: string; sessionId: string; ownerUserId?: string | null };
 type TicketScope = SessionScope & { appsOrigin: string; chatOrigin: string; expiresAt: number };
 type ViewTicket = TicketScope & { kind: "view"; html: string; policy: string };
-type Ticket = ViewTicket | (TicketScope & { kind: "file"; fileId: string });
+type LinkedFile = {
+  gateway: Pick<RemoteGateway, "name" | "url" | "generation">;
+  agentId: string;
+  filename: string;
+  mimeType: string;
+};
+type FileTicket = TicketScope & { kind: "file"; fileId: string; linked?: LinkedFile };
+type Ticket = ViewTicket | FileTicket;
 const tickets = new Map<string, Ticket>();
 const pendingViews = new Set<SessionScope & { revoked: boolean }>();
 let listener: ReturnType<typeof serve> | undefined;
@@ -63,24 +73,35 @@ export function startAppsListener(config: GatewayConfig, host: string, onBindErr
   app.get("/open/:ticket", async (c) => {
     const ticket = tickets.get(c.req.param("ticket"));
     if (!ticket || ticket.kind !== "file" || ticket.expiresAt <= Date.now() || new URL(c.req.url).host !== new URL(ticket.appsOrigin).host) return c.notFound();
-    let file;
-    try {
-      const metadata = await getMediaFileMetadata(ticket.fileId);
-      if (!metadata || metadata.agentId !== ticket.agentId) return c.notFound();
-      const response = fileResponse(metadata);
+    let response: ReturnType<typeof fileResponse>;
+    let body: ReadableStream;
+    if (ticket.linked) {
+      response = fileResponse(ticket.linked);
       if (!response) return c.notFound();
-      file = await fs.open(await resolveMediaFilePath(metadata), "r");
-      const stat = await file.stat();
-      if (!stat.isFile()) { await file.close(); return c.notFound(); }
-      c.header("Content-Length", String(stat.size));
-      c.header("Content-Type", response.contentType);
-      c.header("Content-Security-Policy", response.policy);
-      if (response.contentType === "application/pdf") c.header("Content-Disposition", "inline");
-    } catch { await file?.close(); return c.notFound(); }
+      const stream = await streamLinkedFile(ticket.agentId, ticket.fileId, ticket.linked, c.req.raw.signal);
+      if (!stream) return c.notFound();
+      body = stream;
+    } else {
+      let file;
+      try {
+        const metadata = await getMediaFileMetadata(ticket.fileId);
+        if (!metadata || metadata.agentId !== ticket.agentId) return c.notFound();
+        response = fileResponse(metadata);
+        if (!response) return c.notFound();
+        file = await fs.open(await resolveMediaFilePath(metadata), "r");
+        const stat = await file.stat();
+        if (!stat.isFile()) { await file.close(); return c.notFound(); }
+        c.header("Content-Length", String(stat.size));
+        body = Readable.toWeb(file.createReadStream()) as ReadableStream;
+      } catch { await file?.close(); return c.notFound(); }
+    }
+    c.header("Content-Type", response.contentType);
+    c.header("Content-Security-Policy", response.policy);
+    if (response.contentType === "application/pdf") c.header("Content-Disposition", "inline");
     c.header("Cache-Control", "no-store");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "no-referrer");
-    return c.body(Readable.toWeb(file.createReadStream()) as ReadableStream);
+    return c.body(body);
   });
   const server = serve({
     fetch: (request) => request.method === "GET" ? app.fetch(request) : new Response("Not Found", { status: 404 }),
@@ -98,6 +119,20 @@ export function startAppsListener(config: GatewayConfig, host: string, onBindErr
     tickets.clear();
     server.close();
   };
+}
+
+async function streamLinkedFile(agentId: string, fileId: string, linked: LinkedFile, signal: AbortSignal): Promise<ReadableStream | null> {
+  const gateways = getLinkedGateways();
+  const target = resolveRemoteAgent(agentId, gateways);
+  const gateway = gateways.find(({ name }) => name === target.gateway);
+  if (!gateway || gateway.name !== linked.gateway.name || gateway.url !== linked.gateway.url ||
+    gateway.generation !== linked.gateway.generation || target.agentId !== linked.agentId) return null;
+  try {
+    const response = await fetchRemoteWithRedirects(gateway, `/api/media/download/${encodeURIComponent(fileId)}`, "download", { signal });
+    if (response.ok) return response.body;
+    await response.body?.cancel();
+  } catch { /* The file or gateway is no longer reachable. */ }
+  return null;
 }
 
 function bootstrapPage(ticket: ViewTicket, id: string): string {
@@ -277,6 +312,42 @@ export async function createRelayedFileView(
     server: record.server, tool: typeof record.tool === "string" ? record.tool : "send_file",
     args: record.args, result: record.result,
   }, { html: fileViewerHtml, meta: fileViewerMeta }));
+}
+
+/** Issue a local file URL for a record already authorized by the linked gateway. */
+export async function createRelayedFileOpen(
+  getConfig: () => GatewayConfig,
+  c: Context,
+  scope: SessionScope,
+  source: { gateway: RemoteGateway; agentId: string },
+  readData: () => Promise<unknown>,
+): Promise<Response | undefined> {
+  const pending = { ...scope, revoked: false };
+  pendingViews.add(pending);
+  try {
+    const record = object(await readData());
+    const { uri, filename, mimeType } = object(object(record.result).structuredContent);
+    if (record.server !== "yoplai" || typeof uri !== "string" || !/^yoplai-file:\/\/[^/]+$/.test(uri)) return;
+    const authorization = await ticketOrigin(getConfig(), c);
+    if ("reason" in authorization) {
+      if (authorization.status === 403) return c.json({ error: authorization.reason }, 403);
+      return c.json({ available: false, reason: authorization.reason });
+    }
+    if (typeof filename !== "string" || typeof mimeType !== "string") return c.json({ available: false, reason: "file_unavailable" });
+    if (!fileResponse({ filename, mimeType })) return c.json({ available: false, reason: "unsupported_type" });
+    if (pending.revoked) return c.json({ available: false, reason: "session_deleted" });
+    if (c.req.raw.signal.aborted) return c.json({ available: false, reason: "aborted" });
+    const { chatOrigin, origin } = authorization;
+    const { name, url, generation } = source.gateway;
+    const id = storeTicket({
+      ...scope, kind: "file", chatOrigin, appsOrigin: origin, expiresAt: Date.now() + 3600_000,
+      fileId: uri.slice("yoplai-file://".length),
+      linked: { gateway: { name, url, generation }, agentId: source.agentId, filename, mimeType },
+    });
+    return c.json({ url: `${origin}/open/${id}` });
+  } finally {
+    pendingViews.delete(pending);
+  }
 }
 
 /** Check the chat origin before reading HTML from the linked gateway. */
