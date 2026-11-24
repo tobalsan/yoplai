@@ -15,6 +15,7 @@ import {
   type HistoryViewMode, type McpAppViewReference, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent } from "../config/index.js";
+import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText } from "../history/condense.js";
 import { activeContextUsage, historyPage } from "../history/page.js";
 import { logWarn } from "../logging.js";
@@ -365,6 +366,8 @@ export class DurableHost {
         : durableFailureKind(result.detail);
       // These legacy notices describe input removal or admin notifications.
       const durableKind = kind === "safety_refusal" || kind === "quota" ? "generic" : kind;
+      const accessError = result.reason === "model_error" &&
+        typeof result.detail === "string" && isSafeModelAccessError(result.detail) ? result.detail : undefined;
       const requestId = "failed:" + submission.id;
       const recorded = await conversation.commit(async (tx) => {
         if (await tx.submissionByRequest(conversation.id, requestId)) return false;
@@ -374,7 +377,7 @@ export class DurableHost {
           requestId,
           entry: {
             kind: FailureNoteEntry.kind,
-            data: { submissionId: submission.id, kind: durableKind },
+            data: { submissionId: submission.id, kind: durableKind, ...(accessError && { accessError }) },
             model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
           },
         });
@@ -386,7 +389,7 @@ export class DurableHost {
           reason: result.reason, kind: durableKind,
         });
       }
-      throw new Error(runFailureMessage(durableKind, this.agent.language ?? "en"));
+      throw new Error(accessError ?? runFailureMessage(durableKind, this.agent.language ?? "en"));
     }
     if (result.status !== "done" || result.type === "write" || original.entry === undefined) {
       throw new Error("Yoplai could not complete the turn.");
@@ -489,12 +492,12 @@ export class DurableHost {
         if (InputEntry.is(entry)) {
           full.push({ role: "user", content: [{ type: "text", text: entry.data.text }], timestamp: entry.data.timestamp });
         } else if (FailureNoteEntry.is(entry)) {
-          const { kind } = entry.data;
+          const { kind, accessError } = entry.data;
           const note = entry.model?.[0];
           if (!note) continue;
           full.push({
             role: "assistant",
-            content: [{ type: "text", text: runFailureMessage(kind, this.agent.language ?? "en") }],
+            content: [{ type: "text", text: isSafeModelAccessError(accessError) ? accessError : runFailureMessage(kind, this.agent.language ?? "en") }],
             timestamp: note.timestamp,
             meta: { stopReason: "error", failure: { kind } },
           });

@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 let root: string;
@@ -38,6 +39,40 @@ async function fixture(source: keyof typeof locations, value: unknown) {
   await fs.rename(temporary, file);
   return file;
 }
+
+it("detects an OpenCode database before consent and prefers its active key over legacy JSON", async () => {
+  const { createExternalSources } = await import("./external-sources.js");
+  const dir = path.join(root, ".local/share/opencode");
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, "opencode.db");
+  const db = new Database(file);
+  try {
+    db.exec("CREATE TABLE credential (integration_id TEXT, value TEXT, active INTEGER)");
+    const insert = db.prepare("INSERT INTO credential VALUES (?, ?, ?)");
+    insert.run("opencode-go", '{"type":"key","key":"fake-inactive-go"}', 0);
+    insert.run("opencode-go", '{"type":"key","key":"fake-database-go"}', 1);
+  } finally {
+    db.close();
+  }
+  const sources = createExternalSources(home);
+  const resolve = () => sources.resolve("opencode-go", undefined, "api_key", "opencode");
+  expect((await sources.status()).find((item) => item.source === "opencode"))
+    .toMatchObject({ detected: true, enabled: false, providers: [] });
+  expect(await resolve()).toBeUndefined();
+  expect(await sources.enable("opencode", true)).toMatchObject({
+    detected: true, enabled: true, providers: [{ provider: "opencode-go", type: "api_key", available: true }],
+  });
+  expect(await resolve()).toEqual({ source: "opencode", type: "api_key", key: "fake-database-go" });
+  await fixture("opencode", {
+    "opencode-go": { type: "api", key: "fake-legacy-go" },
+    openai: { type: "api", key: "fake-legacy-openai" },
+  });
+  expect(await resolve()).toMatchObject({ key: "fake-database-go" });
+  expect(await sources.resolve("openai", undefined, "api_key", "opencode"))
+    .toMatchObject({ key: "fake-legacy-openai" });
+  await fs.unlink(file);
+  expect(await resolve()).toMatchObject({ key: "fake-legacy-go" });
+});
 
 it("detects each source without reading a credential before consent", async () => {
   const { createExternalSources } = await import("./external-sources.js");
