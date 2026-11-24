@@ -20,6 +20,43 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
+it("uses a pinned Pi key only on the single-user desktop", async () => {
+  const { resolveGatewayModelCredentials } = await import("./model-auth.js");
+  const { configureRelay } = await import("../relay/state.js");
+  await fs.mkdir(path.join(root, ".pi/agent"), { recursive: true });
+  await fs.writeFile(path.join(root, ".pi/agent/auth.json"), JSON.stringify({
+    "opencode-go": { type: "api_key", key: "fake-pi-go" },
+  }));
+  await fs.writeFile(path.join(home, "desktop-model-sources.json"), JSON.stringify({ pi: "enabled" }));
+  const request = {
+    provider: "opencode-go", model: "glm-5.3-flash", env: { OPENCODE_API_KEY: "fake-env-go" },
+  };
+  const pinned = { ...request, source: "pi" as const };
+  expect(await resolveGatewayModelCredentials(pinned)).toMatchObject({ apiKey: "fake-pi-go" });
+  expect(await resolveGatewayModelCredentials(request)).toMatchObject({ apiKey: "fake-env-go" });
+  configureRelay("127.0.0.1", true);
+  await expect(resolveGatewayModelCredentials(pinned)).rejects.toThrow(
+    "Pi CLI login is not available. Sign in again or pick another source.",
+  );
+  configureRelay("127.0.0.1", false);
+  vi.stubEnv("YOPLAI_DESKTOP", undefined);
+  await expect(resolveGatewayModelCredentials(pinned)).rejects.toThrow(
+    "Pi CLI login is not available. Sign in again or pick another source.",
+  );
+});
+
+it("resolves a pinned Pi Claude login after consent", async () => {
+  const { resolveGatewayModelCredentials } = await import("./model-auth.js");
+  await fs.mkdir(path.join(root, ".pi/agent"), { recursive: true });
+  await fs.writeFile(path.join(root, ".pi/agent/auth.json"), JSON.stringify({
+    anthropic: { type: "oauth", access: "sk-ant-oat-fixture", expires: Date.now() + 60_000 },
+  }));
+  await fs.writeFile(path.join(home, "desktop-model-sources.json"), JSON.stringify({ pi: "warning-accepted" }));
+  expect(await resolveGatewayModelCredentials({
+    provider: "anthropic", model: "claude-haiku-5-5", source: "pi",
+  })).toMatchObject({ apiKey: "sk-ant-oat-fixture" });
+});
+
 it("prefers an owned key and keeps the environment path", async () => {
   const { createModelAuth } = await import("./model-auth.js");
   await fs.writeFile(path.join(home, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "fake-owned" } }));

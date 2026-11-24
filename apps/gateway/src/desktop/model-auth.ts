@@ -43,7 +43,7 @@ export function isSafeModelAccessError(message: string | undefined): message is 
   return message === CODEX_EXPIRED || message === CLAUDE_LOGIN_UNAVAILABLE || isUnavailableModelSourceMessage(message);
 }
 
-function safeProviderError(provider: string, external: boolean, status: number | undefined, message = ""): string {
+export function safeProviderError(provider: string, external: boolean, status: number | undefined, message = ""): string {
   if (isSafeModelAccessError(message)) return message;
   const response = status && status >= 400 ? { status } : undefined;
   const category = getProviderErrorCategory(response, message);
@@ -330,7 +330,7 @@ export async function resolveGatewayModelCredentials(options: {
 }) {
   const { runtime, resolveModelAuth } = await createModelAuth({
     primaryProvider: options.provider, primaryModel: options.model, primarySource: options.source,
-    mode: options.mode, allowExternal: false, refreshOnCreate: false,
+    mode: options.mode, allowExternal: options.source !== undefined, refreshOnCreate: false,
   });
   const model = runtime.getModel(options.provider, options.model);
   const auth = await resolveModelAuth(model ?? options.provider, {

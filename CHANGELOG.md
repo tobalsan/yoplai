@@ -38,6 +38,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable agents on single-user desktops can use pinned Pi, Codex, Claude Code, and OpenCode CLI logins. The desktop reads OpenCode Go keys from OpenCode v2's database as well as legacy JSON.
 - Show failed Durable Main turns in chat and history, log one safe warning per failed send, and tell the model when its previous reply failed.
 - Omit unfinished blocks from agent and chat project drafts. Keep closed code fences even when an unfinished paragraph immediately follows them.
 - Use the same picker for both model fields in Agent settings. Show the selected fallback source until the settings reload.

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { AnyModel } from "@earendil-works/pi-ai";
+import Database from "better-sqlite3";
 import { writeJsonAtomic } from "../util/atomic-write.js";
 import { CODEX_EXPIRED, isLiteralKey } from "./literal-key.js";
 import type { ExternalCredential } from "./model-auth.js";
@@ -17,6 +18,7 @@ const TRUSTED_OAUTH_ENDPOINTS: Readonly<Record<typeof EXTERNAL_OAUTH_PROVIDERS[n
 };
 const entries = Object.entries;
 const sourcePaths = { codex: ".codex/auth.json", opencode: ".local/share/opencode/auth.json", pi: ".pi/agent/auth.json" } as const;
+const openCodeDatabase = ".local/share/opencode/opencode.db";
 const keychainService = "Claude Code-credentials";
 
 type ObjectValue = Record<string, unknown>;
@@ -68,6 +70,26 @@ const systemKeychain: Keychain = {
 };
 
 type Entry = { provider: string; type: ExternalCredential["type"]; key?: string; expires?: number; supported: boolean; message?: string };
+function readOpenCodeKey(file: string): Entry | undefined {
+  try {
+    const db = new Database(file, { readonly: true, fileMustExist: true, timeout: 100 });
+    try {
+      const row = db.prepare<[], { value: string }>(
+        "SELECT value FROM credential WHERE integration_id = 'opencode-go' AND active = 1 LIMIT 1",
+      ).get();
+      if (!row) return;
+      const credential = object(JSON.parse(row.value));
+      const key = credential?.type === "key" && isLiteralKey(credential.key) && !isAnthropicOAuthToken(credential.key)
+        ? credential.key : undefined;
+      return { provider: "opencode-go", type: "api_key", supported: true, key };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
 type Candidate = Pick<Entry, "provider" | "type"> & { available: boolean };
 function available(entry: Entry): boolean {
   return Boolean(entry.key) && (entry.expires === undefined || entry.expires > Date.now());
@@ -180,6 +202,8 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
   const keychain = deps.keychain ?? systemKeychain;
   const userHome = deps.userHome ?? os.homedir;
   const externalPath = (source: Exclude<ExternalSource, "claude-code">) => path.join(userHome(), sourcePaths[source]);
+  const openCodePath = () => path.join(userHome(), openCodeDatabase);
+  const exists = (file: string) => fs.access(file).then(() => true, () => false);
   let pending = Promise.resolve();
   let keychainDenied = false;
   let keychainRead: Promise<string> | undefined;
@@ -218,7 +242,9 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
     const state = enabled[source];
     if (state !== "enabled" && state !== "warning-accepted") return [];
     if (source !== "claude-code") {
-      const entries = await readFileSource(source);
+      const legacy = await readFileSource(source);
+      const key = source === "opencode" ? readOpenCodeKey(openCodePath()) : undefined;
+      const entries = key ? [key, ...legacy.filter((entry) => entry.provider !== key.provider)] : legacy;
       return state === "warning-accepted" ? entries : entries.map((entry) => isFileClaudeLogin(entry)
         ? { ...entry, key: undefined, supported: false, message: ACCEPT_CLAUDE_WARNING } : entry);
     }
@@ -242,7 +268,7 @@ export function createExternalSources(home: string, deps: { userHome?: () => str
   async function statusOf(source: ExternalSource, enabled: Consent) {
     const detected = source === "claude-code"
       ? await keychain.exists()
-      : await fs.access(externalPath(source)).then(() => true, () => false);
+      : await exists(externalPath(source)) || (source === "opencode" && await exists(openCodePath()));
     const providers = detected ? await read(source, enabled) : [];
     const denied = enabled[source] === "denied" || (source === "claude-code" && keychainDenied);
     const credentials = providers.map((entry) => {
