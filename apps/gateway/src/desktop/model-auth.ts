@@ -319,7 +319,7 @@ export async function createModelAuth(options: {
   return { runtime, resolveModelAuth, requireModelAuth };
 }
 
-/** Plain request credentials for the versioned model adapter. */
+/** Credentials and provider from the same configuration for the versioned model adapter. */
 export async function resolveGatewayModelCredentials(options: {
   provider: string;
   model: string;
@@ -337,7 +337,10 @@ export async function resolveGatewayModelCredentials(options: {
     env: options.env, signal: options.signal,
   });
   if (!auth) return;
-  return { apiKey: auth.auth.apiKey, headers: auth.auth.headers, baseUrl: auth.auth.baseUrl ?? model?.baseUrl, env: auth.env };
+  return {
+    apiKey: auth.auth.apiKey, headers: auth.auth.headers, baseUrl: auth.auth.baseUrl ?? model?.baseUrl, env: auth.env,
+    model, provider: runtime.getProvider(options.provider),
+  };
 }
 
 export async function completeModelOnce(runtime: Awaited<ReturnType<typeof createModelAuth>>["runtime"], model: Model<Api>, text: string, signal = AbortSignal.timeout(20_000), maxTokens = 256, onLength?: (text: string) => string) {

@@ -13,6 +13,7 @@ import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { WsFeed } from "./ws-feed.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
@@ -243,21 +244,23 @@ export class WsBroker {
       this.feeds.get(ws)?.stop();
       const limit = msg.limit === undefined ? 50 : msg.limit;
       const agent = typeof msg.agentId === "string" ? getAgent(msg.agentId) : undefined;
+      const durableWeb = this.options.durableWeb;
+      const userId = authContext?.session.userId;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
         this.send(ws, { type: "error", message: "Feed limit must be between 1 and 200" });
-      } else if (!agent?.durable || !this.options.durableWeb || !isAgentActive(agent.id)) {
+      } else if (!agent || !durableWeb) {
         this.send(ws, { type: "error", message: "Agent not found" });
       } else {
         const headers = new Headers(request?.headers as Record<string, string> | undefined);
         const checkSession = async () => authContext && !authContext.session.id.startsWith("apikey:") && authAdapter.recheckFeedSession
           ? authAdapter.recheckFeedSession(headers, authContext)
           : "active" as const;
-        const feed = new WsFeed(ws, agent.id, authContext?.session.userId ?? "local", () => this.socketActive(ws),
+        const feed = new WsFeed(ws, agent.id, userId ?? "local", () => this.socketActive(ws),
           checkSession, () => {
             this.closeInvalidCredential(ws);
           }, () => this.feeds.delete(ws), this.options.feedSendComplete);
         this.feeds.set(ws, feed);
-        void feed.start(this.options.durableWeb.host(agent), limit);
+        void feed.start(async () => await durableModeFor(userId, agent) ? durableWeb.host(agent) : undefined, limit);
       }
       return;
     }
@@ -322,20 +325,21 @@ export class WsBroker {
       return;
     }
     const userId = authContext?.session.userId;
-    if (this.options.durableWeb && targetsDurableMain(agent, msg.sessionId)) {
-      if (this.subscribeGenerations.get(ws) !== generation) return;
-      this.subscriptions.delete(ws);
-      try {
+    try {
+      if (this.options.durableWeb && targetsDurableMain(true, msg.sessionId) && await durableModeFor(userId, agent)) {
+        if (this.subscribeGenerations.get(ws) !== generation) return;
+        this.subscriptions.delete(ws);
         const host = await this.options.durableWeb.host(agent);
         const unsubscribe = await host.subscribe(userId ?? "local", (event) => {
           if (this.subscribeGenerations.get(ws) === generation) this.send(ws, event);
         });
         if (this.subscribeGenerations.get(ws) !== generation) unsubscribe();
         else this.durableSubscriptions.set(ws, unsubscribe);
-      } catch {
-        if (this.subscribeGenerations.get(ws) === generation) {
-          this.send(ws, { type: "error", message: "Could not subscribe to Durable Main." });
-        }
+        return;
+      }
+    } catch {
+      if (this.subscribeGenerations.get(ws) === generation) {
+        this.send(ws, { type: "error", message: "Could not subscribe to Durable Main." });
       }
       return;
     }
@@ -420,7 +424,7 @@ export class WsBroker {
         return;
       }
 
-      if (this.options.durableWeb && msg.clientSendId !== undefined && targetsDurableMain(agent, msg.sessionId)) {
+      if (this.options.durableWeb && msg.clientSendId !== undefined && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), msg.sessionId)) {
         const parsed = parseDurableWebSend(msg);
         if (!parsed.ok) {
           this.send(ws, { type: "error", message: parsed.error });

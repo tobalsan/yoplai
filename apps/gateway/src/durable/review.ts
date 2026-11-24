@@ -51,8 +51,8 @@ export function createReplyReview(
     }
   }
 
-  function loadReviewers(conversationId: ConversationId) {
-    const { agent, config, principal } = authority(conversationId);
+  async function loadReviewers(conversationId: ConversationId) {
+    const { agent, config, principal } = await authority(conversationId);
     return runtime.getReplyReviewers(
       agent, config, resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace),
       principal.sessionId, principal.userId, principal,

@@ -25,9 +25,15 @@ export class WsFeed {
     private readonly feedSendComplete?: () => Promise<void>,
   ) {}
 
-  async start(open: Promise<DurableHost>, limit: number) {
+  async start(open: () => Promise<DurableHost | undefined>, limit: number) {
     try {
-      this.host = await open;
+      this.host = await open();
+      if (!this.active()) return;
+      if (!this.host) {
+        this.ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
+        this.stop();
+        return;
+      }
       if (!await this.recheck()) return;
       const reason = await this.host.watchFeed(this.principal, this.principal, limit, this.controller.signal, (window, snapshot) => {
         this.pending = { window, snapshot: snapshot || this.sending || this.pending?.snapshot === true };

@@ -26,7 +26,7 @@ export function createDurableFaux(tokensPerSecond?: number, fixture?: { provider
   const createModelsForAgent: DurableModelsFactory = (agent, requestPolicy) => {
     const models = createModels();
     models.setProvider(faux.provider);
-    return withDurableRequestPolicy(models, requestPolicy, fixture ? agent.id : undefined);
+    return withDurableRequestPolicy(models, requestPolicy, { agentId: fixture ? agent.id : undefined, useFixtureProvider: true });
   };
   return {
     createModels: createModelsForAgent,

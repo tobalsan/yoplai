@@ -1132,34 +1132,22 @@ describe("AgentSidebar", () => {
     dispose();
   });
 
-  it("shows Archive link in footer only when not multiUser", async () => {
+  it("opens the single-user account menu from the collapsed sidebar", async () => {
     vi.useFakeTimers();
     fetchAgentSessionsMock.mockResolvedValue({ items: [] });
     setPathname("/chat/alpha");
-    // Single-user mode: Archive link should be present
     setCapabilitiesForTests({ multiUser: false });
-    const container1 = document.createElement("div");
-    document.body.appendChild(container1);
-    const dispose1 = render(
-      () => <AgentSidebar collapsed={() => false} />,
-      container1
-    );
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const dispose = render(() => <AgentSidebar collapsed={() => true} />, container);
     await vi.advanceTimersByTimeAsync(1);
-    expect(container1.querySelector(".archive-link")).toBeTruthy();
-    dispose1();
-    container1.remove();
-    // Multi-user mode: Archive link should NOT be present
-    setCapabilitiesForTests({ multiUser: true });
-    const container2 = document.createElement("div");
-    document.body.appendChild(container2);
-    const dispose2 = render(
-      () => <AgentSidebar collapsed={() => false} />,
-      container2
-    );
-    await vi.advanceTimersByTimeAsync(1);
-    expect(container2.querySelector(".archive-link")).toBeNull();
-    dispose2();
-    container2.remove();
+    getByRole(container, "button", { name: "Account menu" }).click();
+    const menu = getByRole(container, "menu");
+    expect(getByRole(menu, "menuitem", { name: "Archive" }).getAttribute("href")).toBe("/archive");
+    expect(getByRole(menu, "menuitem", { name: "Account settings" }).getAttribute("href")).toBe("/account/settings");
+    expect(queryByRole(menu, "menuitem", { name: "Logout" })).toBeNull();
+    dispose();
+    container.remove();
   });
 
   it("shows a Link gateway entry when the gateway can link, also with no saved gateway, and none otherwise", async () => {
@@ -1173,7 +1161,8 @@ describe("AgentSidebar", () => {
       document.body.appendChild(container);
       const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
       await vi.advanceTimersByTimeAsync(5);
-      const link = queryByRole(container, "link", { name: /Link gateway/ });
+      getByRole(container, "button", { name: "Account menu" }).click();
+      const link = queryByRole(container, "menuitem", { name: "Link gateway" });
       dispose();
       container.remove();
       return link?.getAttribute("href");
@@ -1194,7 +1183,8 @@ describe("AgentSidebar", () => {
       document.body.appendChild(container);
       const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
       await vi.advanceTimersByTimeAsync(5);
-      const link = Array.from(container.querySelectorAll("a")).find((item) => item.textContent?.includes("Pairings"));
+      if (!multiUser) getByRole(container, "button", { name: "Account menu" }).click();
+      const link = queryByRole(container, "menuitem", { name: "Pairings" });
       dispose();
       container.remove();
       return link?.getAttribute("href");

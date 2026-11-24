@@ -10,6 +10,7 @@ const sectionRoutes: Array<[RegExp, string]> = [
   [/^\/admin\/skills$/, "Skills"],
   [/^\/teams$/, "Teams"],
   [/^\/admin\/users$/, "Users"],
+  [/^\/account\/settings$/, "Account settings"],
   [/^\/login$/, "Sign in"],
 ];
 

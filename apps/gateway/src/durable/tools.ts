@@ -5,6 +5,7 @@ import { renderToolSignature } from "@earendil-works/pi-codemode";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
 import { DURABLE_MAIN_SESSION_ID, type ExtensionAgentTool, type McpAppViewReference } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { executeExtensionAgentTool, getExtensionAgentTools } from "../extensions/tools.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
@@ -13,22 +14,28 @@ import { durableExtensionEnv } from "./env.js";
 import { mainPrincipal } from "./principal.js";
 import { claimToolDescriptor, defineGatewayTool } from "./tool-definition.js";
 
+export class DurableAccessDenied extends Error {
+  constructor() { super("Agent access denied"); }
+}
+
 export function createDurableTools(
   agentId: string,
   runtime: ExtensionRuntime,
   registry: Registry,
   ownerOf: (id: ConversationId) => string | undefined,
 ) {
-  function authority(id: ConversationId) {
+  async function authority(id: ConversationId) {
     const owner = ownerOf(id);
     const agent = getAgent(agentId);
-    if (owner === undefined || !agent?.durable) throw new Error("Agent access denied");
+    if (owner === undefined || !agent || !await durableModeFor(owner === "local" ? undefined : owner, agent)) {
+      throw new DurableAccessDenied();
+    }
     const config = loadConfig();
     return { agent, config, principal: mainPrincipal(agentId, owner, config) };
   }
 
   async function describe(id: ConversationId) {
-    const { agent, config, principal } = authority(id);
+    const { agent, config, principal } = await authority(id);
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
     const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode"]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
@@ -46,7 +53,7 @@ export function createDurableTools(
   const registered = new Map<string, Registered[]>();
 
   async function extensions(id: ConversationId) {
-    const { agent } = authority(id);
+    const { agent } = await authority(id);
     const descriptors = await describe(id);
     const catalog = createToolDeferralCatalog(descriptors, agent.toolDeferral, { codemode: agent.codemode });
     const groups = new Map<string, { namespace: ToolNamespace; tools: Registered[] }>();
@@ -69,7 +76,7 @@ export function createDurableTools(
         name,
         namespace,
         tools: descriptors.map((tool) => defineGatewayTool(tool, async (args, api, context) => {
-          const { agent, config, principal } = authority(api.conversationId);
+          const { agent, config, principal } = await authority(api.conversationId);
           const { kind, canonicalName, extensionId } = tool;
           if (kind === "core") {
             return executeDurableCoreTool(canonicalName, args, config, principal, agent.id, api.callId, context.abortSignal);
@@ -104,7 +111,7 @@ export function createDurableTools(
     name: "yoplai-tool-permission",
     hooks: [hook(ToolTask, {
       async beforeTool(call, api, context) {
-        const { agent, config, principal } = authority(api.conversationId);
+        const { agent, config, principal } = await authority(api.conversationId);
         await requireActorExecution(agent.id, config, principal.userId, principal);
         if ((call.name === "codemode" && !agent.codemode) || (call.name === "tool_search" && agent.toolDeferral?.enabled === false)) {
           return { block: "Tool is no longer available." };

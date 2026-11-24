@@ -35,12 +35,12 @@ async function codexAgent(source: "codex" | "pi", expiresInSeconds = 60) {
     : { "openai-codex": { type: "oauth", access: token, accountId } }));
   await fs.writeFile(path.join(home, "desktop-model-sources.json"), JSON.stringify({ [source]: "enabled" }));
   await fs.writeFile(path.join(home, "agents/test/agent.yaml"), [
-    "id: test", "name: Test", "durable: true", "model:", "  provider: openai-codex",
+    "id: test", "name: Test", "model:", "  provider: openai-codex",
     `  model: ${modelId}`, `  source: ${source}`, "system: Reply briefly.",
   ].join("\n"));
   const { getAgent } = await import("../config/index.js");
   const { createDurableModels } = await import("./models.js");
-  const models = createDurableModels(getAgent("test")!, async () => undefined);
+  const models = await createDurableModels(getAgent("test")!, async () => undefined);
   const model = models.getModel("openai-codex", modelId)!;
   return { models, model, token };
 }

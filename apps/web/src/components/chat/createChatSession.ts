@@ -120,7 +120,7 @@ function isRemoteAgent(agentId: string): boolean {
 
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, viewMode, explicitSessionId } = input;
-  const durableMain = () => targetsDurableMain(agent(), explicitSessionId());
+  const durableMain = () => targetsDurableMain(agent()?.durable === true, explicitSessionId());
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
