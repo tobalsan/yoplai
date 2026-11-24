@@ -16,6 +16,7 @@ import {
 import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { SidebarTheme } from "./SidebarTheme";
+import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
 import { openConnectPrompt, restartTour } from "../onboarding/state";
@@ -112,7 +113,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
     () => fetchTopExtensions().catch(() => EMPTY_TOP_EXTENSIONS),
     { initialValue: EMPTY_TOP_EXTENSIONS }
   );
-  // A local user with linked gateways reaches the personal Slack page of a linked gateway from the footer. The local
+  // A local user with linked gateways reaches the personal Slack page of a linked gateway from the account menu. The local
   // multi-user account panel stays off. A failed read gives no link.
   const [relayGateways] = createResource(
     () => !capabilities.multiUser,
@@ -873,23 +874,32 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <LazySidebarAccountPanel collapsed={props.collapsed} />
             </Suspense>
           </Show>
-          <Show when={!capabilities.multiUser && relayGateways.latest[0]}>{(gateway) => (
-            <A href={`/account/connections?gateway=${encodeURIComponent(gateway())}`} class="archive-link" title="Pairings of a linked gateway">
-              <i class="fa-solid fa-user-group" aria-hidden="true" />
-              <span class="archive-label">Pairings</span>
-            </A>
-          )}</Show>
-          <Show when={capabilities.relayLink?.available === true}>
-            <A href="/remote-gateways" class="archive-link" title="Link a remote gateway">
-              <i class="fa-solid fa-link" aria-hidden="true" />
-              <span class="archive-label">Link gateway</span>
-            </A>
-          </Show>
           <Show when={!capabilities.multiUser}>
-            <A href="/archive" class="archive-link" classList={{ active: selectedPath() === "/archive" }} title="Archive">
-              <i class="fa-solid fa-box-archive" aria-hidden="true" />
-              <span class="archive-label">Archive</span>
-            </A>
+            <SidebarAccountMenu
+              triggerClass="sidebar-account-cog"
+              trigger={<i class="fa-solid fa-gear" aria-hidden="true" />}
+            >
+              <Show when={relayGateways.latest[0]}>{(gateway) => (
+                <A href={`/account/connections?gateway=${encodeURIComponent(gateway())}`} class="account-menu-item" role="menuitem" title="Pairings of a linked gateway">
+                  <i class="fa-solid fa-user-group" aria-hidden="true" />
+                  Pairings
+                </A>
+              )}</Show>
+              <Show when={capabilities.relayLink?.available === true}>
+                <A href="/remote-gateways" class="account-menu-item" role="menuitem" title="Link a remote gateway">
+                  <i class="fa-solid fa-link" aria-hidden="true" />
+                  Link gateway
+                </A>
+              </Show>
+              <A href="/archive" class="account-menu-item" role="menuitem">
+                <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                Archive
+              </A>
+              <A href="/account/settings" class="account-menu-item" role="menuitem">
+                <i class="fa-solid fa-gear" aria-hidden="true" />
+                Account settings
+              </A>
+            </SidebarAccountMenu>
           </Show>
           <SidebarTheme collapsed={props.collapsed()} />
           <Show when={capabilities.multiUser && capabilities.user}>
@@ -1029,7 +1039,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           width: 50px;
         }
 
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .agent-sidebar-shell {
+        .agent-sidebar.collapsed:is(:hover, .menu-open, :has(.sidebar-account-cog[aria-expanded="true"])) .agent-sidebar-shell {
           width: 280px;
           box-shadow: 12px 0 24px var(--shadow-md);
         }
@@ -1367,35 +1377,30 @@ export function AgentSidebar(props: AgentSidebarProps) {
           border-top: 1px solid var(--border-default);
         }
 
-        .archive-link {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          width: 100%;
-          padding: 8px 10px;
+        .sidebar-account-cog {
+          display: grid;
+          place-items: center;
+          width: 36px;
+          max-width: 100%;
+          height: 36px;
+          margin-bottom: 4px;
+          border: 0;
           border-radius: 8px;
           background: transparent;
           color: var(--text-secondary);
-          text-decoration: none;
           cursor: pointer;
           font-size: 14px;
-          line-height: 1.2;
-          transition: background 0.2s ease, color 0.2s ease;
-          white-space: nowrap;
         }
 
-        .archive-link:hover {
+        .sidebar-account-cog:hover,
+        .sidebar-account-cog[aria-expanded="true"] {
           background: var(--bg-raised);
           color: var(--text-primary);
         }
 
-        .archive-link i {
-          width: 16px;
-          text-align: center;
-        }
-
-        .agent-sidebar.collapsed .archive-label {
-          display: none;
+        .sidebar-account-cog:focus-visible {
+          outline: 2px solid var(--text-secondary);
+          outline-offset: -2px;
         }
 
         .sidebar-theme-segments {
@@ -1541,8 +1546,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           outline-offset: -2px;
         }
 
-        .nav-link.active,
-        .archive-link.active {
+        .nav-link.active {
           background: var(--border-default);
           color: var(--text-primary);
         }

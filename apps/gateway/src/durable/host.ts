@@ -14,7 +14,8 @@ import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
   type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
-import { getAgent, isAgentActive, loadConfig } from "../config/index.js";
+import { getAgent, loadConfig } from "../config/index.js";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText } from "../history/condense.js";
 import { activeContextUsage, historyPage } from "../history/page.js";
@@ -30,7 +31,7 @@ import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
-import { createDurableTools } from "./tools.js";
+import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 
 const context = BACKGROUND_CONTEXT;
@@ -115,8 +116,8 @@ export class DurableHost {
       harness = await Harness.open(storage, {
         models,
         registry,
-        env({ conversationId }) {
-          const { agent, config } = tools.authority(conversationId);
+        async env({ conversationId }) {
+          const { agent, config } = await tools.authority(conversationId);
           return durableExecutionEnv(agent, config);
         },
         settings() {
@@ -260,7 +261,7 @@ export class DurableHost {
   }
 
   private async configureFor(id: ConversationId) {
-    const { agent, config, principal } = this.tools.authority(id);
+    const { agent, config, principal } = await this.tools.authority(id);
     if (agent.modelRouting?.enabled && !routingWarnings.has(agent.id)) {
       routingWarnings.add(agent.id);
       logWarn("modelRouting is ignored for Durable agents", { agentId: agent.id });
@@ -318,9 +319,14 @@ export class DurableHost {
       if (!submission) continue;
       if (!configured.has(conversation.id)) {
         await this.registerProviderSession(conversation.id);
-        const { change } = await this.configureFor(conversation.id);
+        const configuration = await this.configureFor(conversation.id).catch((error: unknown) => {
+          if (!(error instanceof DurableAccessDenied)) throw error;
+          // One ineligible owner cannot prevent the shared agent from opening.
+          return undefined;
+        });
+        if (!configuration) continue;
         const current = await this.harness.snapshot(AgentDoc, conversation.id, context);
-        await conversation.configure({ ...change, model: current?.model ?? change.model }, context);
+        await conversation.configure({ ...configuration.change, model: current?.model ?? configuration.change.model }, context);
         configured.add(conversation.id);
       }
       routes.push(await this.attachSubmission(conversation, submission, user, true));
@@ -540,11 +546,11 @@ export class DurableHost {
   }
 
   async mayReadFeed(owner: string, principal: string) {
+    if (principal !== owner) return false;
     const agent = getAgent(this.agent.id);
-    const config = loadConfig();
-    if (!agent?.durable || !isAgentActive(agent.id) || principal !== owner || (config.extensions?.multiUser?.enabled && principal === "local")) return false;
     try {
-      await requireActorExecution(agent.id, config, principal);
+      if (!await durableModeFor(principal === "local" ? undefined : principal, agent)) return false;
+      await requireActorExecution(this.agent.id, loadConfig(), principal);
       return true;
     } catch {
       return false;

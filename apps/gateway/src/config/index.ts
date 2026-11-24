@@ -27,6 +27,7 @@ let rawLoadedConfig: GatewayConfig | null = null;
 let singleAgentId: string | null = null;
 let warnedLegacyPool = false;
 const warnedLegacyChannels = new Set<string>();
+const warnedLegacyDurable = new Set<string>();
 const agentEnvDigests = new Map<string, string>();
 
 export function getConfigPath(): string {
@@ -203,6 +204,11 @@ function discoverAgents(
         );
       }
       seen.set(parsed.data.id, agentPath);
+      if (parsedYaml && typeof parsedYaml === "object" && Object.hasOwn(parsedYaml, "durable") &&
+          !warnedLegacyDurable.has(parsed.data.id)) {
+        warnedLegacyDurable.add(parsed.data.id);
+        console.warn(`[config] agent "${parsed.data.id}": \`durable\` is ignored; Durable mode is now a per-user setting`);
+      }
       const { discord, slack, telegram, irc, mattermost, ...settings } = parsed.data;
       const legacy = { discord, slack, telegram, irc, mattermost };
       const agent = { ...settings, workspace: workspaceDir, workspaceDir };

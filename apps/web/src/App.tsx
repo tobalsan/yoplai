@@ -40,6 +40,7 @@ import { Dashboards } from "./pages/Dashboards";
 import { RemoteDashboard } from "./pages/RemoteDashboard";
 import { Skills } from "./pages/Skills";
 import { AccountConnections } from "./pages/AccountConnections";
+import { AccountSettings } from "./pages/AccountSettings";
 import { GatewayLink } from "./pages/GatewayLink";
 import { GatewayLinks } from "./pages/GatewayLinks";
 import { RemoteGateways } from "./pages/RemoteGateways";
@@ -331,6 +332,7 @@ export default function App() {
         <Route path="/admin/mcp-servers" component={LazyAdminMcpServersPage} />
         <Route path="/archive" component={SessionArchive} />
         <Route path="/account/connections" component={AccountConnections} />
+        <Route path="/account/settings" component={AccountSettings} />
         <Route path="/account/gateway-links" component={GatewayLinks} />
         <Route path="/remote-gateways" component={RemoteGateways} />
       </Route>

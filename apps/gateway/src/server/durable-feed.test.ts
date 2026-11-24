@@ -42,7 +42,7 @@ it("pages whole Durable messages around stable ids across a restart", async () =
 });
 
 it("finds public messages and opens the agent trace without searching it", async () => {
-  const gateway = await startDurableTestGateway({ extraYaml: "durable: true\ntoolDeferral:\n  enabled: false" });
+  const gateway = await startDurableTestGateway({ extraYaml: "toolDeferral:\n  enabled: false" });
   try {
     const path = await gateway.seedConversationFile("local", "orchard.txt", "private-to-search payload");
     gateway.script({ tool: "read", id: "orchard-read", args: { path } }, "The orchard is ready.");
@@ -73,7 +73,7 @@ it("finds public messages and opens the agent trace without searching it", async
 });
 
 it("attaches before the first send and keeps a one-item subscription equal to the HTTP tail", async () => {
-  const gateway = await startDurableTestGateway({ extraYaml: "durable: true\ntoolDeferral: { enabled: false }" });
+  const gateway = await startDurableTestGateway({ extraYaml: "toolDeferral: { enabled: false }" });
   try {
     const socket = await gateway.socket();
     socket.send({ type: "subscribeFeed", agentId: "pilot", limit: 1 });
@@ -127,7 +127,7 @@ it("attaches before the first send and keeps a one-item subscription equal to th
 });
 
 it("keeps an owner-scoped Code Mode file view live and after restart", async () => {
-  const gateway = await startDurableTestGateway({ multiUser: true, extraYaml: "durable: true\ncodemode: true" });
+  const gateway = await startDurableTestGateway({ multiUser: true, extraYaml: "codemode: true" });
   try {
     const filename = await gateway.seedConversationFile("alice", "orchard.txt", "Five pear trees.");
     const socket = await gateway.socket("alice");
@@ -188,7 +188,7 @@ it("keeps an owner-scoped Code Mode file view live and after restart", async () 
 }, 15000);
 
 it("scopes message ids to the caller's Main and terminates an open cookie stream on unapproval", async () => {
-  const gateway = await startDurableTestGateway({ multiUser: true, recheckMs: 50, extraYaml: "durable: true\ntoolDeferral: { enabled: false }" });
+  const gateway = await startDurableTestGateway({ multiUser: true, recheckMs: 50, extraYaml: "toolDeferral: { enabled: false }" });
   try {
     gateway.script("The pear trees are ready.");
     expect((await gateway.send("alice", "Check my pears", { clientSendId: "pear-check" })).status).toBe(200);
@@ -261,7 +261,7 @@ it("streams a later model round before its tool finishes and reloads the stored 
   const { promise: countingPlums, resolve: finishCounting } = latch();
   const gateway = await startDurableTestGateway({
     tokensPerSecond: 60,
-    extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    extraYaml: "toolDeferral: { enabled: false }",
     fixture: { extension: defineExtension({
       name: "orchard-round-fixture",
       tools: [defineTool({
@@ -306,7 +306,7 @@ it("streams a later model round before its tool finishes and reloads the stored 
 it("reports a changed reply when a provider retry replaces text already sent to the sender", async () => {
   const gateway = await startDurableTestGateway({
     tokensPerSecond: 60,
-    extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }",
+    extraYaml: "retryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }",
   });
   try {
     gateway.script(
@@ -357,7 +357,7 @@ it("keeps excluded records and fields out of every feed and compatibility respon
     ],
   });
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nretryMaxAttempts: 1\ntoolDeferral: { enabled: false }",
+    extraYaml: "retryMaxAttempts: 1\ntoolDeferral: { enabled: false }",
     fixture: { extension, invisibleTools: ["hidden_orchard_probe"] },
     reviewer: {
       begin() {}, end() {},

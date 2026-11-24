@@ -259,7 +259,8 @@ it("keeps Agents visible while archived conversations load", async () => {
   const source = await findByRole(root, "link", { name: "Edit Demo agent" });
   const loaded = { items: [{ ...session, title: "Archived demo conversation", archived: Date.now() }] };
   try {
-    getByRole(root, "link", { name: "Archive" }).click();
+    getByRole(root, "button", { name: "Account menu" }).click();
+    getByRole(root, "menuitem", { name: "Archive" }).click();
     await archive.requested;
     expect(source.isConnected).toBe(true);
 

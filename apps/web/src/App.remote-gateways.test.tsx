@@ -40,5 +40,7 @@ it("shows the linked gateways of a local gateway at /remote-gateways, and a link
   dispose = render(() => <App />, root);
   expect(await findByRole(root, "heading", { name: "Linked gateways" })).toBeTruthy();
   expect(await findByRole(root, "button", { name: "Disconnect work" })).toBeTruthy();
-  expect(await findByRole(root, "link", { name: /Link gateway/ })).toBeTruthy();
+  (await findByRole(root, "button", { name: "Account menu" })).click();
+  const menu = await findByRole(root, "menu");
+  expect(await findByRole(menu, "menuitem", { name: "Link gateway" })).toBeTruthy();
 });

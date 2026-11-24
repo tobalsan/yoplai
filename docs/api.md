@@ -9,6 +9,7 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/health`                  | Process health                         |
 | GET    | `/api/capabilities`        | Enabled UI/runtime capabilities        |
 | GET    | `/api/agents`              | List available agents                  |
+| GET    | `/api/agents/:id`          | Agent detail for the caller            |
 | GET    | `/api/agents/:id/status`   | Agent run status                       |
 | POST   | `/api/agents/:id/messages` | Send message and await result          |
 | GET    | `/api/agents/:id/history`  | Session history (`sessionKey`, `view`) |
@@ -17,6 +18,7 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET/PUT/DELETE | `/api/agents/:id/sessions/:sessionId/share` | Read/create/revoke an owner-only chat share link (multi-user only) |
 | GET    | `/api/shared-chats/:token` | Read a shared chat's persisted transcript (authenticated, multi-user only) |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
+| GET/PUT | `/api/me/durable-mode`  | Read or set the caller's Durable mode   |
 | WS     | `/ws`                      | Send/subscribe streaming protocol      |
 
 Exact request/response schemas in `packages/shared` and route source are authoritative.
@@ -174,18 +176,31 @@ Use `packages/shared` stream schemas and `apps/gateway/src/server/ws-broker.ts`;
 
 ## Durable Main
 
+### Account setting
+
+`GET /api/me/durable-mode` returns `{ enabled: boolean }`. It defaults to
+`false`. `PUT /api/me/durable-mode` accepts the same object and returns the
+saved value. A missing or non-boolean `enabled` returns 400. The route is
+gateway-local and available in both modes. Single-user gateways store one
+setting. Multi-user gateways require authentication and use the caller's
+account.
+
+### Chat
+
 The WebSocket `send` message and `POST /api/agents/:id/messages` accept
 `clientSendId`, a client-generated id of up to 128 ASCII letters, digits,
 underscores or hyphens. Reuse that id to retry a composed send and mint a fresh
-id for each new send. On a flagged agent it deduplicates admission within the
-caller's Main, including after a gateway restart.
+id for each new send. It deduplicates admission within the caller's Durable
+Main, including after a gateway restart.
 
-Send, history and subscribe select the caller's Main when `sessionId` is absent
-or equals `durable-main`. Logical keys such as `main` and `web-*` all resolve to
-that Main. Any other explicit session id and sends without a `clientSendId`
-use the legacy runner. Main rejects project and desktop turn ids and attachments.
+With Durable mode on, send, history, and subscribe select the caller's Main
+for active non-sandboxed agents when `sessionId` is absent or equals
+`durable-main`. Logical keys such as `main` and `web-*` all resolve to that
+Main. Any other explicit session id and sends without a `clientSendId` use the
+legacy runner. Main rejects project and desktop turn ids and attachments.
 
-The agent detail route includes `durable: true` for a flagged agent.
+The agent detail route includes `durable: true` when Durable mode applies to
+that agent for the caller. Otherwise it omits the field.
 The send endpoint still waits for settlement and returns `payloads` and `meta`
 with `sessionId` and `durationMs`. A failed or withheld reply returns an error
 status with `{ error }`. The socket receives ordered public `text` across tool
@@ -200,13 +215,13 @@ continue to use legacy sessions.
 
 Full history includes captured view references on tool calls and results. The
 existing `POST /api/agents/:agentId/sessions/:sessionId/mcp-apps/:toolCallId/:operation`
-route accepts `durable-main` for a Durable agent and reads the authenticated
+route accepts `durable-main` when Durable mode applies and reads the
 caller’s record. An unknown record or a record owned by another user returns
 404.
 
 ### Feed
 
-Flagged agents expose the authenticated caller's Main under `/api/agents/:id/feed`.
+When Durable mode applies, `/api/agents/:id/feed` exposes the caller's Main.
 IDs take the form `m_<entry id>` and remain stable across gateway restarts and
 context resets. An agent item groups its answer and tool rounds into one item.
 
@@ -230,12 +245,13 @@ replaces the client window. For a `feed_delta`, update or append the listed
 items by ID and then discard all items before `dropBefore` when present.
 Both frames carry the latest `hasBefore` and `live` values. Reconnects and
 changes coalesced during a pending send receive a fresh snapshot.
-If account or agent access is revoked, the gateway ends the subscription with
-`feed_end`. Send `unsubscribeFeed` to stop receiving updates.
+If account or agent access is revoked or Durable mode is turned off, the
+gateway ends the subscription with `feed_end`. Send `unsubscribeFeed` to stop
+receiving updates.
 
 Code Mode file and MCP views retain their nested call IDs in live and full
 history. URL-encode the entire call ID in the MCP Apps route, including any
-slashes. For a Durable agent either `main` or `durable-main` selects the
+slashes. When Durable mode applies, either `main` or `durable-main` selects the
 caller's Main in that route.
 
 ## Authentication

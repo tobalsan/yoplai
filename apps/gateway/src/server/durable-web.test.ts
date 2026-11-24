@@ -339,11 +339,11 @@ describe("Durable web Main", () => {
   });
 
   it.each([
-    { label: "flag off", extraYaml: "", sendId: "legacy-web" },
-    { label: "send without a client ID", extraYaml: "durable: true", sendId: undefined },
-    { label: "explicit older session", extraYaml: "durable: true", sendId: "older-web" },
-  ])("preserves the legacy path for $label", async ({ label, extraYaml, sendId }) => {
-    const gateway = await startDurableTestGateway({ extraYaml, legacyAnswer: "A legacy answer." });
+    { label: "mode off", enableDurableMode: false, sendId: "legacy-web" },
+    { label: "send without a client ID", enableDurableMode: true, sendId: undefined },
+    { label: "explicit older session", enableDurableMode: true, sendId: "older-web" },
+  ])("preserves the legacy path for $label", async ({ label, enableDurableMode, sendId }) => {
+    const gateway = await startDurableTestGateway({ enableDurableMode, legacyAnswer: "A legacy answer." });
     try {
       const target = label === "explicit older session" ? { sessionId: "legacy-garden" } : {};
       const response = await gateway.send("local", "Check the archive", { clientSendId: sendId, ...target });
@@ -355,23 +355,6 @@ describe("Durable web Main", () => {
         .toMatchObject([{ role: "user", content: "Check the archive" }, { role: "assistant", content: "A legacy answer." }]);
       expect(gateway.callCount()).toBe(0);
     } finally {
-      await gateway.close();
-    }
-  });
-
-  it.each([
-    ["sandbox:\n  enabled: true", "Durable requires sandbox.enabled to be off"],
-    ["sdk: openclaw", "openclaw SDK was removed, use pi"],
-  ])("rejects incompatible durable configuration (%s)", async (config, warning) => {
-    const warn = vi.spyOn(console, "warn");
-    const gateway = await startDurableTestGateway({ extraYaml: "durable: true\n" + config });
-    try {
-      const response = await gateway.send("local", "Check the greenhouse", { clientSendId: "incompatible-config" });
-      expect(response.status).toBe(404);
-      expect(await response.json()).toEqual({ error: "Agent not found" });
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining(warning));
-    } finally {
-      warn.mockRestore();
       await gateway.close();
     }
   });

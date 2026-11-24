@@ -30,7 +30,7 @@ function fixtureExtension(id: string, ...tools: ExtensionAgentTool[]): Extension
 
 it("runs extension tools and shows their results in Durable Main history", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    extraYaml: "toolDeferral: { enabled: false }",
     fixtureExtensions: [fixtureExtension("greenhouse", {
       name: "count_seedlings", description: "Count the seedlings.",
       parameters: { type: "object", properties: {} },
@@ -102,11 +102,11 @@ it("keeps the model and tool catalog for a running turn while blocking revoked c
     })],
   });
   try {
-    await gateway.configure("fixture", "durable: true\ntoolDeferral: { enabled: false }");
+    await gateway.configure("fixture", "toolDeferral: { enabled: false }");
     gateway.script({ tool: "await_check" }, { tool: "record_seedlings" }, (model) => model, (model) => model);
     const first = gateway.send("local", "Record the greenhouse inventory.", { clientSendId: "before-change" });
     await barrier.promise;
-    await gateway.configure("fixture-alternate", "durable: true\ntoolDeferral: { enabled: false }\nextensions: { greenhouse: { enabled: false } }");
+    await gateway.configure("fixture-alternate", "toolDeferral: { enabled: false }\nextensions: { greenhouse: { enabled: false } }");
     const observer = await gateway.subscribe("local");
     await vi.waitFor(() => expect(observer.events).toContainEqual(expect.objectContaining({ type: "active_turn" })));
     observer.events.length = 0;
@@ -152,7 +152,7 @@ it("isolates concurrent direct and Code Mode calls to each Main owner's credenti
   };
   const gateway = await startDurableTestGateway({
     multiUser: true,
-    extraYaml: "durable: true\ncodemode: true\ntoolDeferral: { enabled: false }\nextensions: { greenhouse: { enabled: true } }",
+    extraYaml: "codemode: true\ntoolDeferral: { enabled: false }\nextensions: { greenhouse: { enabled: true } }",
     fixtureExtensions: [extension],
   });
   try {
@@ -211,7 +211,7 @@ it("assembles the host prompt with owner-specific contributions", async () => {
   const prompts = new Map<string, string>();
   garden.getSystemPromptContributions = (_agent, context) => prompts.get(context?.userId ?? "");
   const gateway = await startDurableTestGateway({
-    multiUser: true, fixtureExtensions: [garden], extraYaml: "durable: true\nreflect: true\ncodemode: true",
+    multiUser: true, fixtureExtensions: [garden], extraYaml: "reflect: true\ncodemode: true",
   });
   try {
     prompts.set(gateway.accountId("alice"), "Alice collects basil.");
@@ -307,7 +307,7 @@ it("shows a sent file after restart and serves the view record only to its owner
 
 it("retries a transient model error but never retries or falls back on a refusal", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\nfallback_model: { provider: faux, model: fixture-alternate }",
+    extraYaml: "retryMaxAttempts: 2\nretryBaseDelay: 0.01\nfallback_model: { provider: faux, model: fixture-alternate }",
   });
   try {
     gateway.script({ errorMessage: "429 Provider rate limit." }, "Recovered.");
@@ -329,7 +329,7 @@ it("retries a transient model error but never retries or falls back on a refusal
 
 it("uses the fallback once after primary retries and returns to the primary on the next turn", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\nfallback_model: { provider: faux, model: fixture-alternate }",
+    extraYaml: "retryMaxAttempts: 2\nretryBaseDelay: 0.01\nfallback_model: { provider: faux, model: fixture-alternate }",
   });
   try {
     gateway.script(
@@ -374,10 +374,10 @@ it("resolves the owned or environment model credential at each provider request"
   try {
     vi.stubEnv("OPENAI_API_KEY", "fixture-environment-key");
     await gateway.seedModelKeys({ openai: "fixture-owned-key" });
-    await gateway.configure("gpt-4o-mini", "durable: true", "owned");
+    await gateway.configure("gpt-4o-mini", "", "owned");
     gateway.script("Used the configured model.", "Used the updated source.");
     expect((await gateway.send("local", "Verify model access.", { clientSendId: "owned-source" })).status).toBe(200);
-    await gateway.configure("gpt-4o-mini", "durable: true", "environment");
+    await gateway.configure("gpt-4o-mini", "", "environment");
     expect((await gateway.send("local", "Verify again.", { clientSendId: "environment-source" })).status).toBe(200);
     expect(seen).toEqual(["owned", "environment"]);
   } finally {
@@ -387,7 +387,7 @@ it("resolves the owned or environment model credential at each provider request"
 
 it("applies OneCLI settings to a bash child without mutating the gateway environment", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nonecliToken: fixture-proxy-key\ntoolDeferral: { enabled: false }",
+    extraYaml: "onecliToken: fixture-proxy-key\ntoolDeferral: { enabled: false }",
     extraConfig: { onecli: { enabled: true, gatewayUrl: "http://proxy.example.test:8080" } },
     fixtureExtensions: [fixtureExtension("greenhouse", {
       name: "check_process", description: "Check isolation of the fixture proxy.",
@@ -434,7 +434,7 @@ it("shows an MCP App view and hides task bookkeeping in Main history", async () 
     async callTool() { throw new Error("Unexpected app tool call."); },
   };
   const gateway = await startDurableTestGateway({
-    multiUser: true, appViews: true, extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    multiUser: true, appViews: true, extraYaml: "toolDeferral: { enabled: false }",
     fixtureExtensions: [app, fixtureExtension("taskLifecycle", {
       name: "note_seedlings", description: "Record the inspection.",
       parameters: { type: "object" },
@@ -461,6 +461,8 @@ it("shows an MCP App view and hides task bookkeeping in Main history", async () 
     const content = await fetch(viewResponse.sandboxUrl.replace("/sandbox/", "/content/"));
     expect(await content.text()).toBe("<h1>Seedling inventory</h1>");
     expect((await gateway.request("bob", route, init)).status).toBe(404);
+    await gateway.setDurableMode("alice", false);
+    expect((await gateway.request("alice", route, init)).status).toBe(404);
   } finally {
     await gateway.close();
   }
@@ -468,7 +470,7 @@ it("shows an MCP App view and hides task bookkeeping in Main history", async () 
 
 it("honors an explicit Code Mode script timeout and lets a script without options finish", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\ncodemode: true",
+    extraYaml: "codemode: true",
     fixtureExtensions: [fixtureExtension("greenhouse", {
       name: "wait_for_seedlings", description: "Wait briefly and check the seedlings.",
       parameters: { type: "object" },
@@ -502,7 +504,7 @@ it("blocks nested, built-in, and core tool calls when the owner loses access mid
   let calls = 0;
   const gateway = await startDurableTestGateway({
     multiUser: true,
-    extraYaml: "durable: true\ncodemode: true\ntoolDeferral: { enabled: false }",
+    extraYaml: "codemode: true\ntoolDeferral: { enabled: false }",
     fixtureExtensions: [fixtureExtension("greenhouse",
       { name: "hold_check", description: "Wait for the inspection.", parameters: { type: "object" },
         async execute() { entered.resolve(); await release.promise; return "Inspection resumed."; } },
@@ -540,7 +542,7 @@ it("blocks nested, built-in, and core tool calls when the owner loses access mid
 });
 
 it("runs the default model and logs ignored session routing once", async () => {
-  const gateway = await startDurableTestGateway({ extraYaml: "durable: true\nmodelRouting: { enabled: true }" });
+  const gateway = await startDurableTestGateway({ extraYaml: "modelRouting: { enabled: true }" });
   const warnings = vi.spyOn(console, "warn");
   try {
     gateway.script((model) => model, (model) => model);
@@ -559,7 +561,7 @@ it("does not fall back again when a concurrent steer joins a failing fallback", 
   const entered = latch();
   const release = latch();
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }\nfallback_model: { provider: faux, model: fixture-alternate }",
+    extraYaml: "retryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }\nfallback_model: { provider: faux, model: fixture-alternate }",
     fixtureExtensions: [fixtureExtension("greenhouse", {
       name: "wait_for_inspection", description: "Wait for the fixture to report.",
       parameters: { type: "object" },
@@ -625,7 +627,7 @@ it("keeps active bookkeeping hidden and projects completed file calls behind a r
   const release = latch();
   const { humanChatExtension } = await import("@yoplai/extension-human-chat");
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\nextensions: { human-chat: { enabled: true } }",
+    extraYaml: "extensions: { human-chat: { enabled: true } }",
     fixtureExtensions: [
       humanChatExtension,
       fixtureExtension("taskLifecycle", {
@@ -664,7 +666,7 @@ it("keeps active bookkeeping hidden and projects completed file calls behind a r
 
 it("projects only original text from a gateway MCP result envelope", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    extraYaml: "toolDeferral: { enabled: false }",
     fixtureExtensions: [fixtureExtension("orchard", {
       name: "mcp__orchard__inventory", description: "Read orchard inventory", parameters: { type: "object" },
       mcp: { server: "orchard", tool: "inventory" },
@@ -694,7 +696,7 @@ it("projects only original text from a gateway MCP result envelope", async () =>
 
 it("preserves Code Mode's explicit text while omitting its automatic failure diagnostics", async () => {
   const gateway = await startDurableTestGateway({
-    extraYaml: "durable: true\ncodemode: true",
+    extraYaml: "codemode: true",
     fixtureExtensions: [fixtureExtension("taskLifecycle", {
       name: "internal_orchard_accounting", description: "Record an internal tool run", parameters: { type: "object" },
       async execute() { return "Private accounting result."; },

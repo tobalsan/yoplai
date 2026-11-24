@@ -15,7 +15,7 @@ Breaking changes are marked **⚠ BREAKING**.
 - Durable Main supports workspace and extension tools, Code Mode, deferred tool search, and files and MCP Apps in chat. Tool calls use the conversation owner’s access and credentials.
 - Prepare conversation handoffs that preserve recent messages and earlier user requests verbatim, with references for clipped or omitted history.
 - A full-screen progress view shows the selected avatar during agent creation in desktop setup and on the Agents page.
-- Pilot a permanent private web chat per user with `durable: true` in an agent's configuration. Main keeps its history across gateway restarts and deduplicates retried sends.
+- Turn on Durable mode in Account settings on web and desktop to use a private Main for each non-sandboxed agent. The setting defaults to off and replaces the deprecated agent-level `durable` key. Main keeps its history across gateway restarts and deduplicates retried sends.
 - Choose a model by credential source during onboarding, agent creation, and settings. In-process runs use the saved source and report when it becomes unavailable.
 - Create agents and edit their settings in web and desktop chat. Desktop can also create on a linked gateway that allows it. New multi-user agents start private to their creator.
 - Set or remove an optional fallback model in Agent settings. The empty picker prompts you to select a model.

@@ -704,7 +704,7 @@ export function ChatView() {
 
   let submittingDurableDraft = false;
   const handleSend = async () => {
-    const main = targetsDurableMain(agent(), explicitSessionId());
+    const main = targetsDurableMain(agent()?.durable === true, explicitSessionId());
     if (main && submittingDurableDraft) return;
     session.flushFinished();
 

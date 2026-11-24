@@ -57,6 +57,9 @@ Wait for observable subprocess readiness/completion with startup headroom; fake 
 
 `apps/gateway/src/test-utils/durable-gateway.ts` starts a real HTTP/WS gateway on
 an ephemeral port with a temporary v3 home and a scripted Faux provider.
+It enables Durable mode through `PUT /api/me/durable-mode` for each fixture user.
+Pass `enableDurableMode: false` to exercise the default. Use
+`gateway.setDurableMode(user, enabled)` to change the setting during a test.
 
 Single-user example
 

@@ -15,8 +15,8 @@ type TestUser = "local" | "alice" | "bob";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "durable: true", reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
-}: { multiUser?: boolean; extraYaml?: string; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -118,6 +118,15 @@ export async function startDurableTestGateway({
     return account.cookie;
   }
 
+  async function setDurableMode(user: TestUser, enabled: boolean) {
+    const response = await fetch(base + "/api/me/durable-mode", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: cookie(user) },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) throw new Error("Setting Durable mode returned " + response.status);
+  }
+
   async function socket(user: TestUser = "local") {
     const ws = new WebSocket(base.replace("http:", "ws:") + "/ws", { headers: { Cookie: cookie(user) } });
     sockets.add(ws);
@@ -171,6 +180,11 @@ export async function startDurableTestGateway({
         });
       }
     }
+    if (enableDurableMode) {
+      for (const user of multiUser ? ["alice", "bob"] as const : ["local"] as const) {
+        await setDurableMode(user, true);
+      }
+    }
   } catch (error) {
     await cleanUp();
     throw error;
@@ -193,6 +207,7 @@ export async function startDurableTestGateway({
 
   return {
     socket,
+    setDurableMode,
     script: faux.script,
     callCount: faux.callCount,
     requests: faux.requests,

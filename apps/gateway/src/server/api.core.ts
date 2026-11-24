@@ -102,6 +102,8 @@ import {
 import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { createMainAgentRoutes } from "../main-agent/routes.js";
+import { createDurableModeRoutes } from "../durable-mode/routes.js";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
 import { createSkillRoutes } from "../skills/routes.js";
 import { getSkillContext, resolveSkillActor } from "../skills/context.js";
@@ -608,6 +610,7 @@ function contentDispositionFilename(filename: string): string {
 
 // OAuth connect framework (authorize + callback + status/disconnect).
 api.route("/", createMainAgentRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, getEligibleAgents: getEligibleMainAgents }));
+api.route("/", createDurableModeRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
 api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createSkillRoutes({
@@ -1076,7 +1079,7 @@ api.get("/agents/:id", async (c) => {
       : {}),
     authMode: agent.auth?.mode,
     queueMode: agent.queueMode ?? "queue",
-    ...(agent.durable ? { durable: true } : {}),
+    ...(await durableModeFor(await getRequestUserId(c), agent) ? { durable: true } : {}),
   });
 });
 
@@ -1525,7 +1528,7 @@ api.post("/agents/:id/messages", async (c) => {
   try {
     const body = await c.req.json();
     const authContext = await getRequestAuthContext(c);
-    if (body?.clientSendId !== undefined && targetsDurableMain(agent, body.sessionId)) {
+    if (body?.clientSendId !== undefined && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), body.sessionId)) {
       const parsed = parseDurableWebSend(body);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
@@ -1607,7 +1610,8 @@ api.post("/agents/:id/compact", async (c) => {
 
 api.get("/agents/:id/feed", async (c) => {
   const agent = getAgent(c.req.param("id"));
-  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
+  const userId = await getRequestUserId(c);
+  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
   const limit = Number(c.req.query("limit") ?? 50);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
     return c.json({ error: "Feed limit must be between 1 and 200" }, 400);
@@ -1615,7 +1619,7 @@ api.get("/agents/:id/feed", async (c) => {
   const selectors = (["before", "after", "around"] as const).flatMap((direction) =>
     (c.req.queries(direction) ?? []).map((id) => ({ direction, id })));
   if (selectors.length > 1) return c.json({ error: "Use a single feed selector" }, 400);
-  const principal = (await getRequestUserId(c)) ?? "local";
+  const principal = userId ?? "local";
   const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
   const result = await host.feedWindow(principal, principal, limit, selectors[0]);
   if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
@@ -1624,12 +1628,13 @@ api.get("/agents/:id/feed", async (c) => {
 
 api.get("/agents/:id/feed/search", async (c) => {
   const agent = getAgent(c.req.param("id"));
-  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
+  const userId = await getRequestUserId(c);
+  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
   const limit = Number(c.req.query("limit") ?? 20);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     return c.json({ error: "Search limit must be between 1 and 50" }, 400);
   }
-  const principal = (await getRequestUserId(c)) ?? "local";
+  const principal = userId ?? "local";
   const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
   const result = await host.feedSearch(principal, principal, c.req.query("q") ?? "", limit);
   return result.forbidden ? c.json({ error: "Agent access denied" }, 403) : c.json({ hits: result.hits });
@@ -1637,8 +1642,9 @@ api.get("/agents/:id/feed/search", async (c) => {
 
 api.get("/agents/:id/feed/messages/:messageId", async (c) => {
   const agent = getAgent(c.req.param("id"));
-  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
-  const principal = (await getRequestUserId(c)) ?? "local";
+  const userId = await getRequestUserId(c);
+  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
+  const principal = userId ?? "local";
   const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
   const result = await host.feedDetail(principal, principal, c.req.param("messageId"));
   if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
@@ -1661,7 +1667,7 @@ api.get("/agents/:id/history", async (c) => {
   }
   const view = (c.req.query("view") ?? "simple") as HistoryViewMode;
   const userId = await getRequestUserId(c);
-  if (targetsDurableMain(agent, explicitSessionId)) {
+  if (targetsDurableMain(await durableModeFor(userId, agent), explicitSessionId)) {
     const limitQuery = c.req.query("limit");
     const limit = limitQuery ? Number(limitQuery) : undefined;
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)) {

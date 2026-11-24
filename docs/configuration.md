@@ -107,7 +107,6 @@ Common fields:
 | `id`                                  | Unique id; must match workspace folder                      |
 | `name`                                | Display name                                                |
 | `system_files`                        | Ordered prompt files; `AGENTS.md` is prepended when present |
-| `durable`                             | Opt in to a permanent private Main for each web user. Default `false` |
 | `sdk`                                 | `pi` (default)                                            |
 | `description`, `avatar`              | Optional UI metadata                                        |
 | `model.provider`                      | Provider id; required for Pi                                |
@@ -141,14 +140,23 @@ The top-level `mattermost`, `slack`, `telegram`, `discord`, and `irc` blocks are
 
 Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpressure hint, connection reset) are retried in place, on the host and inside the sandbox alike. Retry delays double after each attempt unless the provider supplies a `Retry-After` hint. Eligibility is per turn, not per run: only the failed assistant turn is dropped from the model context, then the run resumes in place, so tool calls and results from earlier turns are preserved and the user message is never re-sent. Partial text streamed by the failed turn is discarded with it. The dropped turn stays in the session transcript for history.
 
-### Durable web pilot
+### Durable mode
 
-Set `durable: true` in the agent's `agent.yaml` and restart the gateway to pilot
-its web chat on Pi Durable. Use `sdk: pi` (the default), leave `sandbox.enabled`
-off, and configure `model.provider` and `model.model` for a built-in Pi provider
-with an owned or environment credential. Use a pilot agent dedicated
-to web chat. Removing the flag returns web sends to the legacy runner, and the
-Durable transcript stays on disk for the next time the flag is enabled.
+Open **Account settings** from the sidebar in web or desktop and turn on
+**Durable mode** to use Pi Durable for your web chats with non-sandboxed
+agents. The setting starts off. Each account has its own setting on a
+multi-user gateway. On a single-user gateway the setting applies gateway-wide.
+Linked agents use the linked account's setting on their gateway.
+
+Durable Main uses the built-in Pi Durable model catalog and supported
+credential sources. Users of custom providers configured in `models.json`
+can use those providers through the legacy runner.
+
+Turning it off sends new messages through the legacy runner and preserves
+your Durable transcripts for when you turn it back on. Sandboxed agents,
+scheduled jobs, and channel posts continue through the legacy runner.
+The gateway ignores the deprecated `durable` key in `agent.yaml` and warns
+once per agent per process.
 
 A user's web chat opens their Main even after choosing New Chat. Opening an
 explicit older session continues that legacy chat. Main accepts plain text,

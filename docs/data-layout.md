@@ -13,6 +13,7 @@
 | `agents/<id>/cron/jobs.json` | Scheduler jobs                                  |
 | `agents/<id>/cron/output/`   | Scheduler/heartbeat run output                  |
 | `agents/<id>/durable/agent.sqlite` | Pi Durable transcript, Main identity map, submissions and review decisions |
+| `durable-mode.json` | Single-user Durable mode preference. Multi-user preferences live at `sessions/users/<userId>/durable-mode.json`. |
 | `agents/<id>/dreams/`        | Dream journals/state/staged sessions            |
 | `history/*.jsonl`            | Canonical single-user chat transcripts          |
 | `sessions/*.jsonl`           | Pi SDK runtime resume state                     |
@@ -34,8 +35,8 @@ Multi-user mode puts user-scoped maps/history under `sessions/users/<userId>/`. 
 
 ## Durable web Main
 
-On first use the gateway opens one Durable harness and SQLite store for the
-flagged agent. The gateway owns writes to that store and closes it on shutdown.
+On first Durable use the gateway opens one harness and SQLite store for the
+agent. The gateway owns writes to that store and closes it on shutdown.
 Each account maps to a permanent Main in a session-scoped document. Single-user
 mode uses the fixed key `main:local`. Main creation and its mapping commit
 together, before the separately committed input. Durable web history is

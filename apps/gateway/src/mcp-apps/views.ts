@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { DURABLE_MAIN_SESSION_ID, type GatewayConfig } from "@yoplai/shared";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeSessionId } from "../history/sessions.js";
 import { readMcpAppRecord } from "./capture.js";
 import { createFileAppProvider, fileResourceDomains, fileViewerMeta } from "./file-provider.js";
@@ -446,15 +447,17 @@ export function createMcpAppRoutes(deps: {
     const startedAt = Date.now();
     const agentId = c.req.param("agentId"), toolCallId = c.req.param("toolCallId");
     const requestedSessionId = c.req.param("sessionId");
-    const durableMain = (requestedSessionId === "main" || requestedSessionId === DURABLE_MAIN_SESSION_ID) &&
-      deps.getConfig().agents.some((agent) => agent.id === agentId && agent.durable);
-    const sessionId = durableMain ? DURABLE_MAIN_SESSION_ID : requestedSessionId;
     const operation = c.req.param("operation");
     let pending: (SessionScope & { revoked: boolean }) | undefined;
-    const audit: Record<string, unknown> = { viewer: null, agent: agentId, session: sessionId, toolCall: toolCallId, server: null, method: operation, tool: null, resource: null, outcome: "not_found" };
+    const audit: Record<string, unknown> = { viewer: null, agent: agentId, session: requestedSessionId, toolCall: toolCallId, server: null, method: operation, tool: null, resource: null, outcome: "not_found" };
     try {
       const userId = await deps.getUserId(c);
       audit.viewer = userId ?? null;
+      const durableMain = (requestedSessionId === "main" || requestedSessionId === DURABLE_MAIN_SESSION_ID) &&
+        await durableModeFor(userId, deps.getConfig().agents.find((agent) => agent.id === agentId));
+      if (requestedSessionId === DURABLE_MAIN_SESSION_ID && !durableMain) return c.json({ error: "not_found" }, 404);
+      const sessionId = durableMain ? DURABLE_MAIN_SESSION_ID : requestedSessionId;
+      audit.session = sessionId;
       if (operation === "view" || operation === "open" || operation === "rpc") {
         pending = { agentId, sessionId, ownerUserId: userId, revoked: false };
         pendingViews.add(pending);

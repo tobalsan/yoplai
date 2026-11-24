@@ -9,6 +9,8 @@ import type { Suggestion, WsActiveTurnSnapshot } from "@yoplai/shared/types";
 import { API_BASE, apiFetch as fetch } from "./core";
 import type { DashboardRow } from "./dashboards";
 import { gatewayApiPath, type GatewayName } from "./gateway";
+import { pendingDurableModeSave } from "./durable-mode";
+import { getOwner, runWithOwner } from "solid-js";
 
 export async function fetchAgents(): Promise<Agent[]> {
   const res = await fetch(`${API_BASE}/agents`);
@@ -17,8 +19,12 @@ export async function fetchAgents(): Promise<Agent[]> {
 }
 
 export async function fetchAgent(agentId: string): Promise<Agent> {
-  const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`);
-  if (!res.ok) throw new Error("Failed to fetch agent");
+  const url = `${API_BASE}/agents/${encodeURIComponent(agentId)}`;
+  const pending = agentId.includes("@") ? undefined : pendingDurableModeSave();
+  // A chat opened during the write must load detail after the setting settles.
+  const owner = getOwner();
+  const res = await (pending ? pending.then(() => runWithOwner(owner, () => fetch(url))) : fetch(url));
+  if (!res?.ok) throw new Error("Failed to fetch agent");
   return res.json();
 }
 
