@@ -258,11 +258,25 @@ it("coalesces changes behind a pending send into a new snapshot", async () => {
 });
 
 it("streams a later model round before its tool finishes and reloads the stored rounds", async () => {
-  const gateway = await startDurableTestGateway({ tokensPerSecond: 60, extraYaml: "durable: true\ntoolDeferral: { enabled: false }" });
+  const { promise: countingPlums, resolve: finishCounting } = latch();
+  const gateway = await startDurableTestGateway({
+    tokensPerSecond: 60,
+    extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    fixture: { extension: defineExtension({
+      name: "orchard-round-fixture",
+      tools: [defineTool({
+        name: "count_plums", description: "Count the orchard plums", parameters: { type: "object" },
+        async execute() {
+          await countingPlums;
+          return { output: [{ type: "text", text: "3" }] };
+        },
+      })],
+    }) },
+  });
   try {
     gateway.script(
       ["First, count the pears in the orchard.", { tool: "bash", id: "count-pears", args: { command: "echo 5" } }],
-      ["Second, count the plums in the orchard.", { tool: "bash", id: "count-plums", args: { command: "sleep 0.7; echo 3" } }],
+      ["Second, count the plums in the orchard.", { tool: "count_plums", id: "count-plums" }],
       "There are five pears and three plums.",
     );
     const observer = await gateway.subscribe("local");
@@ -270,17 +284,43 @@ it("streams a later model round before its tool finishes and reloads the stored 
     await vi.waitFor(() => expect(observer.events.some((event) =>
       event.type === "active_turn" && event.toolCalls.some((call) => call.id === "count-plums" && call.status === "running"))).toBe(true), { timeout: 4000 });
     const text = () => sender.events.flatMap((event) => event.type === "text" ? [event.data] : []).join("");
-    expect(text()).toContain("Second, count the plums in the orchard.");
+    await vi.waitFor(() => expect(text()).toBe("First, count the pears in the orchard.Second, count the plums in the orchard."));
     expect(sender.events.some((event) => event.type === "done")).toBe(false);
     const running = await gateway.history("local", "?view=full");
     expect(running.activeTurn).toMatchObject({
       text: "", toolCalls: [{ id: "count-plums", status: "running" }],
     });
     expect(running.messages.filter((row: { role: string; toolCallId?: string }) => row.role === "toolResult").map((row: { toolCallId: string }) => row.toolCallId)).toEqual(["count-pears"]);
+    finishCounting();
     await vi.waitFor(() => expect(sender.events.some((event) => event.type === "done")).toBe(true), { timeout: 4000 });
     expect(text()).toBe("First, count the pears in the orchard.Second, count the plums in the orchard.There are five pears and three plums.");
     expect((await gateway.history("local")).messages.map((row: { content: string }) => row.content)).toEqual([
       "Count the fruit", "First, count the pears in the orchard.", "Second, count the plums in the orchard.", "There are five pears and three plums.",
+    ]);
+  } finally {
+    finishCounting();
+    await gateway.close();
+  }
+}, 12000);
+
+it("reports a changed reply when a provider retry replaces text already sent to the sender", async () => {
+  const gateway = await startDurableTestGateway({
+    tokensPerSecond: 60,
+    extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }",
+  });
+  try {
+    gateway.script(
+      { errorMessage: "503 Service Unavailable", partial: "I am counting the fruit in the wrong row of trees." },
+      { tool: "bash", id: "count-correct-row", args: { command: "echo 4" } },
+      "There are four apples in the correct row.",
+    );
+    const sender = await gateway.send("local", "Count the apples", { clientSendId: "count-apples" }, "ws");
+    await vi.waitFor(() => expect(sender.events.flatMap((event) => event.type === "text" ? [event.data] : []).join(""))
+      .toMatch(/^I am counting/), { timeout: 4000 });
+    await vi.waitFor(() => expect(sender.events.filter((event) => event.type === "error" || event.type === "done"))
+      .toEqual([{ type: "error", message: "The reply changed while streaming." }]), { timeout: 4000 });
+    expect((await gateway.history("local")).messages.map((row: { content: string }) => row.content)).toEqual([
+      "Count the apples", "There are four apples in the correct row.",
     ]);
   } finally {
     await gateway.close();

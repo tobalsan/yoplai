@@ -188,8 +188,10 @@ use the legacy runner. Main rejects project and desktop turn ids and attachments
 The agent detail route includes `durable: true` for a flagged agent.
 The send endpoint still waits for settlement and returns `payloads` and `meta`
 with `sessionId` and `durationMs`. A failed or withheld reply returns an error
-status with `{ error }`. The socket receives `text`, then `done` or `error`. Main
-subscriptions may receive `active_turn` snapshots and `history_updated`.
+status with `{ error }`. The socket receives ordered public `text` across tool
+rounds, then `done` or `error`. If a provider retry replaces text the socket
+already sent, the send ends with `error` and history shows the stored reply.
+Main subscriptions may receive `active_turn` snapshots and `history_updated`.
 
 The history route serves the existing simple or full view, paging, and active
 turn fields. The synthetic id is identical across accounts and resolves using

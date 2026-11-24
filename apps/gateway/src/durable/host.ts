@@ -3,7 +3,7 @@ import path from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
   AgentDoc, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
-  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type Extension, type LiveState, type Submission, type TaskId,
+  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type Submission, type TaskId,
 } from "@earendil-works/pi-durable";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -335,25 +335,43 @@ export class DurableHost {
   ) {
     let streamed = "";
     let streamedTask: TaskId | undefined;
+    let readThrough: EntryId | undefined;
+    let replyChanged = false;
     const watch = notify ? await conversation.watch(context) : undefined;
     let acceptingPartials = true;
+    const emitText = (taskId: TaskId | undefined, text: string) => {
+      if (streamedTask !== taskId) {
+        streamedTask = taskId;
+        streamed = "";
+      }
+      if (!text.startsWith(streamed)) return false;
+      const delta = text.slice(streamed.length);
+      if (delta) {
+        onEvent?.({ type: "text", data: delta });
+        streamed = text;
+      }
+      return true;
+    };
     const onView = async (view: ConversationView) => {
       const observed = observeFeed(view);
       const { live } = observed;
       const turn = await this.activeTurn(conversation, observed);
       if (!turn || !acceptingPartials) return;
+      if (onEvent && !replyChanged && live?.run?.inputs.includes(submission.id)) {
+        const after = readThrough ?? (await submission.status(context)).entry;
+        const { through } = observed;
+        if (!acceptingPartials) return;
+        readThrough = after;
+        if (after !== undefined && through !== null && through > after) {
+          const rounds = await this.feed.replyRounds(conversation, after, through);
+          if (!acceptingPartials) return;
+          for (const { taskId, text } of rounds) replyChanged ||= !emitText(taskId, text);
+          readThrough = through;
+        }
+        if (!acceptingPartials) return;
+        if (!replyChanged) emitText(live.run.taskId, turn.text);
+      }
       this.publish(user, turn);
-      if (!live?.run?.inputs.includes(submission.id)) return;
-      if (streamedTask !== live.run.taskId) {
-        streamedTask = live.run.taskId;
-        streamed = "";
-      }
-      if (!turn.text.startsWith(streamed)) return;
-      const delta = turn.text.slice(streamed.length);
-      if (delta) {
-        onEvent?.({ type: "text", data: delta });
-        streamed = turn.text;
-      }
     };
     if (watch) {
       await onView(watch.value);
@@ -363,14 +381,18 @@ export class DurableHost {
     }
     return async () => {
       try {
-        const { response, answerTask } = await this.settle(conversation, submission);
+        const { response, answerTask, inputEntry, answerEntry } = await this.settle(conversation, submission);
         acceptingPartials = false;
         await watch?.stop();
+        // A watch can coalesce commits or stop before it delivers the last change.
+        // Finish any stored rounds before acknowledging the submission.
+        const after = readThrough ?? inputEntry;
+        if (notify && onEvent && !replyChanged && after < answerEntry) {
+          const rounds = await this.feed.replyRounds(conversation, after, answerEntry);
+          for (const { taskId, text } of rounds) replyChanged ||= !emitText(taskId, text);
+        }
         const text = response.payloads[0]?.text ?? "";
-        if (answerTask !== streamedTask) streamed = "";
-        if (text.startsWith(streamed)) {
-          const remaining = text.slice(streamed.length);
-          if (remaining) onEvent?.({ type: "text", data: remaining });
+        if (!replyChanged && emitText(answerTask, text)) {
           onEvent?.({ type: "done", meta: response.meta });
         } else {
           onEvent?.({ type: "error", message: "The reply changed while streaming." });
@@ -387,7 +409,9 @@ export class DurableHost {
     };
   }
 
-  private async settle(conversation: Conversation, submission: Submission): Promise<{ response: RunAgentResult; answerTask?: TaskId }> {
+  private async settle(conversation: Conversation, submission: Submission): Promise<{
+    response: RunAgentResult; answerTask?: TaskId; inputEntry: EntryId; answerEntry: EntryId;
+  }> {
     const original = await submission.wait(context);
     const result = original.status === "unanswered" && original.type === "input" && original.reason === "model_error"
       ? await settleFallback(this.harness, conversation, submission.id, this.agent.id) ?? original
@@ -441,6 +465,8 @@ export class DurableHost {
     const text = assistant.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
     return {
       answerTask: answer?.byTaskId,
+      inputEntry: original.entry,
+      answerEntry: result.answer,
       response: {
         payloads: text ? [{ text }] : [],
         meta: {

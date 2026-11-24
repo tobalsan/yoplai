@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
-import { feedBoundary, feedItems, projectLive, projectRecords } from "./feed-projection.js";
+import { feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
 import { ReviewDoc } from "./state.js";
 
 export const emptyFeedWindow: FeedWindow = { items: [], hasBefore: false, hasAfter: false, live: null };
@@ -55,6 +55,12 @@ export class DurableFeed {
     } finally {
       await watch.stop();
     }
+  }
+
+  async replyRounds(conversation: Conversation, after: EntryId, through: EntryId) {
+    const entries = await this.scan(conversation, { order: "ascending", minEntryId: after, maxEntryId: through });
+    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
+    return projectReplyRounds(entries.filter(({ id }) => id > after), review?.byTask ?? {});
   }
 
   async read(conversation: Conversation, window?: { limit: number; id?: EntryId }, observation?: FeedObservation) {

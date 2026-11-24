@@ -39,7 +39,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
-- Durable Main shows nested Code Mode file and MCP views after reload, and keeps live replies and stored tool steps from appearing twice when history reloads mid-turn.
+- Durable Main shows nested Code Mode file and MCP views after reload, preserves streamed text across tool rounds, and keeps replies and tool steps from appearing twice when history reloads mid-turn.
 - Durable agents on single-user desktops can use pinned Pi, Codex, Claude Code, and OpenCode CLI logins. The desktop reads OpenCode Go keys from OpenCode v2's database as well as legacy JSON.
 - Restore inline file previews when Code Mode sends a file from a linked gateway.
 - Show failed Durable Main turns in chat and history, log one safe warning per failed send, and tell the model when its previous reply failed.

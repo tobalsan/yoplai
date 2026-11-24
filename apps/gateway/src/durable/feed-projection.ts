@@ -11,6 +11,7 @@ type AssistantBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string; redacted?: boolean }
   | { type: "toolCall"; id: string; name: string; arguments: unknown };
+type StoredAssistant = Extract<NonNullable<EntryRecord["model"]>[number], { role: "assistant" }>;
 type Usage = NonNullable<NonNullable<LiveState["generation"]>["message"]>["usage"];
 
 type ToolDetails = {
@@ -104,6 +105,31 @@ function publicBlocks(
   });
 }
 
+function projectStoredAssistant(
+  message: StoredAssistant,
+  decision: ReviewDecision | undefined,
+  projectCall: (call: PublicToolCall) => PublicToolCall | undefined,
+) {
+  if (message.stopReason === "error" || message.stopReason === "aborted") return;
+  const showReply = decision?.state === "stream" ||
+    (decision?.state === "approved" && decision.digest === draftDigest(message.content));
+  const content = publicBlocks(message.content, showReply, (call) =>
+    showReply || message.stopReason === "toolUse" ? projectCall(call) : undefined);
+  return { showReply, content };
+}
+
+export function projectReplyRounds(entries: readonly EntryRecord[], byTask: Readonly<Record<string, ReviewDecision>>) {
+  return entries.flatMap((entry) => {
+    const taskId = entry.byTaskId;
+    if (taskId === undefined || !AssistantEntry.is(entry)) return [];
+    return (entry.model ?? []).flatMap((message) => {
+      if (message.role !== "assistant") return [];
+      const reply = projectStoredAssistant(message, byTask[taskId], () => undefined);
+      return reply?.showReply ? [{ taskId, text: publicText(reply.content) }] : [];
+    });
+  });
+}
+
 export function projectRecords(
   entries: readonly EntryRecord[],
   byTask: Readonly<Record<string, ReviewDecision>>,
@@ -119,17 +145,16 @@ export function projectRecords(
     const decision = entry.byTaskId === undefined ? undefined : byTask[entry.byTaskId];
     const invisible = decision?.hiddenTools ? new Set(decision.hiddenTools) : hiddenNames;
     for (const message of entry.model ?? []) {
-      if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") continue;
-      const showReply = decision?.state === "stream" ||
-        (decision?.state === "approved" && decision.digest === draftDigest(message.content));
+      if (message.role !== "assistant") continue;
       const visible = new Set<string>();
-      const content = publicBlocks(message.content, showReply, (call) => {
-        if (!showReply && message.stopReason !== "toolUse") return;
+      const projected = projectStoredAssistant(message, decision, (call) => {
         const result = results.get(call.id);
         if (result === null || invisible.has(call.name)) return;
         visible.add(call.id);
         return result?.message.view ? { ...call, view: result.message.view } : call;
-      }).flatMap((block) => {
+      });
+      if (!projected) continue;
+      const content = projected.content.flatMap((block) => {
         if (block.type !== "toolCall" || block.name !== "codemode") return [block];
         return [block, ...(results.get(block.id)?.nested.map(({ call }) => call) ?? [])];
       });
