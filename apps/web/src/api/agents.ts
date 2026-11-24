@@ -55,6 +55,7 @@ export async function fetchCapabilities(): Promise<CapabilitiesResponse> {
 }
 
 export type ActiveTurn = {
+  runId?: string;
   userText: string | null;
   userTimestamp: number;
   startedAt: number;

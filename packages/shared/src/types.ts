@@ -1488,6 +1488,9 @@ export type RunAgentResult = {
 export const DEFAULT_MAIN_KEY = "main";
 export const DURABLE_MAIN_SESSION_ID = "durable-main";
 
+const DurableStopStatusSchema = z.enum(["stopped", "already_finished"]);
+export type DurableStopResult = { status: z.infer<typeof DurableStopStatusSchema> };
+
 export function targetsDurableMain(enabled: boolean, sessionId: unknown): boolean {
   return enabled && (sessionId === undefined || sessionId === DURABLE_MAIN_SESSION_ID);
 }
@@ -2550,6 +2553,7 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
         durationMs: z.number(),
         aborted: z.boolean().optional(),
         queued: z.boolean().optional(),
+        stopStatus: DurableStopStatusSchema.optional(),
       })
       .optional(),
   }),
@@ -2660,6 +2664,7 @@ export type WsActiveTurnSnapshot = {
   type: "active_turn";
   agentId: string;
   sessionId: string;
+  runId?: string;
   userText: string | null;
   userTimestamp: number;
   startedAt: number;
@@ -2705,7 +2710,7 @@ export type FeedToolCall = {
 
 export type FeedDetail = FeedMessage & { reasoning: string[]; toolCalls: FeedToolCall[] };
 export type FeedHit = Pick<FeedMessage, "id" | "timestamp"> & { role: "user" | "assistant"; snippet: string };
-export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls">;
+export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls"> & { runId?: string };
 
 export type FeedWindow = {
   items: FeedItem[];

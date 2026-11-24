@@ -211,8 +211,9 @@ Main, including after a gateway restart.
 With Durable mode on, send, history, and subscribe select the caller's Main
 for active non-sandboxed agents when `sessionId` is absent or equals
 `durable-main`. Logical keys such as `main` and `web-*` all resolve to that
-Main. Any other explicit session id and sends without a `clientSendId` use the
-legacy runner. Main rejects project and desktop turn ids and attachments.
+Main. An explicit legacy session id uses the legacy runner. Ordinary sends
+without a `clientSendId` also use the legacy runner. Main rejects project and
+desktop turn ids and attachments.
 
 The agent detail route includes `durable: true` when Durable mode applies to
 that agent for the caller. Otherwise it omits the field.
@@ -222,10 +223,11 @@ status with `{ error }`. The socket receives ordered public `text` across tool
 rounds, then `done` or `error`. If a provider retry replaces text the socket
 already sent, the send ends with `error` and history shows the stored reply.
 Main subscriptions may receive `active_turn` snapshots and `history_updated`.
+An interrupted send settles with `meta.aborted: true`.
 
 The history route serves the existing simple or full view, paging, and active
 turn fields. The synthetic id is identical across accounts and resolves using
-the authenticated caller. Sidebar, search, compact, delete, share and abort routes
+the authenticated caller. Sidebar, search, compact, delete and share routes
 continue to use legacy sessions.
 
 Full history includes captured view references on tool calls and results. The
@@ -233,6 +235,23 @@ existing `POST /api/agents/:agentId/sessions/:sessionId/mcp-apps/:toolCallId/:op
 route accepts `durable-main` when Durable mode applies and reads the
 caller’s record. An unknown record or a record owned by another user returns
 404.
+
+### Stop
+
+`POST /api/agents/:id/stop` stops the current run in the caller's Durable Main.
+Send `{ "runId": "<observed id>" }` to bind the stop to a specific run, or omit
+the id to stop whichever run is current. Both outcomes return HTTP 200.
+`{ "status": "stopped" }` confirms the abort. `{ "status": "already_finished" }`
+means Main was idle or the supplied id no longer matched. The route returns
+403 when the caller lacks access and 404 for unknown or non-Durable agents.
+Queued sends kept by the abort start immediately afterward. If the gateway
+restarts before they start, it resumes them for callers with Durable Main access.
+
+Main also accepts trimmed `/stop` and `/abort` as unbound stop commands, including
+sends without a `clientSendId`. The HTTP send returns the same stop result.
+WebSocket sends return `done` with `meta.stopStatus` set to `stopped` or
+`already_finished`, or an `error` with message `Forbidden` when access is denied.
+The model and the transcript receive neither command.
 
 ### Feed
 
@@ -266,6 +285,10 @@ replaces the client window. For a `feed_delta`, update or append the listed
 items by ID and then discard all items before `dropBefore` when present.
 Both frames carry the latest `hasBefore` and `live` values. Reconnects and
 changes coalesced during a pending send receive a fresh snapshot.
+While a run is live, `live.runId` and the compatibility `active_turn.runId`
+carry its opaque stop id when available. The id stays stable through steers,
+tool rounds, and after-run work. A kept-input run started by a stop receives
+a different id. Idle feed windows have `live: null`.
 If account or agent access is revoked or Durable mode is turned off, the
 gateway ends the subscription with `feed_end`. Send `unsubscribeFeed` to stop
 receiving updates.

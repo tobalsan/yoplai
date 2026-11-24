@@ -15,6 +15,16 @@ export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
 export const InputEntry = defineEntry<WebInput>("yoplai.web-input");
 export const FailureNoteEntry = defineEntry<{ submissionId: SubmissionId; kind: RunFailureKind; accessError?: string }>("yoplai.failure-note");
 
+export const AbortedRuns = defineDoc<{ byFirst: Record<string, number[]> }>({
+  kind: "yoplai.aborted-runs",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ byFirst: {} }),
+  checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
+});
+
 export type ReviewDecision = { state: "stream" | "held" | "approved" | "rejected"; hint?: string; digest?: string; answeredAt?: number; hiddenTools?: string[] };
 
 export const ReviewDoc = defineDoc<{

@@ -705,25 +705,26 @@ export function ChatView() {
   let submittingDurableDraft = false;
   const handleSend = async () => {
     const main = targetsDurableMain(agent()?.durable === true, explicitSessionId());
-    if (main && submittingDurableDraft) return;
     session.flushFinished();
 
     if (impersonationStatus()?.active) return;
     const text = input().trim();
+    const stoppingMain = main && text === "/stop";
+    if (!stoppingMain && ((main && submittingDurableDraft) || loading() || uploadingFiles())) return;
     const currentPendingFiles = pendingFiles();
     const hasFiles = currentPendingFiles.length > 0;
     const hasNotes = annotations.notes().length > 0;
-    if ((!text && !hasFiles && !hasNotes) || loading() || uploadingFiles()) return;
-    if (isStreaming() && hasFiles) {
+    if (!text && !hasFiles && !hasNotes) return;
+    if (!stoppingMain && isStreaming() && hasFiles) {
       setUploadError("Wait for the current response before attaching files.");
       return;
     }
 
     // Treat /stop as an interrupt
-    if (text === "/stop" && !main) {
+    if (text === "/stop") {
       setInput("");
       if (textareaRef) textareaRef.style.height = "auto";
-      handleStop();
+      await handleStop(stoppingMain);
       return;
     }
 
@@ -768,9 +769,10 @@ export function ChatView() {
     }
   };
 
-  const handleStop = async () => {
-    const result = await session.stop();
+  const handleStop = async (unbound = false) => {
+    const result = await session.stop(unbound);
     if (result.error) setUploadError(result.error);
+    if (result.status === "already_finished") showToast("Run already finished.");
   };
 
   const fileDropHint = createMemo(() => {
@@ -1238,7 +1240,7 @@ export function ChatView() {
             class="pill-btn stop-btn"
             classList={{ stopping: stopping() }}
             disabled={stopping()}
-            onClick={handleStop}
+            onClick={() => void handleStop()}
             aria-label="Stop agent"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">

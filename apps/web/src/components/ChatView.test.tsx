@@ -115,7 +115,7 @@ vi.mock("@solidjs/router", () => ({
   ],
 }));
 
-vi.mock("../api", () => ({
+vi.mock("../api", async () => ({
   archiveAgentSession: archiveAgentSessionMock,
   fetchAgent: fetchAgentMock,
   fetchAgentSuggestions: fetchAgentSuggestionsMock,
@@ -127,6 +127,7 @@ vi.mock("../api", () => ({
   getSessionKey: getSessionKeyMock,
   startNewChat: startNewChatMock,
   postAbort: postAbortMock,
+  postDurableStop: (await vi.importActual<typeof import("../api/chat")>("../api/chat")).postDurableStop,
   postCompact: postCompactMock,
   streamMessage: streamMessageMock,
   subscribeToSession: subscribeToSessionMock,
@@ -2607,6 +2608,130 @@ describe("ChatView abort handling", () => {
     expect(container.textContent).toContain("Interrupted");
 
     dispose();
+  });
+
+  it.each(["observed", "early", "typed", "failed"] as const)("sends a %s Durable Main stop to the stop route", async (kind) => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", durable: true, model: { provider: "openai", model: "gpt-5" } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main", isStreaming: false, activeTurn: null });
+    let completeStop!: (response: Response) => void;
+    const stopRequest = new Promise<Response>((resolve) => { completeStop = resolve; });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith("/stop") ? stopRequest : new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, dispose } = renderView();
+    const toasts = document.createElement("div");
+    document.body.appendChild(toasts);
+    const disposeToasts = render(() => <ToastHost />, toasts);
+    try {
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      await waitFor(() => expect(composer.disabled).toBe(false));
+      composer.value = "Check the nursery";
+      fireEvent.input(composer);
+      const sendButton = getByRole(container, "button", { name: "Send message" }) as HTMLButtonElement;
+      await waitFor(() => expect(sendButton.disabled).toBe(false));
+      sendButton.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      if (kind !== "early") {
+        const callbacks = subscribeToSessionMock.mock.calls.at(-1)?.[2] as SubscriptionCallbacks;
+        callbacks.onActiveTurn?.({
+          runId: "garden-run", userText: null, userTimestamp: 10, startedAt: 10,
+          text: "Checking", thinking: "", toolCalls: [],
+        }, "durable-main");
+      }
+      await waitFor(() => expect(queryByRole(container, "button", { name: "Stop agent" })).not.toBeNull());
+      const stopButton = getByRole(container, "button", { name: "Stop agent" }) as HTMLButtonElement;
+      if (kind === "typed") {
+        composer.value = "/stop";
+        fireEvent.input(composer);
+        fireEvent.keyDown(composer, { key: "Enter" });
+      } else {
+        stopButton.click();
+      }
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/stop", expect.objectContaining({
+        method: "POST", body: kind === "early" || kind === "typed" ? "{}" : '{"runId":"garden-run"}',
+      })));
+      expect(stopButton.disabled).toBe(true);
+      expect(postAbortMock).not.toHaveBeenCalled();
+      expect(streamMessageMock).toHaveBeenCalledOnce();
+      if (kind === "failed") {
+        completeStop(new Response("", { status: 503 }));
+        await waitFor(() => expect(container.textContent).toContain("Failed to stop run"));
+      } else {
+        completeStop(new Response('{"status":"already_finished"}'));
+        await waitFor(() => expect(toasts.textContent).toContain("Run already finished."));
+      }
+      expect(stopButton.disabled).toBe(false);
+    } finally {
+      (toasts.querySelector('[data-testid="toast-close"]') as HTMLButtonElement | null)?.click();
+      disposeToasts();
+      toasts.remove();
+      dispose();
+    }
+  });
+
+  it("shows one shared Durable Main answer when multiple steered sends settle", async () => {
+    fetchAgentMock.mockResolvedValue({
+      id: "agent-1", name: "Agent", durable: true, queueMode: "queue", model: { provider: "openai", model: "gpt-5" },
+    });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
+    const { container, dispose } = renderView();
+    try {
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      for (const [index, text] of ["Inspect the nursery", "Include the basil", "Add the mint"].entries()) {
+        composer.value = text;
+        fireEvent.input(composer);
+        if (index === 0) await waitFor(() => expect((getByRole(container, "button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.keyDown(composer, { key: "Enter" });
+        await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(index + 1));
+      }
+      const reply = "Basil and mint are ready.";
+      fetchFullHistoryMock.mockResolvedValue({
+        sessionId: "durable-main", isStreaming: false, activeTurn: null,
+        messages: [{ role: "assistant", content: [{ type: "text", text: reply }], timestamp: 4 }],
+      });
+      for (const call of streamMessageMock.mock.calls.slice(1)) {
+        call[3](reply);
+        call[4]();
+      }
+      expect(queryAllByText(container, reply).length).toBeLessThanOrEqual(1);
+      await waitFor(() => expect(queryAllByText(container, reply)).toHaveLength(1));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps Stop bound to a kept run shown before the aborted send settles", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", durable: true, model: { provider: "openai", model: "gpt-5" } });
+    fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      new Response(String(url).endsWith("/stop") ? '{"status":"stopped"}' : "{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, dispose } = renderView();
+    try {
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      composer.value = "Check the nursery";
+      fireEvent.input(composer);
+      const sendButton = getByRole(container, "button", { name: "Send message" }) as HTMLButtonElement;
+      await waitFor(() => expect(sendButton.disabled).toBe(false));
+      sendButton.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      const callbacks = subscribeToSessionMock.mock.calls.at(-1)?.[2] as SubscriptionCallbacks;
+      const keptTurn = {
+        runId: "kept-run", userText: null, userTimestamp: 10, startedAt: 10,
+        text: "Checking the follow-up", thinking: "", toolCalls: [],
+      };
+      callbacks.onActiveTurn?.(keptTurn, "durable-main");
+      let finishRead!: (history: { messages: []; sessionId: string; activeTurn: typeof keptTurn }) => void;
+      fetchFullHistoryMock.mockReturnValue(new Promise((resolve) => { finishRead = resolve; }));
+      streamMessageMock.mock.calls[0][4]({ aborted: true });
+      callbacks.onHistoryUpdated?.();
+      getByRole(container, "button", { name: "Stop agent" }).click();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/stop", expect.objectContaining({
+        body: '{"runId":"kept-run"}',
+      })));
+      finishRead({ messages: [], sessionId: "durable-main", activeTurn: keptTurn });
+    } finally {
+      dispose();
+    }
   });
 
   it.each([undefined, "full"])("shows every summary collapsed in %s mode after reopen", async (mode) => {

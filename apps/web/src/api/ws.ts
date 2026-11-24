@@ -87,6 +87,7 @@ export type WsStreamEvent =
       type: "active_turn";
       agentId: string;
       sessionId: string;
+      runId?: string;
       userText: string | null;
       userTimestamp: number;
       startedAt: number;
@@ -172,6 +173,7 @@ export function dispatchWsEvent(
       break;
     case "active_turn":
       callbacks.onActiveTurn?.({
+        ...(event.runId !== undefined && { runId: event.runId }),
         userText: event.userText,
         userTimestamp: event.userTimestamp,
         startedAt: event.startedAt,

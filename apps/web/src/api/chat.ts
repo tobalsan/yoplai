@@ -7,7 +7,7 @@ import type {
 } from "./types";
 import { API_BASE, apiFetch as fetch } from "./core";
 import { dispatchWsEvent, getWsUrl, type WsStreamEvent } from "./ws";
-import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
+import type { DurableStopResult, WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
 import { readMigratedLocal } from "../lib/local-storage";
 
 const SESSION_KEY_PREFIX = "yoplai:sessionKey:";
@@ -79,6 +79,16 @@ export async function postAbort(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: "/abort", sessionKey, sessionId }),
   });
+}
+
+export async function postDurableStop(agentId: string, runId?: string): Promise<DurableStopResult> {
+  const response = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/stop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runId }),
+  });
+  if (!response.ok) throw new Error("Failed to stop run");
+  return response.json();
 }
 
 export class UnauthenticatedError extends Error {

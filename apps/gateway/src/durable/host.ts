@@ -12,7 +12,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
-  type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
+  type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
@@ -27,13 +27,13 @@ import type { WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { feedDetail, feedSearch } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
-import { DurableFeed, emptyFeedWindow, entryId, observeFeed, type FeedSelector } from "./feed.js";
+import { DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
-import { FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
+import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 import { durableStorePath } from "./store-path.js";
 
 const context = BACKGROUND_CONTEXT;
@@ -49,6 +49,7 @@ export class DurableHost {
   private readonly feed: DurableFeed;
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
+  private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
   private readonly listeners = new Map<string, Set<(event: WsServerMessage) => void>>();
 
   private constructor(
@@ -205,7 +206,7 @@ export class DurableHost {
     const admission = previous.then(async () => {
       const hold = this.review.holdsReplies();
       if (hold) await conversation.waitForIdle(context);
-      const admit = async (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => conversation.commit(async (tx) => {
+      const admit = (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => this.mutateConversation(id, () => conversation.commit(async (tx) => {
         const existing = await tx.submissionByRequest(conversation.id, requestId);
         if (existing) return { submissionId: existing.id, duplicate: true };
         const live = await tx.doc(LiveDoc, id);
@@ -227,7 +228,7 @@ export class DurableHost {
           },
         });
         return { submissionId, duplicate: false };
-      }, context);
+      }, context));
       let admission;
       while (!admission) {
         const live = await this.harness.snapshot(LiveDoc, id, context);
@@ -261,6 +262,17 @@ export class DurableHost {
       if (this.admissions.get(id) === tail) this.admissions.delete(id);
     });
     return admission;
+  }
+
+  private mutateConversation<T>(id: ConversationId, operation: () => Promise<T>): Promise<T> {
+    const previous = this.conversationMutations.get(id) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const tail = result.then(() => undefined, () => undefined);
+    this.conversationMutations.set(id, tail);
+    void tail.then(() => {
+      if (this.conversationMutations.get(id) === tail) this.conversationMutations.delete(id);
+    });
+    return result;
   }
 
   private async configureFor(id: ConversationId) {
@@ -298,6 +310,26 @@ export class DurableHost {
     }, context);
   }
 
+  private async continueKeptInputs(conversation: Conversation, user: string) {
+    const id = conversation.id;
+    const inbox = await this.harness.snapshot(InboxDoc, id, context);
+    const next = inbox?.items.find(({ mode }) => mode !== "write");
+    if (!next) return;
+    const live = await this.harness.snapshot(LiveDoc, id, context);
+    const failed = live?.runFailure;
+    if (live?.run || (failed && failed.reason !== "aborted") || !await this.mayReadFeed(user, user)) return;
+    await this.configureQueuedRun(id);
+    await conversation.commit(async (tx) => {
+      // A continue can reuse the failed run's first entry. Persist its cutoff
+      // in the same commit as the new run so recovery cannot reuse the old ID.
+      if (failed?.first !== undefined) {
+        const stopped = await tx.doc(AbortedRuns, id);
+        stopped.byFirst[failed.first] = [...(stopped.byFirst[failed.first] ?? []), failed.taskId];
+      }
+      await conversation.submit(tx, { type: "continue", requestId: "stop:keep:" + next.id });
+    }, context);
+  }
+
   private async registerProviderSession(id: ConversationId) {
     const provider = await this.harness.snapshot(ProviderDoc, id, context);
     if (provider) this.providerConversations.set(provider.sessionId, id);
@@ -310,6 +342,7 @@ export class DurableHost {
       this.owners.set(id as ConversationId, key.slice("main:".length));
     }
     const routes = [];
+    const stopping: { conversation: Conversation; user: string }[] = [];
     const configured = new Set<ConversationId>();
     for (const record of pending) {
       const user = this.owners.get(record.conversationId);
@@ -330,11 +363,24 @@ export class DurableHost {
         if (!configuration) continue;
         const current = await this.harness.snapshot(AgentDoc, conversation.id, context);
         await conversation.configure({ ...configuration.change, model: current?.model ?? configuration.change.model }, context);
+        const run = (await this.harness.snapshot(LiveDoc, conversation.id, context))?.run;
+        if (run) {
+          const task = await this.harness.getTask(run.taskId, context);
+          if (task?.abortRequested && task.abortReason !== "restart") stopping.push({ conversation, user });
+        } else {
+          await this.continueKeptInputs(conversation, user);
+        }
         configured.add(conversation.id);
       }
       routes.push(await this.attachSubmission(conversation, submission, user, true));
     }
     this.harness.resume();
+    for (const { conversation, user } of stopping) {
+      void this.mutateConversation(conversation.id, async () => {
+        await conversation.waitForIdle(context);
+        await this.continueKeptInputs(conversation, user);
+      }).catch(() => { /* The persisted inbox can be recovered on the next open. */ });
+    }
     for (const wait of routes) void wait().catch(() => { /* Settlement already notified the owning subscribers. */ });
   }
 
@@ -389,14 +435,20 @@ export class DurableHost {
       });
     }
     return async () => {
+      let answeredBy: TaskId | undefined;
       try {
         const { response, answerTask, inputEntry, answerEntry } = await this.settle(conversation, submission);
+        answeredBy = answerTask;
         acceptingPartials = false;
         await watch?.stop();
         // A watch can coalesce commits or stop before it delivers the last change.
         // Finish any stored rounds before acknowledging the submission.
+        if (response.meta.aborted) {
+          onEvent?.({ type: "done", meta: response.meta });
+          return response;
+        }
         const after = readThrough ?? inputEntry;
-        if (notify && onEvent && !replyChanged && after < answerEntry) {
+        if (notify && onEvent && !replyChanged && after !== undefined && answerEntry !== undefined && after < answerEntry) {
           const rounds = await this.feed.replyRounds(conversation, after, answerEntry);
           for (const { taskId, text } of rounds) replyChanged ||= !emitText(taskId, text);
         }
@@ -413,19 +465,31 @@ export class DurableHost {
         throw error;
       } finally {
         await watch?.stop();
-        if (notify) this.publish(user, { type: "history_updated", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID });
+        if (notify) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
       }
     };
   }
 
+  private async publishSettlement(conversation: Conversation, user: string, answeredBy?: TaskId) {
+    if (answeredBy !== undefined) {
+      const run = (await this.harness.snapshot(LiveDoc, conversation.id, context))?.run;
+      // The answer is available before after-run tasks release the live turn.
+      if (run?.afterRun && run.taskId === answeredBy) await this.harness.waitForTask(answeredBy, context);
+    }
+    this.publish(user, { type: "history_updated", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID });
+  }
+
   private async settle(conversation: Conversation, submission: Submission): Promise<{
-    response: RunAgentResult; answerTask?: TaskId; inputEntry: EntryId; answerEntry: EntryId;
+    response: RunAgentResult; answerTask?: TaskId; inputEntry?: EntryId; answerEntry?: EntryId;
   }> {
     const original = await submission.wait(context);
     const result = original.status === "unanswered" && original.type === "input" && original.reason === "model_error"
       ? await settleFallback(this.harness, conversation, submission.id, this.agent.id) ?? original
       : original;
     if (result.status === "unanswered") {
+      if (result.reason === "aborted") {
+        return { response: { payloads: [], meta: { durationMs: 0, sessionId: DURABLE_MAIN_SESSION_ID, aborted: true } } };
+      }
       const kind = result.reason === "no_model" ||
         (result.reason === "model_error" && typeof result.detail === "string" && result.detail.startsWith("Provider is not configured:"))
         ? "provider_not_configured"
@@ -528,7 +592,7 @@ export class DurableHost {
     projection?: Awaited<ReturnType<DurableFeed["read"]>>,
   ): Promise<WsActiveTurnSnapshot | null> {
     const { live } = observed;
-    if (!live?.run?.inputs.length) return null;
+    if (!live?.run) return null;
     const id = live.run.first;
     const first = id === undefined ? undefined : (await conversation.entries({ minEntryId: id, maxEntryId: id }, 1, undefined, context)).items[0];
     const partial = live.generation?.message;
@@ -539,6 +603,7 @@ export class DurableHost {
       parentToolCallId && view && status === "done" ? [{ id, parentToolCallId, name, view, content: "", isError: false }] : []);
     return {
       type: "active_turn", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID,
+      runId: projected.runId,
       userText: null, userTimestamp: timestamp, startedAt: timestamp,
       text: projected.text, thinking: projected.reasoning.join(""),
       toolCalls: projected.toolCalls.map(({ id, name, arguments: args, parentToolCallId, status, view }) => (
@@ -563,6 +628,24 @@ export class DurableHost {
   private async mainFor(owner: string) {
     const id = await this.mainId(owner);
     return id === undefined ? undefined : this.harness.conversation(id, context);
+  }
+
+  async stopMain(principal: string, runId?: string): Promise<DurableStopResult | { forbidden: true }> {
+    const conversation = await this.mainFor(principal);
+    if (!conversation) {
+      return await this.mayReadFeed(principal, principal) ? { status: "already_finished" } : { forbidden: true };
+    }
+    const id = conversation.id;
+    return this.mutateConversation(id, async () => {
+      if (!await this.mayReadFeed(principal, principal)) return { forbidden: true };
+      const run = (await this.harness.snapshot(LiveDoc, id, context))?.run;
+      if (!run || (runId !== undefined && runId !== await runIdFor(this.harness, conversation, run))) {
+        return { status: "already_finished" };
+      }
+      await conversation.abort(context);
+      await this.continueKeptInputs(conversation, principal);
+      return { status: "stopped" };
+    });
   }
 
   async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector) {

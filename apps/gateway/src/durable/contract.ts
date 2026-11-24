@@ -10,8 +10,14 @@ export type DurableWebRequest = {
   turnId?: unknown;
   attachments?: unknown;
 };
+
+export function isDurableStopCommand(message: unknown): boolean {
+  return typeof message === "string" && /^\/(stop|abort)$/.test(message.trim());
+}
+
 export function parseDurableWebSend(input: DurableWebRequest):
   | { ok: true; input: { message: string; clientSendId: string } }
+  | { ok: true; stop: true }
   | { ok: false; error: string } {
   if (input.projectId !== undefined || input.turnId !== undefined) {
     return { ok: false, error: "Durable Main does not support project chats or desktop turn IDs." };
@@ -19,6 +25,7 @@ export function parseDurableWebSend(input: DurableWebRequest):
   if (input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length > 0)) {
     return { ok: false, error: "Durable Main does not support attachments." };
   }
+  if (isDurableStopCommand(input.message)) return { ok: true, stop: true };
   const parsed = SendMessageRequestSchema.required({ clientSendId: true }).safeParse({
     message: input.message,
     clientSendId: input.clientSendId,
