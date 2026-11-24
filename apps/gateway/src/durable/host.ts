@@ -76,16 +76,16 @@ export class DurableHost {
   static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, options: DurableHostOptions) {
     const provider = agent.model.provider;
     if (!provider) throw new Error("Durable requires model.provider to be set.");
+    let harness: Harness | undefined;
+    const providerConversations = new Map<string, ConversationId>();
+    const models = await (options.createModels ?? createDurableModels)(agent, async (sessionId) => {
+      const id = sessionId && providerConversations.get(sessionId);
+      if (harness && id) return getModelPolicy(harness, id);
+    });
     const directory = path.join(home, "agents", agent.id, "durable");
     await fs.mkdir(directory, { recursive: true, mode: 0o700 });
     const storage = await openNodeSqliteStorage(path.join(directory, "agent.sqlite"));
     const registry = createRegistry();
-    let harness: Harness | undefined;
-    const providerConversations = new Map<string, ConversationId>();
-    const models = (options.createModels ?? createDurableModels)(agent, async (sessionId) => {
-      const id = sessionId && providerConversations.get(sessionId);
-      if (harness && id) return getModelPolicy(harness, id);
-    });
     const owners = new Map<ConversationId, string>();
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id));
     const review = createReplyReview(agent, runtime, tools.authority, tools.invisibleNames, () => {

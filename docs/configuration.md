@@ -148,9 +148,8 @@ agents. The setting starts off. Each account has its own setting on a
 multi-user gateway. On a single-user gateway the setting applies gateway-wide.
 Linked agents use the linked account's setting on their gateway.
 
-Durable Main uses the built-in Pi Durable model catalog and supported
-credential sources. Users of custom providers configured in `models.json`
-can use those providers through the legacy runner.
+Durable Main uses Pi's built-in models and [providers configured in
+`models.json`](models-and-skills.md#custom-providers).
 
 Turning it off sends new messages through the legacy runner and preserves
 your Durable transcripts for when you turn it back on. Sandboxed agents,

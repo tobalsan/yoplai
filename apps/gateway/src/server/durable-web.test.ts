@@ -1,7 +1,68 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { startDurableTestGateway } from "../test-utils/durable-gateway.js";
 
 describe("Durable web Main", () => {
+  it("answers and saves Main through a provider configured in models.json", async () => {
+    const provider = createServer(async (req, res) => {
+      const firstEndpoint = req.url === "/v1/chat/completions" && req.headers["x-provider-test"] === "first-endpoint";
+      const newEndpoint = req.url === "/replacement/v1/chat/completions" && req.headers["x-provider-test"] === undefined;
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const model = JSON.parse(body).model;
+      if ((!firstEndpoint && !newEndpoint) || model !== "garden-small" || req.headers.authorization !== "Bearer fixture-provider-key") {
+        res.writeHead(403).end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      const reply = firstEndpoint ? "Custom provider reply." : "Replacement endpoint reply.";
+      res.end([
+        `data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: { content: reply }, finish_reason: null }] })}`,
+        'data: {"id":"fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+      ].join("\n\n") + "\n\n");
+    }).listen(0, "127.0.0.1");
+    await once(provider, "listening");
+    try {
+      const base = `http://127.0.0.1:${(provider.address() as AddressInfo).port}`;
+      const model = {
+        provider: "garden-models", model: "garden-small", apiKey: "fixture-provider-key",
+      };
+      const gateway = await startDurableTestGateway({
+        customModel: { ...model, baseUrl: base + "/v1", headers: { "X-Provider-Test": "first-endpoint" } },
+      });
+      try {
+        const response = await gateway.send("local", "Check the greenhouse", { clientSendId: "custom-provider" });
+        const result = await response.json();
+        expect(response.status, JSON.stringify(result)).toBe(200);
+        expect(result).toMatchObject({
+          payloads: [{ text: "Custom provider reply." }], meta: { sessionId: "durable-main" },
+        });
+        await gateway.configureCustomModel({ ...model, baseUrl: base + "/replacement/v1" });
+        const followUp = await gateway.send("local", "Check the new endpoint", { clientSendId: "custom-provider-follow-up" });
+        const followUpResult = await followUp.json();
+        expect(followUp.status, JSON.stringify(followUpResult)).toBe(200);
+        expect(followUpResult).toMatchObject({
+          payloads: [{ text: "Replacement endpoint reply." }], meta: { sessionId: "durable-main" },
+        });
+        expect(await gateway.history("local", "?sessionId=durable-main")).toMatchObject({
+          sessionId: "durable-main", messages: [
+            { role: "user", content: "Check the greenhouse" },
+            { role: "assistant", content: "Custom provider reply." },
+            { role: "user", content: "Check the new endpoint" },
+            { role: "assistant", content: "Replacement endpoint reply." },
+          ],
+        });
+      } finally {
+        await gateway.close();
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => provider.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it("answers a web send and reloads it with the compatibility history selectors", async () => {
     const gateway = await startDurableTestGateway();
     try {

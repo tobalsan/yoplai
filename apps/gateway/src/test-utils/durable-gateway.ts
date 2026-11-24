@@ -13,10 +13,11 @@ import { writeTestAgent, writeTestV3Config } from "./v3-config.js";
 
 type TestUser = "local" | "alice" | "bob";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
+type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -37,7 +38,7 @@ export async function startDurableTestGateway({
   vi.stubEnv("YOPLAI_HOME", home);
   await writeTestV3Config(home, {
     extraConfig: { oauth: { encryptionKey: "fixture-encryption-key-durable" }, ...extraConfig, ...(appsPort ? { apps: { port: appsPort, origin: "http://127.0.0.1:" + appsPort } } : {}) },
-    agents: [{ id: "pilot", model: modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
+    agents: [{ id: "pilot", model: customModel ?? modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
     extensions: multiUser ? {
       multiUser: {
         enabled: true, autoApprove: true, emailAndPassword: { enabled: true },
@@ -45,6 +46,12 @@ export async function startDurableTestGateway({
       },
     } : undefined,
   });
+  async function configureCustomModel({ provider, model, baseUrl, apiKey, headers }: CustomModel) {
+    await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: {
+      [provider]: { api: "openai-completions", baseUrl, apiKey, headers, models: [{ id: model, contextWindow: 128000 }] },
+    } }));
+  }
+  if (customModel) await configureCustomModel(customModel);
   vi.resetModules();
   const { startServer } = await import("../server/index.js");
   const { loadConfig, reloadConfig } = await import("../config/index.js");
@@ -92,7 +99,7 @@ export async function startDurableTestGateway({
 
   async function open() {
     server = startServer(0, "127.0.0.1", runtime, {
-      createModels: faux.createModels,
+      createModels: customModel ? undefined : faux.createModels,
       fixture,
       afterMainCommit() {
         if (!fault) return;
@@ -208,6 +215,7 @@ export async function startDurableTestGateway({
   return {
     socket,
     setDurableMode,
+    configureCustomModel,
     script: faux.script,
     callCount: faux.callCount,
     requests: faux.requests,

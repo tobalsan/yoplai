@@ -40,7 +40,7 @@ async function codexAgent(source: "codex" | "pi", expiresInSeconds = 60) {
   ].join("\n"));
   const { getAgent } = await import("../config/index.js");
   const { createDurableModels } = await import("./models.js");
-  const models = createDurableModels(getAgent("test")!, async () => undefined);
+  const models = await createDurableModels(getAgent("test")!, async () => undefined);
   const model = models.getModel("openai-codex", modelId)!;
   return { models, model, token };
 }

@@ -30,12 +30,13 @@ Add `$YOPLAI_HOME/models.json`:
 {
   "providers": {
     "my-provider": {
+      "api": "openai-completions",
       "baseUrl": "https://api.example.com/v1",
-      "apiKey": "PROVIDER_API_KEY",
+      "apiKey": "$PROVIDER_API_KEY",
       "models": [
         {
           "id": "my-model",
-          "displayName": "My Model",
+          "name": "My Model",
           "contextWindow": 128000
         }
       ]
@@ -44,7 +45,7 @@ Add `$YOPLAI_HOME/models.json`:
 }
 ```
 
-`apiKey` names environment variable; do not put secret value in tracked files. Pi reads custom provider file directly.
+`$PROVIDER_API_KEY` reads the named environment variable. Pi reads `models.json` for both legacy chat and Durable Main. Restart the gateway after adding or removing model entries or changing their limits in Durable Main.
 
 `pnpm update-models` refreshes web context-window metadata for configured v3 agents and custom models. Explicit `contextWindow` is preserved; otherwise updater checks OpenRouter then models.dev.
 
