@@ -188,8 +188,10 @@ use the legacy runner. Main rejects project and desktop turn ids and attachments
 The agent detail route includes `durable: true` for a flagged agent.
 The send endpoint still waits for settlement and returns `payloads` and `meta`
 with `sessionId` and `durationMs`. A failed or withheld reply returns an error
-status with `{ error }`. The socket receives `text`, then `done` or `error`. Main
-subscriptions may receive `active_turn` snapshots and `history_updated`.
+status with `{ error }`. The socket receives ordered public `text` across tool
+rounds, then `done` or `error`. If a provider retry replaces text the socket
+already sent, the send ends with `error` and history shows the stored reply.
+Main subscriptions may receive `active_turn` snapshots and `history_updated`.
 
 The history route serves the existing simple or full view, paging, and active
 turn fields. The synthetic id is identical across accounts and resolves using
@@ -201,6 +203,40 @@ existing `POST /api/agents/:agentId/sessions/:sessionId/mcp-apps/:toolCallId/:op
 route accepts `durable-main` for a Durable agent and reads the authenticated
 caller’s record. An unknown record or a record owned by another user returns
 404.
+
+### Feed
+
+Flagged agents expose the authenticated caller's Main under `/api/agents/:id/feed`.
+IDs take the form `m_<entry id>` and remain stable across gateway restarts and
+context resets. An agent item groups its answer and tool rounds into one item.
+
+| Request | Result |
+| --- | --- |
+| `GET /api/agents/:id/feed?limit=50` | Latest items in chronological order with `hasBefore`, `hasAfter`, and the current `live` state. |
+| `GET /api/agents/:id/feed?before=<id>` | Items immediately before the anchor. |
+| `GET /api/agents/:id/feed?after=<id>` | Items immediately after the anchor. |
+| `GET /api/agents/:id/feed?around=<id>` | Items around and including the anchor. |
+| `GET /api/agents/:id/feed/search?q=<text>&limit=20` | Case-insensitive matches in public user and assistant text, newest first. |
+| `GET /api/agents/:id/feed/messages/:messageId` | An assistant item's public reasoning, tool calls and results. |
+
+Windows accept limits from 1 through 200 and one selector. Search accepts limits
+from 1 through 50. Invalid limits or multiple selectors return 400. A missing or
+out-of-scope anchor, or a detail request for a user message or failure notice,
+returns 404. Before the first send the caller's tail and search are empty.
+
+Send `subscribeFeed` on `/ws` with the agent ID and optional window limit.
+Each subscription starts at sequence 1 with a `feed_snapshot`. A snapshot
+replaces the client window. For a `feed_delta`, update or append the listed
+items by ID and then discard all items before `dropBefore` when present.
+Both frames carry the latest `hasBefore` and `live` values. Reconnects and
+changes coalesced during a pending send receive a fresh snapshot.
+If account or agent access is revoked, the gateway ends the subscription with
+`feed_end`. Send `unsubscribeFeed` to stop receiving updates.
+
+Code Mode file and MCP views retain their nested call IDs in live and full
+history. URL-encode the entire call ID in the MCP Apps route, including any
+slashes. For a Durable agent either `main` or `durable-main` selects the
+caller's Main in that route.
 
 ## Authentication
 

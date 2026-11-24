@@ -13,6 +13,7 @@ import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
+import { WsFeed } from "./ws-feed.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
 import { DEVICE_MAX_MESSAGE_BYTES, getDeviceRegistry, LOCAL_DEVICE_USER } from "../relay/device-registry.js";
@@ -44,6 +45,7 @@ export type WsBrokerAuthAdapter = {
    * key. A cookie session always counts as active. The check reads fresh state, so it must stay cheap.
    */
   isAuthContextActive?: (authContext: RequestAuthContext) => boolean;
+  recheckFeedSession?: (headers: Headers, auth: RequestAuthContext) => Promise<"active" | "invalid" | "forbidden">;
 };
 
 /** A socket whose key stops is closed within this time even when it sends nothing. */
@@ -52,6 +54,7 @@ const CLOSE_CREDENTIAL_INVALID = 1008;
 
 export class WsBroker {
   private readonly durableSends = new WeakMap<WebSocket, Set<string>>();
+  private readonly feeds = new Map<WebSocket, WsFeed>();
   private readonly durableSubscriptions = new Map<WebSocket, () => void>();
   private readonly subscriptions = new Map<WebSocket, Subscription>();
   private readonly connectedClients = new Set<WebSocket>();
@@ -59,7 +62,7 @@ export class WsBroker {
   private readonly deviceContexts = new Map<WebSocket, RequestAuthContext>();
   private authAdapter: WsBrokerAuthAdapter | undefined;
 
-  constructor(private readonly options: { recheckMs?: number; durableWeb?: DurableWeb } = {}) {}
+  constructor(private readonly options: { recheckMs?: number; durableWeb?: DurableWeb; feedSendComplete?: () => Promise<void> } = {}) {}
   private readonly statusSubscribers = new Set<WebSocket>();
   /** Counts the subscribe and unsubscribe messages of each page socket. A late authorization checks it. */
   private readonly subscribeGenerations = new Map<WebSocket, number>();
@@ -130,6 +133,7 @@ export class WsBroker {
   /** Closes each socket whose key no longer works. */
   private recheckSockets(isActive: (authContext: RequestAuthContext) => boolean): void {
     for (const ws of [...this.authContexts.keys()]) this.socketActive(ws);
+    for (const feed of this.feeds.values()) void feed.recheck();
     for (const [ws, authContext] of [...this.deviceContexts]) {
       if (!isActive(authContext)) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
     }
@@ -144,8 +148,13 @@ export class WsBroker {
     const isActive = this.authAdapter?.isAuthContextActive;
     if (!authContext || !isActive) return true;
     const ok = isActive(authContext);
-    if (!ok) ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
+    if (!ok) this.closeInvalidCredential(ws);
     return ok;
+  }
+
+  private closeInvalidCredential(ws: WebSocket) {
+    this.feeds.get(ws)?.stop();
+    ws.close(CLOSE_CREDENTIAL_INVALID, "Credential no longer valid");
   }
 
   close(): void {
@@ -155,6 +164,7 @@ export class WsBroker {
     for (const ws of this.connectedClients) {
       ws.close();
     }
+    for (const feed of this.feeds.values()) feed.stop();
     this.subscriptions.clear();
     for (const unsubscribe of this.durableSubscriptions.values()) unsubscribe();
     this.durableSubscriptions.clear();
@@ -193,6 +203,7 @@ export class WsBroker {
     });
 
     ws.on("close", () => {
+      this.feeds.get(ws)?.stop();
       this.durableSubscriptions.get(ws)?.();
       this.durableSubscriptions.delete(ws);
       this.subscriptions.delete(ws);
@@ -227,6 +238,34 @@ export class WsBroker {
     const tagged = msg.type === "send" && msg.turnId !== undefined;
     if (!tagged && bridge.handle(raw)) return;
     const authContext = this.authContexts.get(ws) ?? null;
+
+    if (msg.type === "subscribeFeed") {
+      this.feeds.get(ws)?.stop();
+      const limit = msg.limit === undefined ? 50 : msg.limit;
+      const agent = typeof msg.agentId === "string" ? getAgent(msg.agentId) : undefined;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+        this.send(ws, { type: "error", message: "Feed limit must be between 1 and 200" });
+      } else if (!agent?.durable || !this.options.durableWeb || !isAgentActive(agent.id)) {
+        this.send(ws, { type: "error", message: "Agent not found" });
+      } else {
+        const headers = new Headers(request?.headers as Record<string, string> | undefined);
+        const checkSession = async () => authContext && !authContext.session.id.startsWith("apikey:") && authAdapter.recheckFeedSession
+          ? authAdapter.recheckFeedSession(headers, authContext)
+          : "active" as const;
+        const feed = new WsFeed(ws, agent.id, authContext?.session.userId ?? "local", () => this.socketActive(ws),
+          checkSession, () => {
+            this.closeInvalidCredential(ws);
+          }, () => this.feeds.delete(ws), this.options.feedSendComplete);
+        this.feeds.set(ws, feed);
+        void feed.start(this.options.durableWeb.host(agent), limit);
+      }
+      return;
+    }
+
+    if (msg.type === "unsubscribeFeed") {
+      this.feeds.get(ws)?.stop();
+      return;
+    }
 
     if (msg.type === "subscribe") {
       const generation = this.supersedeSubscribe(ws);

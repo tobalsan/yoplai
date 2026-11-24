@@ -587,3 +587,21 @@ export async function validateWebSocketRequest(
   const authContext = await getValidatedAuthContext(request.headers);
   return authContext ? applyActiveImpersonation(authContext) : null;
 }
+
+/** Recheck a cookie without using its cached session or extending its expiry. */
+export async function recheckWebSocketSession(
+  headers: Headers,
+  original: RequestAuthContext,
+): Promise<"active" | "invalid" | "forbidden"> {
+  const runtime = getMultiUserRuntime();
+  const session = await runtime?.auth.api.getSession({
+    headers, query: { disableCookieCache: true, disableRefresh: true },
+  });
+  if (!session) return "invalid";
+  const current = normalizeAuthContext(session);
+  if (current.session.id !== original.session.id ||
+      current.session.userId !== (original.impersonator?.id ?? original.session.userId)) return "invalid";
+  const effective = applyActiveImpersonation(current);
+  return effective.session.userId === original.session.userId &&
+    effective.impersonator?.id === original.impersonator?.id ? "active" : "forbidden";
+}

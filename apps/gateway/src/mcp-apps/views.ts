@@ -373,7 +373,11 @@ export function createMcpAppRoutes(deps: {
   const app = new Hono();
   app.post("/agents/:agentId/sessions/:sessionId/mcp-apps/:toolCallId/:operation", async (c) => {
     const startedAt = Date.now();
-    const agentId = c.req.param("agentId"), sessionId = c.req.param("sessionId"), toolCallId = c.req.param("toolCallId");
+    const agentId = c.req.param("agentId"), toolCallId = c.req.param("toolCallId");
+    const requestedSessionId = c.req.param("sessionId");
+    const durableMain = (requestedSessionId === "main" || requestedSessionId === DURABLE_MAIN_SESSION_ID) &&
+      deps.getConfig().agents.some((agent) => agent.id === agentId && agent.durable);
+    const sessionId = durableMain ? DURABLE_MAIN_SESSION_ID : requestedSessionId;
     const operation = c.req.param("operation");
     let pending: (SessionScope & { revoked: boolean }) | undefined;
     const audit: Record<string, unknown> = { viewer: null, agent: agentId, session: sessionId, toolCall: toolCallId, server: null, method: operation, tool: null, resource: null, outcome: "not_found" };
@@ -384,7 +388,6 @@ export function createMcpAppRoutes(deps: {
         pending = { agentId, sessionId, ownerUserId: userId, revoked: false };
         pendingViews.add(pending);
       }
-      const durableMain = sessionId === DURABLE_MAIN_SESSION_ID && deps.getConfig().agents.some((agent) => agent.id === agentId && agent.durable);
       if (!isSafeSessionId(sessionId) || (!durableMain && !await deps.resolveHistoryFile({ userId, agentId, sessionId }))) return c.json({ error: "not_found" }, 404);
       const record = await readMcpAppRecord({ agentId, sessionId, ownerUserId: userId }, toolCallId);
       if (!record) return c.json({ error: "not_found" }, 404);
