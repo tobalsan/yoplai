@@ -8,7 +8,7 @@ import { writeTestV3Config } from "./v3-config.js";
 
 const home = process.env.YOPLAI_HOME;
 const [, , phase, auth, activeAgent] = process.argv;
-if (!home || !["stream", "tool", "resume", "settled"].includes(phase)) {
+if (!home || !["stream", "tool", "stop", "resume", "settled"].includes(phase)) {
   throw new Error("Set YOPLAI_HOME and pass a Durable crash fixture phase.");
 }
 const multiUser = auth === "multi-user";
@@ -37,7 +37,12 @@ const extension = defineExtension({
     name: "record_seedlings",
     description: "Record the seedlings in a bed.",
     parameters: { type: "object", properties: { bed: { type: "string" } }, required: ["bed"] },
-    async execute(_args, api) {
+    async execute(_args, api, context) {
+      if (phase === "stop") {
+        context.abortSignal?.addEventListener("abort", () => {
+          void fs.writeFile(path.join(home, "abort-ready.txt"), "ready");
+        }, { once: true });
+      }
       await fs.appendFile(counter, "Recorded seedlings.\n");
       api.output("Partial receipt: basil seedlings.\n");
       // Durable defers output commits up to 1000 ms. Signal the parent after that window.
@@ -58,7 +63,7 @@ const faux = createDurableFaux(phase === "stream" ? 20 : undefined, undefined, (
   fs.appendFile(requests, JSON.stringify(request.messages) + "\n"));
 if (phase === "stream") {
   faux.script("An unfinished orchard report. " + "Still counting the fruit. ".repeat(40));
-} else if (phase === "tool") {
+} else if (phase === "tool" || phase === "stop") {
   faux.script({ tool: "record_seedlings", args: { bed: "basil" }, id: "basil-record" });
 } else {
   faux.script("The greenhouse is accounted for.");

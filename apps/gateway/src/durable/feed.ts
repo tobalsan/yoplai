@@ -2,7 +2,7 @@ import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
 import { feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
-import { ReviewDoc } from "./state.js";
+import { AbortedRuns, ReviewDoc } from "./state.js";
 
 export const emptyFeedWindow: FeedWindow = { items: [], hasBefore: false, hasAfter: false, live: null };
 
@@ -13,6 +13,15 @@ export function entryId(id: string): EntryId | undefined {
 }
 
 export type FeedSelector = { direction: "before" | "after" | "around"; id: string };
+
+export async function runIdFor(harness: Harness, conversation: Conversation, run: NonNullable<LiveState["run"]>) {
+  if (run.first === undefined) return;
+  const stopped = await harness.snapshot(AbortedRuns, conversation.id, context);
+  // An older watch revision can still be projected after an abort. Count only
+  // the aborts that preceded this generation, even when the first entry is reused.
+  const count = stopped?.byFirst[run.first]?.filter((lastTask) => lastTask < run.taskId).length ?? 0;
+  return `${run.first}-${count}`;
+}
 
 export function observeFeed(view: ConversationView) {
   const selected = view.docs[AgentDoc.definition.kind]?.extensions;
@@ -121,10 +130,13 @@ export class DurableFeed {
 
   async live(conversation: Conversation, observed: FeedObservation, projection?: Awaited<ReturnType<DurableFeed["read"]>>) {
     const { live } = observed;
-    if (!live?.run?.inputs.length) return null;
+    if (!live?.run) return null;
     const source = projection ?? (live.tools?.length ? await this.read(conversation, { limit: 1 }, observed) : undefined);
     const review = source ? source.review : await this.harness.snapshot(ReviewDoc, conversation.id, context);
-    return projectLive(live, source?.records ?? [], review?.byTask ?? {}, source?.hiddenNames ?? new Set(),
-      (id) => this.viewFor(conversation, id));
+    return {
+      ...projectLive(live, source?.records ?? [], review?.byTask ?? {}, source?.hiddenNames ?? new Set(),
+        (id) => this.viewFor(conversation, id)),
+      runId: await runIdFor(this.harness, conversation, live.run),
+    };
   }
 }

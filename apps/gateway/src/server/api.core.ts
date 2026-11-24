@@ -77,7 +77,7 @@ import {
   getMediaFileMetadata,
   resolveMediaFilePath,
 } from "../media/metadata.js";
-import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
 import type { OpsMetrics } from "./ops-metrics.js";
 import { normalizeRunRequest } from "./run-request.js";
@@ -1536,9 +1536,11 @@ api.post("/agents/:id/messages", async (c) => {
   try {
     const body = await c.req.json();
     const authContext = await getRequestAuthContext(c);
-    if (body?.clientSendId !== undefined && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), body.sessionId)) {
+    const stop = isDurableStopCommand(body?.message);
+    if ((stop || body?.clientSendId !== undefined) && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), body.sessionId)) {
       const parsed = parseDurableWebSend(body);
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      if ("stop" in parsed) return await stopDurableMain(c, agent, authContext?.session.userId);
       const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
       return c.json(await host.submitWeb(durableWebSender(authContext), parsed.input));
     }
@@ -1615,6 +1617,30 @@ api.post("/agents/:id/compact", async (c) => {
     );
   }
 });
+
+api.post("/agents/:id/stop", async (c) => {
+  const agent = getAgent(c.req.param("id"));
+  const userId = await getRequestUserId(c);
+  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
+  const text = await c.req.text();
+  let body: { runId?: unknown };
+  try {
+    body = text ? JSON.parse(text) : {};
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        (body.runId !== undefined && (typeof body.runId !== "string" || !body.runId))) {
+      return c.json({ error: "Supply a valid runId or omit it" }, 400);
+    }
+  } catch {
+    return c.json({ error: "Invalid stop request" }, 400);
+  }
+  return stopDurableMain(c, agent, userId, typeof body.runId === "string" ? body.runId : undefined);
+});
+
+async function stopDurableMain(c: Context, agent: AgentConfig, userId?: string, runId?: string) {
+  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+  const result = await host.stopMain(userId ?? "local", runId);
+  return "forbidden" in result ? c.json({ error: "Agent access denied" }, 403) : c.json(result);
+}
 
 api.get("/agents/:id/feed", async (c) => {
   const agent = getAgent(c.req.param("id"));

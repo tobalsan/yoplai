@@ -11,7 +11,7 @@ import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
 import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
-import { durableWebSender, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
 import { WsFeed } from "./ws-feed.js";
@@ -424,10 +424,18 @@ export class WsBroker {
         return;
       }
 
-      if (this.options.durableWeb && msg.clientSendId !== undefined && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), msg.sessionId)) {
+      const stop = isDurableStopCommand(msg.message);
+      if (this.options.durableWeb && (stop || msg.clientSendId !== undefined) && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), msg.sessionId)) {
         const parsed = parseDurableWebSend(msg);
         if (!parsed.ok) {
           this.send(ws, { type: "error", message: parsed.error });
+          return;
+        }
+        if ("stop" in parsed) {
+          const host = await this.options.durableWeb.host(agent);
+          const result = await host.stopMain(authContext?.session.userId ?? "local");
+          if ("forbidden" in result) this.send(ws, { type: "error", message: "Forbidden" });
+          else this.send(ws, { type: "done", meta: { durationMs: 0, stopStatus: result.status } });
           return;
         }
         const key = agent.id + ":" + parsed.input.clientSendId;

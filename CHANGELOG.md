@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Stop a Durable Main run with the web Stop button or `/stop`. A stop tied to a finished run reports that it already ended, and queued follow-ups continue after an abort.
 - Durable Main resumes interrupted turns automatically after a gateway restart, warns in chat when a tool may have partly run, and reports per-agent interruptions through the ops metrics API.
 - Durable Main exposes windowed history, public-text search, message traces, and a live feed with stable message IDs and fresh access checks.
 - Durable Main supports workspace and extension tools, Code Mode, deferred tool search, and files and MCP Apps in chat. Tool calls use the conversation owner’s access and credentials.

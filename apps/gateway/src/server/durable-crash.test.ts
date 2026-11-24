@@ -28,7 +28,7 @@ async function crashFixture(multiUser = false) {
   }
 
   return {
-    async start(phase: "stream" | "tool" | "resume" | "settled", activeAgent?: string) {
+    async start(phase: "stream" | "tool" | "stop" | "resume" | "settled", activeAgent?: string) {
       const args = ["--import", "tsx", "--conditions=development", entry, phase, multiUser ? "multi-user" : "single-user"];
       if (activeAgent) args.push(activeAgent);
       const child = spawn(process.execPath, args, {
@@ -92,6 +92,47 @@ function send(gateway: Gateway, message: string, clientSendId: string, cookie = 
   return gateway.request("/api/agents/pilot/messages", post("POST", { message, clientSendId }, cookie))
     .catch((error: unknown) => error);
 }
+
+it("starts the kept input after restarting during a marked abort", async () => {
+  const fixture = await crashFixture();
+  try {
+    const original = await fixture.start("stop");
+    await enableDurable(original);
+    const sending = send(original, "Record the basil seedlings.", "stop-crash");
+    await vi.waitFor(async () => expect(await fixture.read("tool-ready.txt")).toBe("ready"), { timeout: 5000 });
+    const live = (await json<FeedWindow>(await original.request(feed))).live;
+    expect(live?.runId).toEqual(expect.any(String));
+
+    const observer = new WebSocket(original.base.replace("http:", "ws:") + "/ws");
+    const events: WsServerMessage[] = [];
+    observer.on("message", (raw) => events.push(JSON.parse(String(raw))));
+    await once(observer, "open");
+    observer.send(JSON.stringify({ type: "subscribe", agentId: "pilot", sessionKey: "main" }));
+    const activeTurn = expect.objectContaining({ type: "active_turn", runId: live?.runId });
+    await vi.waitFor(() => expect(events).toContainEqual(activeTurn));
+    events.length = 0;
+    const kept = send(original, "Check the mint after stopping.", "stop-crash-kept");
+    await vi.waitFor(() => expect(events).toContainEqual(activeTurn));
+    const stopping = original.request("/api/agents/pilot/stop", post("POST", { runId: live?.runId }))
+      .catch((error: unknown) => error);
+    await vi.waitFor(async () => expect(await fixture.read("abort-ready.txt")).toBe("ready"));
+    expect(await original.kill()).toEqual([null, "SIGKILL"]);
+    expect(await Promise.all([sending, kept, stopping])).toEqual([expect.any(Error), expect.any(Error), expect.any(Error)]);
+
+    const recovered = await fixture.start("resume");
+    await vi.waitFor(async () => {
+      expect(await fixture.read("model-resume.jsonl")).toContain("[from Local user via web]\\nCheck the mint after stopping.");
+    }, { timeout: 5000 });
+    await vi.waitFor(async () => {
+      const window = await json<FeedWindow>(await recovered.request(feed));
+      expect(window.live).toBeNull();
+      expect(window.items.at(-1)).toMatchObject({ role: "assistant", text: "The greenhouse is accounted for." });
+    });
+    expect(await fixture.read("tool-executions.txt")).toBe("Recorded seedlings.\n");
+  } finally {
+    await fixture.close();
+  }
+}, 45_000);
 
 it.each([false, true])("resumes a killed model stream before receiving a request (multi-user: %s)", async (multiUser) => {
   const fixture = await crashFixture(multiUser);

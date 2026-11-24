@@ -13,7 +13,7 @@ import {
   type Accessor,
 } from "solid-js";
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
-import type { WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
+import type { DurableStopResult, WsDeviceApprovalRequest, WsDeviceApprovalResolved } from "@yoplai/shared";
 import type { RealtimeSubscription } from "../../api/realtime-client";
 import { isNoReply } from "@yoplai/shared/no-reply";
 import { getMaxContextTokens } from "@yoplai/shared/model-context";
@@ -25,6 +25,7 @@ import {
   subscribeToSession,
   subscribeToRealtime,
   postAbort,
+  postDurableStop,
   postCompact,
   type ActiveTurn,
   type DoneMeta,
@@ -1087,7 +1088,7 @@ export function createChatSession(input: ChatSessionInput) {
           // isStreaming is stale-true but we don't own the direct stream — the
           // history_updated signal means the backend finished and history is ready.
           if (!isStreaming() || !ownsDisplayedDirectStream()) {
-            if (isStreaming() && !ownsDisplayedDirectStream())
+            if (isStreaming() && !durableMain())
               resetStreamingState();
             if (pendingQueuedMessages().length > 0) {
               setPendingQueuedMessages((prev) => prev.slice(1));
@@ -1405,8 +1406,9 @@ export function createChatSession(input: ChatSessionInput) {
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
+    const isDurableSend = durableMain();
     const streamOptions = {
-      ...(durableMain() ? { retryOnDisconnect: true } : {}),
+      ...(isDurableSend ? { retryOnDisconnect: true } : {}),
       ...(turnId ? { turnId } : {}),
       ...(input.projectId() ? { projectId: input.projectId() } : {}),
       ...(attachments?.length ? { attachments } : {}),
@@ -1492,6 +1494,11 @@ export function createChatSession(input: ChatSessionInput) {
           }
           if (!isCurrentQueuedStream()) {
             if (queueCleanup) queueCleanup();
+            return;
+          }
+          if (isDurableSend) {
+            queueCleanup?.();
+            void loadHistory(viewMode(), true);
             return;
           }
 
@@ -1750,6 +1757,21 @@ export function createChatSession(input: ChatSessionInput) {
           return;
         }
 
+        if (isDurableSend) {
+          batch(() => {
+            if (pendingThinkLevel()) {
+              setThinkingLevel(pendingThinkLevel()!);
+              setPendingThinkLevel(null);
+            }
+            if (meta?.aborted) setShowInterrupted(true);
+            if (!latestDurableTurn) resetStreamingState();
+            cleanup = null;
+          });
+          // The subscription may already show a kept run when this send ends.
+          void loadHistory(viewMode(), true);
+          return;
+        }
+
         // If aborted, discard streamed content and show system message
         if (aborted || meta?.aborted) {
           if (viewMode() !== "full") {
@@ -1775,18 +1797,6 @@ export function createChatSession(input: ChatSessionInput) {
           return;
         }
 
-        if (durableMain()) {
-          batch(() => {
-            if (pendingThinkLevel()) {
-              setThinkingLevel(pendingThinkLevel()!);
-              setPendingThinkLevel(null);
-            }
-            resetStreamingState();
-            cleanup = null;
-          });
-          void loadHistory(viewMode(), true);
-          return;
-        }
         if (viewMode() !== "full") {
           if (!resolvedSessionId()) void refreshContextUsage();
           batch(() => {
@@ -1961,12 +1971,14 @@ export function createChatSession(input: ChatSessionInput) {
       });
     });
   const send = (request: SendRequest) => startSend(request);
-  const stop = async (): Promise<{ error?: string }> => {
-    if (stopping() || !isStreaming() || !input.agentId()) return {};
+  const stop = async (unbound = false): Promise<{ error?: string; status?: DurableStopResult["status"] }> => {
+    const main = durableMain();
+    if (stopping() || (!isStreaming() && !(main && unbound)) || !input.agentId()) return {};
     setStopping(true);
-    if (!durableMain()) aborted = true;
 
     try {
+      if (main) return await postDurableStop(input.agentId(), unbound ? undefined : latestDurableTurn?.runId);
+      aborted = true;
       const sessionId = explicitSessionId();
       if (sessionId) await postAbort(input.agentId(), sessionKey(), sessionId);
       else await postAbort(input.agentId(), sessionKey());
