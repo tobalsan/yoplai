@@ -304,19 +304,23 @@ it("streams a later model round before its tool finishes and reloads the stored 
 }, 12000);
 
 it("reports a changed reply when a provider retry replaces text already sent to the sender", async () => {
+  const partial = "I am counting the fruit in the wrong row of trees.";
   const gateway = await startDurableTestGateway({
     tokensPerSecond: 60,
     extraYaml: "durable: true\nretryMaxAttempts: 2\nretryBaseDelay: 0.01\ntoolDeferral: { enabled: false }",
   });
   try {
     gateway.script(
-      { errorMessage: "503 Service Unavailable", partial: "I am counting the fruit in the wrong row of trees." },
+      { errorMessage: "503 Service Unavailable", partial },
       { tool: "bash", id: "count-correct-row", args: { command: "echo 4" } },
       "There are four apples in the correct row.",
     );
     const sender = await gateway.send("local", "Count the apples", { clientSendId: "count-apples" }, "ws");
-    await vi.waitFor(() => expect(sender.events.flatMap((event) => event.type === "text" ? [event.data] : []).join(""))
-      .toMatch(/^I am counting/), { timeout: 4000 });
+    await vi.waitFor(() => {
+      const received = sender.events.flatMap((event) => event.type === "text" ? [event.data] : []).join("");
+      expect(received).not.toBe("");
+      expect(partial.startsWith(received)).toBe(true);
+    }, { timeout: 4000 });
     await vi.waitFor(() => expect(sender.events.filter((event) => event.type === "error" || event.type === "done"))
       .toEqual([{ type: "error", message: "The reply changed while streaming." }]), { timeout: 4000 });
     expect((await gateway.history("local")).messages.map((row: { content: string }) => row.content)).toEqual([
