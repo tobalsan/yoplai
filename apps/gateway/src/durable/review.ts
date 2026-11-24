@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  defineExtension, GenerationTask, hook, LiveDoc,
+  AgentDoc, defineExtension, GenerationTask, hook, LiveDoc,
   type ConversationId, type EntryId, type Harness, type HookApi,
 } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
@@ -34,6 +34,7 @@ export function createReplyReview(
   agent: AgentConfig,
   runtime: ExtensionRuntime,
   authority: ReturnType<typeof createDurableTools>["authority"],
+  invisibleNames: ReturnType<typeof createDurableTools>["invisibleNames"],
   getHarness: () => Harness,
 ) {
   const active = new Map<ConversationId, { first: EntryId; reviewers: LoadedReplyReviewer[] }>();
@@ -79,13 +80,15 @@ export function createReplyReview(
     name: "yoplai-web-reply-review",
     hooks: [hook(GenerationTask, {
       async beforeRequest(request, api, context) {
+        const selected = (await api.snapshot(AgentDoc, api.conversationId, context))?.extensions;
+        const hiddenTools = [...invisibleNames(Array.isArray(selected) ? selected : [])];
         try {
           const reviewers = await begin(api, context);
           await getHarness().commit(async (tx) => {
             const doc = await tx.doc(ReviewDoc, api.conversationId);
             const previous = doc.byTask[api.taskId]?.state;
             if (previous === "approved" || previous === "rejected") return;
-            doc.byTask[api.taskId] = { state: reviewers.length || previous === "held" ? "held" : "stream" };
+            doc.byTask[api.taskId] = { state: reviewers.length || previous === "held" ? "held" : "stream", hiddenTools };
           }, context);
           const nudge = reviewers.map(({ reviewer }) => reviewer.nudge).filter(Boolean).join("\n\n");
           if (!nudge) return;
@@ -98,7 +101,7 @@ export function createReplyReview(
           // Streaming and history both require an affirmative stored decision.
           // When reviewer initialization fails, the generation remains private.
           await getHarness().commit(async (tx) => {
-            (await tx.doc(ReviewDoc, api.conversationId)).byTask[api.taskId] = { state: "held" };
+            (await tx.doc(ReviewDoc, api.conversationId)).byTask[api.taskId] = { state: "held", hiddenTools };
           }, context);
           end(api.conversationId);
         }
@@ -117,7 +120,7 @@ export function createReplyReview(
           if (prior?.state === "stream") {
             if (prior.answeredAt === undefined) {
               await getHarness().commit(async (tx) => {
-                (await tx.doc(ReviewDoc, api.conversationId)).byTask[api.taskId] = { state: "stream", answeredAt: api.now() };
+                (await tx.doc(ReviewDoc, api.conversationId)).byTask[api.taskId] = { ...prior, answeredAt: api.now() };
               }, context);
             }
             return;
@@ -143,9 +146,10 @@ export function createReplyReview(
 
           await getHarness().commit(async (tx) => {
             const stored = await tx.doc(ReviewDoc, api.conversationId);
+            const hiddenTools = stored.byTask[api.taskId]?.hiddenTools;
             stored.byTask[api.taskId] = approved
-              ? { state: "approved", digest, answeredAt: api.now() }
-              : { state: "rejected", digest, ...(hint ? { hint } : {}) };
+              ? { state: "approved", digest, answeredAt: api.now(), ...(hiddenTools && { hiddenTools }) }
+              : { state: "rejected", digest, ...(hiddenTools && { hiddenTools }), ...(hint ? { hint } : {}) };
             if (hint !== undefined) stored.rewriteFor = first;
           }, context);
 

@@ -15,7 +15,7 @@ export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
 export const InputEntry = defineEntry<WebInput>("yoplai.web-input");
 export const FailureNoteEntry = defineEntry<{ submissionId: SubmissionId; kind: RunFailureKind; accessError?: string }>("yoplai.failure-note");
 
-type ReviewDecision = { state: "stream" | "held" | "approved" | "rejected"; hint?: string; digest?: string; answeredAt?: number };
+export type ReviewDecision = { state: "stream" | "held" | "approved" | "rejected"; hint?: string; digest?: string; answeredAt?: number; hiddenTools?: string[] };
 
 export const ReviewDoc = defineDoc<{
   byTask: Record<string, ReviewDecision>;

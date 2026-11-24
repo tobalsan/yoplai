@@ -1,10 +1,19 @@
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai-durable";
 import type { TranscriptContext } from "@earendil-works/pi-ai-durable";
 import { createModels } from "@earendil-works/pi-ai-durable/models";
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai-durable/providers/faux";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai-durable/providers/faux";
 import { withDurableRequestPolicy, type DurableModelsFactory } from "./models.js";
 
-type ScriptedAnswer = string | ((modelId: string) => string | Promise<string>) | { errorMessage: string; partial?: string } | { tool: string; args?: Parameters<typeof fauxToolCall>[1]; id?: string };
+type ScriptedTool = { tool: string; args?: Parameters<typeof fauxToolCall>[1]; id?: string };
+type ScriptedBlock = string | ScriptedTool | { thinking: string; redacted?: boolean; signature?: string };
+type ScriptedAnswer = string | ((modelId: string) => string | Promise<string>)
+  | { errorMessage: string; partial?: string } | ScriptedTool | ScriptedBlock[];
+
+function scriptedBlock(block: ScriptedBlock) {
+  if (typeof block === "string") return fauxText(block);
+  if ("tool" in block) return fauxToolCall(block.tool, block.args ?? {}, { id: block.id });
+  return { ...fauxThinking(block.thinking), redacted: block.redacted, thinkingSignature: block.signature };
+}
 
 /** Test adapter. Keep the provider and all Pi types on this side of the host. */
 export function createDurableFaux(tokensPerSecond?: number, fixture?: { provider: string; model: string; observeKey: (key?: string) => void }) {
@@ -25,8 +34,12 @@ export function createDurableFaux(tokensPerSecond?: number, fixture?: { provider
       async (request, options, _state, model) => {
         fixture?.observeKey(options?.apiKey);
         requests.push(request);
+        if (Array.isArray(answer)) {
+          const blocks = answer.map(scriptedBlock);
+          return fauxAssistantMessage(blocks, { stopReason: blocks.some(({ type }) => type === "toolCall") ? "toolUse" : "stop" });
+        }
         if (typeof answer === "object" && "tool" in answer) {
-          return fauxAssistantMessage(fauxToolCall(answer.tool, answer.args ?? {}, { id: answer.id }), { stopReason: "toolUse" });
+          return fauxAssistantMessage(scriptedBlock(answer), { stopReason: "toolUse" });
         }
         if (typeof answer === "object") {
           return fauxAssistantMessage(answer.partial ?? [], { stopReason: "error", errorMessage: answer.errorMessage });

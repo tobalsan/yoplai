@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Context } from "@earendil-works/chord/context";
-import { AgentDoc, defineExtension, hook, ToolTask, type ConversationId, type HookApi, type Registry, type ToolNamespace } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, hook, ToolTask, type ConversationId, type HookApi, type Registry, type TaskId, type ToolNamespace } from "@earendil-works/pi-durable";
 import { renderToolSignature } from "@earendil-works/pi-codemode";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
-import { DURABLE_MAIN_SESSION_ID, type ExtensionAgentTool } from "@yoplai/shared";
+import { DURABLE_MAIN_SESSION_ID, type ExtensionAgentTool, type McpAppViewReference } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { executeExtensionAgentTool, getExtensionAgentTools } from "../extensions/tools.js";
@@ -97,6 +97,9 @@ export function createDurableTools(
     return Array.isArray(selected) ? selected.flatMap((name) => registered.get(name) ?? []) : [];
   }
 
+  // Durable keeps nested results out of the transcript. Hold view references
+  // for the top-level call until its result can carry them into the transcript.
+  const nestedViews = new Map<TaskId, Map<string, { id: string; name: string; view: McpAppViewReference }>>();
   const gate = defineExtension({
     name: "yoplai-tool-permission",
     hooks: [hook(ToolTask, {
@@ -113,6 +116,7 @@ export function createDurableTools(
             return { block: "Tool is no longer available." };
           }
         }
+        if (call.name === "codemode" && !call.parent && !nestedViews.has(api.taskId)) nestedViews.set(api.taskId, new Map());
       },
       async afterTool(call, result, api, context) {
         const unloaded = result.diagnostics?.some(({ code }) => code === "tool_unavailable");
@@ -122,7 +126,20 @@ export function createDurableTools(
         const userId = owner === "local" ? undefined : owner;
         const view = descriptor && !result.isError && owner !== undefined && getMcpAppView({ agentId, sessionId: DURABLE_MAIN_SESSION_ID, userId }, call.id);
         const hidden = descriptor?.extensionId === "taskLifecycle";
-        const projected = descriptor && !call.parent ? { ...result, details: { kind: "yoplai.tool", result: result.details ?? null, ...(hidden ? { hidden } : {}), ...(view ? { view } : {}) } } : result;
+        if (call.parent && !hidden && view) {
+          nestedViews.get(call.parent.taskId)?.set(call.id, { id: call.id, name: call.name, view });
+        }
+        const nested = nestedViews.get(api.taskId);
+        nestedViews.delete(api.taskId);
+        const projected = !call.parent && (descriptor || nested?.size) ? {
+          ...result,
+          details: {
+            kind: "yoplai.tool", result: result.details ?? null,
+            ...(hidden ? { hidden } : {}),
+            ...(view ? { view } : {}),
+            ...(nested?.size ? { nested: [...nested.values()] } : {}),
+          },
+        } : result;
         if (!unloaded && call.name !== "codemode") return projected === result ? undefined : projected;
         const catalog = createToolDeferralCatalog(descriptors.filter(({ deferred }) => deferred));
         const message = {
@@ -134,6 +151,7 @@ export function createDurableTools(
           if (tool) return renderToolSignature({ name, inputSchema: tool.parameters, outputSchema: tool.outputSchema });
         });
         if (hinted) return { ...projected, output: hinted.content, diagnostics: result.diagnostics?.filter(({ code }) => code !== "tool_unavailable") };
+        return projected === result ? undefined : projected;
       },
     })],
   });

@@ -1,3 +1,5 @@
+import type { EntryDraft } from "@earendil-works/pi-durable";
+import type { DurableHostOptions } from "../durable/host.js";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
@@ -13,8 +15,8 @@ type TestUser = "local" | "alice" | "bob";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "durable: true", reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false,
-}: { multiUser?: boolean; extraYaml?: string; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean } = {}) {
+  multiUser = false, extraYaml = "durable: true", reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
+}: { multiUser?: boolean; extraYaml?: string; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -91,12 +93,13 @@ export async function startDurableTestGateway({
   async function open() {
     server = startServer(0, "127.0.0.1", runtime, {
       createModels: faux.createModels,
+      fixture,
       afterMainCommit() {
         if (!fault) return;
         fault = false;
         throw new Error("Fixture stopped between Main creation and admission.");
       },
-    });
+    }, { feedSendComplete, recheckMs });
     if (!server.listening) await once(server, "listening");
     base = "http://127.0.0.1:" + (server.address() as AddressInfo).port;
   }
@@ -118,7 +121,11 @@ export async function startDurableTestGateway({
   async function socket(user: TestUser = "local") {
     const ws = new WebSocket(base.replace("http:", "ws:") + "/ws", { headers: { Cookie: cookie(user) } });
     sockets.add(ws);
-    ws.once("close", () => sockets.delete(ws));
+    let closedCode: number | undefined;
+    ws.once("close", (code) => {
+      closedCode = code;
+      sockets.delete(ws);
+    });
     const events: WsServerMessage[] = [];
     ws.on("message", (raw) => events.push(JSON.parse(raw.toString()) as WsServerMessage));
     await once(ws, "open");
@@ -131,6 +138,7 @@ export async function startDurableTestGateway({
       },
       send: (message: WsClientMessage) => ws.send(JSON.stringify(message)),
       close: () => ws.terminate(),
+      closedCode: () => closedCode,
     };
   }
 
@@ -227,6 +235,10 @@ export async function startDurableTestGateway({
       }
       await startAuth?.();
       await open();
+    },
+    async writePassiveEntry(user: TestUser, entry: EntryDraft) {
+      const agent = loadConfig().agents.find((agent) => agent.id === "pilot")!;
+      await (await server.durableWeb.host(agent)).writePassiveEntry(users.get(user)!.id, entry);
     },
     async mainConversationId(user: TestUser) {
       const agent = loadConfig().agents.find((agent) => agent.id === "pilot")!;

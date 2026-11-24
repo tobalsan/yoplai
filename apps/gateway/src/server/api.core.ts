@@ -1605,6 +1605,46 @@ api.post("/agents/:id/compact", async (c) => {
   }
 });
 
+api.get("/agents/:id/feed", async (c) => {
+  const agent = getAgent(c.req.param("id"));
+  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
+  const limit = Number(c.req.query("limit") ?? 50);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+    return c.json({ error: "Feed limit must be between 1 and 200" }, 400);
+  }
+  const selectors = (["before", "after", "around"] as const).flatMap((direction) =>
+    (c.req.queries(direction) ?? []).map((id) => ({ direction, id })));
+  if (selectors.length > 1) return c.json({ error: "Use a single feed selector" }, 400);
+  const principal = (await getRequestUserId(c)) ?? "local";
+  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+  const result = await host.feedWindow(principal, principal, limit, selectors[0]);
+  if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
+  return result.window ? c.json(result.window) : c.json({ error: "Message not found" }, 404);
+});
+
+api.get("/agents/:id/feed/search", async (c) => {
+  const agent = getAgent(c.req.param("id"));
+  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
+  const limit = Number(c.req.query("limit") ?? 20);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+    return c.json({ error: "Search limit must be between 1 and 50" }, 400);
+  }
+  const principal = (await getRequestUserId(c)) ?? "local";
+  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+  const result = await host.feedSearch(principal, principal, c.req.query("q") ?? "", limit);
+  return result.forbidden ? c.json({ error: "Agent access denied" }, 403) : c.json({ hits: result.hits });
+});
+
+api.get("/agents/:id/feed/messages/:messageId", async (c) => {
+  const agent = getAgent(c.req.param("id"));
+  if (!agent?.durable || !isAgentActive(agent.id)) return c.json({ error: "Agent not found" }, 404);
+  const principal = (await getRequestUserId(c)) ?? "local";
+  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+  const result = await host.feedDetail(principal, principal, c.req.param("messageId"));
+  if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
+  return result.detail ? c.json(result.detail) : c.json({ error: "Message not found" }, 404);
+});
+
 // GET /api/agents/:id/history - get session history
 // Query params: sessionId OR sessionKey (default "main"), view ("simple" | "full", default "simple")
 api.get("/agents/:id/history", async (c) => {

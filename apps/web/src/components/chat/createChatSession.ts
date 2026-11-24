@@ -26,6 +26,7 @@ import {
   subscribeToRealtime,
   postAbort,
   postCompact,
+  type ActiveTurn,
   type DoneMeta,
   type StreamCallbacks,
 } from "../../api";
@@ -194,6 +195,10 @@ export function createChatSession(input: ChatSessionInput) {
   let loadedHistory: FullHistoryMessage[] = [];
   let loadedHistorySession: string | null = null;
   let loadedHistoryOffset = 0;
+  let latestDurableTurn: ActiveTurn | null = null;
+  let directDurableSnapshotSeen = false;
+  let refreshingDurableProgress = false;
+  let pendingDurableProgress = false;
 
 
   let cleanup: (() => void) | null = null;
@@ -340,10 +345,13 @@ export function createChatSession(input: ChatSessionInput) {
       loadedHistoryOffset = offset;
       setHistoryCursor(res.nextCursor);
     }
+    const turn = res.activeTurn ?? null;
+    const displayHistory = durableMain() && turn
+      ? historyWithLiveTools(loadedHistory, turn) : loadedHistory;
     setHistoryError("");
     setActiveContextUsage(res.activeContextUsage);
     if (mode === "full") {
-      const baseMessages = [...loadedHistory];
+      const baseMessages = [...displayHistory];
       if (res.activeTurn?.userText) {
         baseMessages.push({
           role: "user",
@@ -369,10 +377,10 @@ export function createChatSession(input: ChatSessionInput) {
       setContextFullMessages(res.messages);
       if (res.thinkingLevel) setThinkingLevel(res.thinkingLevel);
       if (res.sessionId) setResolvedSessionId(res.sessionId);
-      applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
+      applyActiveTurn(durableMain() ? turn !== null : res.isStreaming ?? false, turn);
     } else {
       setContextFullMessages(res.messages);
-      const base = fullMessagesToSimpleView(loadedHistory);
+      const base = fullMessagesToSimpleView(displayHistory);
       if (res.activeTurn?.userText) {
         base.push({
           id: crypto.randomUUID(),
@@ -398,7 +406,7 @@ export function createChatSession(input: ChatSessionInput) {
       setSimpleMessages(merged);
       if (res.thinkingLevel) setThinkingLevel(res.thinkingLevel);
       if (res.sessionId) setResolvedSessionId(res.sessionId);
-      applyActiveTurn(res.isStreaming ?? false, res.activeTurn ?? null);
+      applyActiveTurn(durableMain() ? turn !== null : res.isStreaming ?? false, turn);
     }
     setLoading(false);
     setHistoryLoaded({ scope: requestedSession, sessionId, empty: res.messages.length === 0, request, refresh });
@@ -496,6 +504,66 @@ export function createChatSession(input: ChatSessionInput) {
     })();
     compactRequests.set(key, request);
     return request;
+  };
+
+  const storedToolResults = (messages: readonly FullHistoryMessage[]) => new Set(
+    messages.flatMap((message) => message.role === "toolResult" ? [message.toolCallId] : [])
+  );
+
+  // A pending invocation is already in Durable history as a call block.
+  // Keep it in the live bubble until history includes its result.
+  const historyWithLiveTools = (messages: FullHistoryMessage[], turn: ActiveTurn) => {
+    const finished = storedToolResults(messages);
+    const pending = new Set(turn.toolCalls.filter(({ id }) => !finished.has(id)).map(({ id }) => id));
+    if (!pending.size) return messages;
+    return messages.flatMap<FullHistoryMessage>((message) => {
+      if (message.role !== "assistant") return [message];
+      const content = message.content.filter((block) => block.type !== "toolCall" || !pending.has(block.id));
+      return content.length === message.content.length ? [message] : content.length ? [{ ...message, content }] : [];
+    });
+  };
+
+  const showDurableTurn = (turn: ActiveTurn) => {
+    latestDurableTurn = turn;
+    if (ownsDisplayedDirectStream()) directDurableSnapshotSeen = true;
+    const finished = storedToolResults(loadedHistory);
+    batch(() => applyActiveTurnSnapshot({
+      ...turn,
+      toolCalls: turn.toolCalls.filter(({ id }) => !finished.has(id)),
+      toolResults: turn.toolResults?.filter(({ id }) => !finished.has(id)),
+    }));
+  };
+
+  const durableToolsKey = (turn: ActiveTurn | null) => JSON.stringify(
+    turn?.toolCalls.filter(({ parentToolCallId }) => parentToolCallId === undefined)
+      .map(({ id, status }) => [id, status === "running"]) ?? []
+  );
+
+  // HTTP and WebSocket are separate transports. When a socket partial
+  // overlaps history, confirm against a fresh, coherent history/live read.
+  // A repeated phrase can belong to a new round and still be in flight.
+  const durableTurnMayBeStored = (turn: ActiveTurn) => {
+    if (!turn.text && !turn.thinking) return false;
+    return loadedHistory.some((message) => {
+      if (message.role !== "assistant" || message.timestamp < turn.userTimestamp) return false;
+      const text = message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
+      const thinking = message.content.flatMap((block) => block.type === "thinking" ? [block.thinking] : []).join("");
+      return text.startsWith(turn.text) && thinking.startsWith(turn.thinking);
+    });
+  };
+
+  const refreshDurableProgress = (toolsChanged = false) => {
+    if (refreshingDurableProgress) {
+      pendingDurableProgress ||= toolsChanged;
+      return;
+    }
+    refreshingDurableProgress = true;
+    void loadHistory(viewMode(), true).finally(() => {
+      refreshingDurableProgress = false;
+      const pending = pendingDurableProgress;
+      pendingDurableProgress = false;
+      if (pending && durableMain()) refreshDurableProgress();
+    });
   };
 
   const applyActiveTurnSnapshot = (turn: import("../../api").ActiveTurn) => {
@@ -597,17 +665,20 @@ export function createChatSession(input: ChatSessionInput) {
 
   const applyActiveTurn = (
     streaming: boolean,
-    turn: import("../../api").ActiveTurn | null
+    turn: ActiveTurn | null
   ) => {
     if (!streaming) {
       // Backend says not streaming: clear stale isStreaming if we don't own a
       // direct stream ourselves (cleanup null means no active streamMessage).
-      if (!ownsDisplayedDirectStream() && isStreaming()) resetStreamingState();
+      if ((durableMain() && latestDurableTurn) || (!ownsDisplayedDirectStream() && isStreaming())) resetStreamingState();
       return;
     }
     if (!turn) return;
-    if (ownsDisplayedDirectStream()) return;
-    applyActiveTurnSnapshot(turn);
+    if (durableMain()) {
+      showDurableTurn(turn);
+    } else if (!ownsDisplayedDirectStream()) {
+      applyActiveTurnSnapshot(turn);
+    }
   };
 
   const appendStreamingTextBlock = (chunk: string, timestamp = Date.now()) => {
@@ -988,8 +1059,22 @@ export function createChatSession(input: ChatSessionInput) {
           if (!isCurrentSubscription()) return;
           // The gateway sends this event for the session of the subscribed key.
           if (sessionId) adoptSessionId(sessionId);
-          if (ownsDisplayedDirectStream()) return;
-          applyActiveTurnSnapshot(turn);
+          if (durableMain()) {
+            if (durableTurnMayBeStored(turn)) {
+              refreshDurableProgress();
+              return;
+            }
+            const toolsChanged = durableToolsKey(latestDurableTurn) !== durableToolsKey(turn);
+            const finished = storedToolResults(loadedHistory);
+            if (turn.toolCalls.length && turn.toolCalls.every(({ id }) => finished.has(id))) {
+              if (toolsChanged) refreshDurableProgress(true);
+              return;
+            }
+            showDurableTurn(turn);
+            if (toolsChanged) refreshDurableProgress(true);
+          } else if (!ownsDisplayedDirectStream()) {
+            applyActiveTurnSnapshot(turn);
+          }
         },
         onHistoryUpdated: () => {
           if (!isCurrentSubscription()) return;
@@ -1075,6 +1160,7 @@ export function createChatSession(input: ChatSessionInput) {
 
   // Helper to reset streaming state (used by onDone and onError)
   const resetStreamingState = () => {
+    latestDurableTurn = null;
     setStreamingThinking("");
     setStreamingThinkingAt(null);
     setStreamingToolCalls([]);
@@ -1636,6 +1722,7 @@ export function createChatSession(input: ChatSessionInput) {
     let streamSession = currentSession();
     let resetFromSession: string | null = null;
     directStreamSession = streamSession;
+    directDurableSnapshotSeen = false;
     const isCurrentDirectStream = () =>
       directStreamSession === streamSession &&
       (currentSession() === streamSession ||
@@ -1646,7 +1733,7 @@ export function createChatSession(input: ChatSessionInput) {
       messageText,
       sessionKey(),
       (chunk) => {
-        if (!isCurrentDirectStream()) return;
+        if (!isCurrentDirectStream() || (durableMain() && directDurableSnapshotSeen)) return;
         setStreamingFinished(false);
         appendStreamingTextBlock(chunk);
         setStreamingText((prev) => prev + chunk);
@@ -1688,9 +1775,20 @@ export function createChatSession(input: ChatSessionInput) {
           return;
         }
 
-        const refreshDurableHistory = durableMain();
+        if (durableMain()) {
+          batch(() => {
+            if (pendingThinkLevel()) {
+              setThinkingLevel(pendingThinkLevel()!);
+              setPendingThinkLevel(null);
+            }
+            resetStreamingState();
+            cleanup = null;
+          });
+          void loadHistory(viewMode(), true);
+          return;
+        }
         if (viewMode() !== "full") {
-          if (!refreshDurableHistory && !resolvedSessionId()) void refreshContextUsage();
+          if (!resolvedSessionId()) void refreshContextUsage();
           batch(() => {
             appendStreamingAssistantMessage();
             skipNextHistoryRefresh = true;
@@ -1701,18 +1799,15 @@ export function createChatSession(input: ChatSessionInput) {
             resetStreamingState();
             cleanup = null;
           });
-          if (refreshDurableHistory) void loadHistory(viewMode(), true);
           return;
         }
 
         batch(() => {
-          // Durable tool results and silent (NO_REPLY) turns come from settled history.
           const streamedText =
             !!streamingText() ||
             streamingBlocks().some((block) => block.type === "text");
           appendStreamingAssistantMessage();
-          if (refreshDurableHistory) void loadHistory("full", true);
-          else if (!streamedText) void loadHistory("full");
+          if (!streamedText) void loadHistory("full");
           else if (!resolvedSessionId()) void refreshContextUsage();
           skipNextHistoryRefresh = true;
           // Update thinkingLevel if pending was used

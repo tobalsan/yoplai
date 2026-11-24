@@ -2611,6 +2611,8 @@ export type WsUnsubscribeStatusMessage = {
 };
 
 export type WsClientMessage =
+  | { type: "subscribeFeed"; agentId: string; limit?: number }
+  | { type: "unsubscribeFeed" }
   | WsSendMessage
   | WsSubscribeMessage
   | WsUnsubscribeMessage
@@ -2695,7 +2697,44 @@ export type WsActiveTurnSnapshot = {
   }>;
 };
 
+type FeedMessage = { id: string; text: string; timestamp: number };
+
+export type FeedItem = FeedMessage & (
+  | { role: "user"; sender: string }
+  | { role: "assistant"; toolCallCount: number }
+  | { role: "failure"; kind: RunFailureKind }
+);
+
+export type FeedToolCall = {
+  id: string;
+  name: string;
+  arguments?: unknown;
+  parentToolCallId?: string;
+  status: "running" | "done" | "error";
+  isError: boolean;
+  view?: McpAppViewReference;
+  result?: { text: string; diff?: string; view?: McpAppViewReference };
+};
+
+export type FeedDetail = FeedMessage & { reasoning: string[]; toolCalls: FeedToolCall[] };
+export type FeedHit = Pick<FeedMessage, "id" | "timestamp"> & { role: "user" | "assistant"; snippet: string };
+export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls">;
+
+export type FeedWindow = {
+  items: FeedItem[];
+  hasBefore: boolean;
+  hasAfter: boolean;
+  live: FeedLive | null;
+};
+
+type FeedFrame = Pick<FeedWindow, "hasBefore" | "live"> & { agentId: string; seq: number };
+export type WsFeedMessage =
+  | (FeedFrame & { type: "feed_snapshot"; items: FeedItem[] })
+  | (FeedFrame & { type: "feed_delta"; upsert: FeedItem[]; dropBefore?: string })
+  | { type: "feed_end"; agentId: string; reason: "forbidden" | "unavailable" };
+
 export type WsServerMessage =
+  | WsFeedMessage
   | StreamEvent
   | WsHistoryUpdatedEvent
   | WsSessionResetEvent
@@ -2740,6 +2779,7 @@ export type ToolCallBlock = {
   parentToolCallId?: string;
   name: string;
   arguments: unknown;
+  view?: McpAppView;
 };
 
 export type FileBlock = {
