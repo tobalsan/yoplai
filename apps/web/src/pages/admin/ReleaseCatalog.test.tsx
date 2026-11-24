@@ -83,7 +83,8 @@ it("filters the catalog and installs, updates, and removes an extension", async 
   fireEvent.click(getByRole(document.body, "button", { name: "Refresh" }));
   await vi.waitFor(() => expect(card().getByRole("button", { name: "Update" })).toBeTruthy());
   fireEvent.click(card().getByRole("button", { name: "Update" }));
-  await vi.waitFor(() => expect(card().getByText("Installed")).toBeTruthy());
+  await vi.waitFor(() => expect(card().getByText("Updated")).toBeTruthy());
+  expect(card().queryByText("Installed")).toBeNull();
   fireEvent.click(card().getByRole("button", { name: "Remove" }));
   const dialog = within(getByRole(document.body, "alertdialog", { name: "Remove Sample?" }));
   expect(dialog.getByText("Used by 2 agents.")).toBeTruthy();

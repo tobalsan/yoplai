@@ -35,6 +35,9 @@ export function ReleaseCatalog(props: {
   const [pending, setPending] = createSignal<Record<string, boolean>>({});
   const [errors, setErrors] = createSignal<Record<string, string | undefined>>({});
   const [unknownRows, setUnknownRows] = createSignal<Record<string, boolean>>({});
+  /** Rows updated in this page visit; they show "Updated" instead of "Installed" until a page reload. */
+  const [updated, setUpdated] = createSignal<Record<string, boolean>>({});
+  const justUpdated = (entry: ReleaseCatalogRow) => updated()[entry.id] && entry.state === "installed";
   let visit = 0;
   createComputed(() => {
     void [props.gateway, props.ready];
@@ -45,6 +48,7 @@ export function ReleaseCatalog(props: {
     setPending({});
     setErrors({});
     setUnknownRows({});
+    setUpdated({});
   });
   onCleanup(() => { visit++; });
   const categories = createMemo(() => Array.from(new Set(data()?.entries.flatMap((entry) => entry.category ? [entry.category] : []))).sort());
@@ -58,6 +62,7 @@ export function ReleaseCatalog(props: {
     setConfirm(undefined);
     setPending((all) => ({ ...all, [item.id]: true }));
     setErrors((all) => ({ ...all, [item.id]: undefined }));
+    setUpdated((all) => ({ ...all, [item.id]: false }));
     try {
       if (unknownRows()[item.id]) {
         const fresh = await fetchReleaseCatalog(gateway);
@@ -72,6 +77,7 @@ export function ReleaseCatalog(props: {
       const entry = await changeReleaseCatalog(gateway, item.id, remove);
       window.dispatchEvent(new CustomEvent(releaseCatalogChanged, { detail: gateway }));
       if (mine !== visit) return;
+      if (!remove && item.state === "update") setUpdated((all) => ({ ...all, [item.id]: true }));
       const previous = data();
       if (previous && entry) {
         const entries = previous.entries.map((old) => old.id === entry.id ? {
@@ -127,8 +133,8 @@ export function ReleaseCatalog(props: {
                   <span class="top-sub">{[entry.category, entry.version ?? entry.installedVersion].filter(Boolean).join(" · ")}</span>
                 </div>
                 <div class="release-catalog-actions">
-                  <span class="release-catalog-badge" data-state={unknownRows()[entry.id] ? "unknown" : entry.state}>
-                    {unknownRows()[entry.id] ? "Outcome unknown" : badge(entry)}
+                  <span class="release-catalog-badge" data-state={unknownRows()[entry.id] ? "unknown" : justUpdated(entry) ? "updated" : entry.state}>
+                    {unknownRows()[entry.id] ? "Outcome unknown" : justUpdated(entry) ? "Updated" : badge(entry)}
                   </span>
                   <Show when={props.canWrite && !unknownRows()[entry.id]}>
                     <Show when={entry.state === "available" || entry.state === "update"}>
@@ -210,7 +216,7 @@ export function ReleaseCatalog(props: {
       .release-catalog-actions { align-items: center; }
       .release-catalog .top-sub { font-variant-numeric: tabular-nums; }
       .release-catalog-badge { background: var(--bg-raised); color: var(--text-secondary); }
-      .release-catalog-badge[data-state="installed"] {
+      .release-catalog-badge[data-state="installed"], .release-catalog-badge[data-state="updated"] {
         background: color-mix(in srgb, var(--tone-user) 15%, var(--bg-raised));
         color: var(--text-primary);
       }
