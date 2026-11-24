@@ -284,6 +284,26 @@ describe("configuration transport", () => {
 });
 
 describe("configuration path boundaries", () => {
+  it.each(["view", "data", "rpc", "open", "log"])("allows a nested MCP app call ID for %s", (operation) => {
+    expect(isSafeRemotePath(`/api/agents/pom/sessions/chat-one/mcp-apps/script-1%2F1/${operation}`)).toBe(true);
+  });
+
+  it.each([
+    "/api/agents/pom%2Fother/sessions/chat-one/mcp-apps/script-1/view",
+    "/api/agents/pom/sessions/chat%2Fone/mcp-apps/script-1/view",
+    "/api/agents/pom/sessions/chat-one/mcp-apps/script-1/view%2Fextra",
+    "/api/agents/pom/sessions/chat-one/mcp-apps/script-1%2F1/view/extra",
+    "/api/agents/pom/sessions/chat-one/files/script-1%2F1/view",
+  ])("rejects an encoded slash outside an MCP app call ID: %s", (path) => {
+    expect(isSafeRemotePath(path)).toBe(false);
+  });
+
+  it.each([".", "..", "script%2F%2e%2e", "script%5C1", "script%252F1", "script%3F1", "script%231", "script%001"])(
+    "rejects an unsafe MCP app call ID: %s", (id) => {
+      expect(isSafeRemotePath(`/api/agents/pom/sessions/chat-one/mcp-apps/${id}/view`)).toBe(false);
+    }
+  );
+
   it.each(["//evil.test/api/teams", "/api/../teams", "/api/%2e%2e/teams", "/api/%252e%252e/teams", "/api/agents/a%2Fb/extensions", "/api/agents/a%5Cb/extensions", "/api/agents/a%252fb/extensions", "/api/agents/a%00b/extensions", "/api/agents/%ZZ/extensions", "/api/teams#x", "/api\\teams"])("refuses %s before fetch", async (path) => {
     expect(isSafeRemotePath(path)).toBe(false);
     await expect(fetchRemote(fixture.gateways[0], path)).rejects.toThrow();
