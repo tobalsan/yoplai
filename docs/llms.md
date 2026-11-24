@@ -799,6 +799,10 @@ The `data` route returns the saved `server` and `tool` with `args` and `result`.
 For a linked gateway, the local gateway issues a view ticket for a built-in
 `yoplai` file result using its own viewer bundle and trusted-origin check.
 File reads stay on the linked gateway through relayed `rpc`.
+For `open`, the local gateway issues a file ticket from the captured `data`.
+Its apps listener streams the authenticated media download from the linked
+gateway under the local file content policy. Deleting the session through the
+relay revokes its local tickets.
 Update the linked gateway first so its `data` response identifies the server.
 After editing `mcp-apps/file-viewer/client.ts`, regenerate its committed HTML with
 `node apps/gateway/src/mcp-apps/file-viewer/build-file-viewer.mjs` from the repo root.

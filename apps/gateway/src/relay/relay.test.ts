@@ -311,6 +311,109 @@ describe("desktop relay: chat relay", () => {
     structuredContent: { uri: "yoplai-file://example", filename: "report.html", mimeType: "text/html", size: 24 },
   };
 
+  const sentFileId = "fb76b434-7ed5-4c89-afdf-706d690f23aa";
+  const sentFileBytes = "<h1>Harbor report</h1>";
+  const sentFileRecord = {
+    server: "yoplai", tool: "send_file", args: {},
+    result: { structuredContent: {
+      uri: `yoplai-file://${sentFileId}`, filename: "harbor.html", mimeType: "text/html", size: 22,
+    } },
+  };
+
+  it.each(["call-one", "script-1%2F1"])("opens linked sent file %s on the local apps listener", async (callId) => {
+    const remotePath = `/api/agents/harbor/sessions/chat-one/mcp-apps/${callId}`;
+    const remoteOpen: Array<{ origin: string | null; status: number; body: unknown }> = [];
+    await withFakeGateway("file", (req, res) => {
+      if (req.url === `/api/media/download/${sentFileId}` && req.headers.authorization === "Bearer fixture-link") {
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(sentFileBytes);
+      } else if (req.url === remotePath + "/data") {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(sentFileRecord));
+      } else if (req.url === remotePath + "/open") {
+        const trusted = req.headers.origin === "https://chat.remote.example";
+        const body = trusted ? { url: "https://apps.remote.example/open/example" } : { error: "untrusted_origin" };
+        res.statusCode = trusted ? 200 : 403;
+        remoteOpen.push({ origin: req.headers.origin ?? null, status: res.statusCode, body });
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(body));
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    }, async () => {
+      const response = await fetch(localBase + `/api/agents/harbor%40file/sessions/chat-one/mcp-apps/${callId}/open`, {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      const issued = await response.json();
+      expect(response.status, `Remote /open: ${JSON.stringify(remoteOpen)}`).toBe(200);
+      const url = new URL(issued.url);
+      expect(url.origin).toBe(`http://127.0.0.1:${localAppsPort}`);
+      expect(url.pathname).toMatch(/^\/open\/[0-9a-f]{64}$/);
+      const opened = await fetch(url);
+      expect(opened.status).toBe(200);
+      expect(opened.headers.get("content-type")).toBe("text/html");
+      expect(opened.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
+      expect(await opened.text()).toBe(sentFileBytes);
+      expect(remoteOpen).toEqual([]);
+    }, "fixture-link");
+  });
+
+  it("rejects untrusted origins locally for opening a linked file", async () => {
+    await withFakeGateway("file", (req, res) => {
+      if (req.url?.endsWith("/data")) {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(sentFileRecord));
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
+    }, async (fake) => {
+      for (const origin of ["https://untrusted.example", "http://localhost:9876"]) {
+        const response = await fetch(localBase + "/api/agents/harbor%40file/sessions/chat-one/mcp-apps/call-one/open", {
+          method: "POST", headers: { Origin: origin },
+        });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "untrusted_origin" });
+      }
+      expect(fake.requests.map(({ url }) => url)).toEqual(["/api/agents/harbor/sessions/chat-one/mcp-apps/call-one/data"]);
+    });
+  });
+
+  it.each([
+    ["a non-file record", 200, { server: "boards", tool: "create_board", result: {} }],
+    ["missing data", 404, { error: "record_not_found" }],
+  ])("forwards the original open when the linked gateway returns %s", async (_name, dataStatus, data) => {
+    const remotePath = "/api/agents/harbor/sessions/chat-one/mcp-apps/call-one";
+    await withFakeGateway("file", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.url === remotePath + "/data") {
+        res.statusCode = dataStatus;
+        res.end(JSON.stringify(data));
+      } else {
+        res.statusCode = 404;
+        res.end('{"error":"cannot_open"}');
+      }
+    }, async () => {
+      const response = await fetch(localBase + "/api/agents/harbor%40file/sessions/chat-one/mcp-apps/call-one/open", {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "cannot_open" });
+    });
+  });
+
+  it.each(["view", "open"])("refuses a malformed linked %s session path without contacting the remote", async (operation) => {
+    await withFakeGateway("file", undefined, async (fake) => {
+      const response = await fetch(localBase + `/api/agents/harbor%40file/sessions/invalid%ZZ/mcp-apps/call-one/${operation}`, {
+        method: "POST", headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: "gateway_offline", gateway: "file" });
+      expect(fake.requests).toEqual([]);
+    });
+  });
+
   it("issues a local sandbox ticket for a linked gateway's sent file", async () => {
     await withFakeGateway("file", (req, res) => {
       res.setHeader("content-type", "application/json");
@@ -423,7 +526,7 @@ describe("desktop relay: chat relay", () => {
     });
   });
 
-  it("falls back to the remote view when stored data stops streaming", async () => {
+  it.each(["view", "open"])("falls back to the remote %s when stored data stops streaming", async (operation) => {
     await withFakeGateway("file", (req, res) => {
       res.setHeader("content-type", "application/json");
       if (req.url === fileDataPath) res.write('{"server":');
@@ -432,7 +535,7 @@ describe("desktop relay: chat relay", () => {
         res.end('{"error":"untrusted_origin"}');
       }
     }, async (fake) => {
-      const pending = fetch(localBase + fileViewPath, {
+      const pending = fetch(localBase + fileViewPath.replace(/view$/, operation), {
         method: "POST", headers: { Origin: "http://localhost:3000" }, signal: AbortSignal.timeout(6000),
       });
       await waitFor(() => fake.requests.length === 1);
