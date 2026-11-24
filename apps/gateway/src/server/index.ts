@@ -365,6 +365,7 @@ export function startServer(
   host?: string,
   runtime: ExtensionRuntime = getExtensionRuntime(),
   durableOptions?: DurableHostOptions,
+  brokerOptions?: { feedSendComplete?: () => Promise<void>; recheckMs?: number },
 ) {
   activeExtensionRuntime = runtime;
   const config = loadConfig();
@@ -480,10 +481,14 @@ export function startServer(
       const state = loadedMultiUserModule.getManagedKeyState(authContext.session.id.slice("apikey:".length), authContext.user.id);
       return state === "active" || state === "unmanaged";
     },
+    async recheckFeedSession(headers, auth) {
+      const module = loadedMultiUserModule ?? await loadMultiUserMiddlewareModule();
+      return module.recheckWebSocketSession(headers, auth);
+    },
     canAccessAgent,
     getExtensionRuntime: currentExtensionRuntime,
   };
-  new WsBroker({ durableWeb }).attach(server as import("http").Server, wsAuthAdapter);
+  new WsBroker({ ...brokerOptions, durableWeb }).attach(server as import("http").Server, wsAuthAdapter);
   server.once("close", startDeviceLinks());
 
   setupGracefulShutdown(server);

@@ -86,6 +86,13 @@ try {
 }
 ```
 
+For feed scenarios, script an array of text, thinking, and tool blocks as one
+Faux response. Thinking blocks can carry `redacted` and `signature` fixture
+fields. Use `fixture` for Durable tools with custom output and
+`writePassiveEntry` to seed entry kinds unavailable through HTTP. Pass a
+`feedSendComplete` promise to hold the broker's send completion and exercise
+snapshot recovery while the gateway processes more changes.
+
 Multi-user mode signs up two fixture accounts through production auth. Use
 `subscribe(user)` for a watching tab, a `reviewer` fixture to exercise draft
 holding, and `restart()` to reopen the same gateway home in process. For identity

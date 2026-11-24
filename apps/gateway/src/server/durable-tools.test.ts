@@ -661,3 +661,58 @@ it("keeps active bookkeeping hidden and projects completed file calls behind a r
     await gateway.close();
   }
 });
+
+it("projects only original text from a gateway MCP result envelope", async () => {
+  const gateway = await startDurableTestGateway({
+    extraYaml: "durable: true\ntoolDeferral: { enabled: false }",
+    fixtureExtensions: [fixtureExtension("orchard", {
+      name: "mcp__orchard__inventory", description: "Read orchard inventory", parameters: { type: "object" },
+      mcp: { server: "orchard", tool: "inventory" },
+      async execute() {
+        return {
+          content: [{ type: "text", text: "Three ripe pears." }, { type: "image", data: "aW52ZW50b3J5LWltYWdl", mimeType: "image/png" }],
+          diff: "+pears", structuredContent: { data: "structured-orchard-private" }, _meta: { score: "metadata-orchard-private" },
+        };
+      },
+    })],
+  });
+  try {
+    gateway.script({ tool: "mcp__orchard__inventory", id: "orchard-mcp" }, "Inventory is ready.");
+    expect((await gateway.send("local", "Check ripe fruit", { clientSendId: "orchard-mcp" })).status).toBe(200);
+    const tail = await (await gateway.request("local", "/api/agents/pilot/feed?limit=1")).json();
+    const detail = await (await gateway.request("local", "/api/agents/pilot/feed/messages/" + tail.items[0].id)).json();
+    expect(detail.toolCalls).toMatchObject([{ id: "orchard-mcp", result: { text: "Three ripe pears.", diff: "+pears" } }]);
+    const history = await gateway.history("local", "?view=full");
+    expect(history.messages).toContainEqual(expect.objectContaining({
+      toolCallId: "orchard-mcp", content: [{ type: "text", text: "Three ripe pears." }],
+    }));
+    expect(JSON.stringify([detail, history])).not.toMatch(/aW52ZW50b3J5LWltYWdl|orchard-private/);
+  } finally {
+    await gateway.close();
+  }
+});
+
+it("preserves Code Mode's explicit text while omitting its automatic failure diagnostics", async () => {
+  const gateway = await startDurableTestGateway({
+    extraYaml: "durable: true\ncodemode: true",
+    fixtureExtensions: [fixtureExtension("taskLifecycle", {
+      name: "internal_orchard_accounting", description: "Record an internal tool run", parameters: { type: "object" },
+      async execute() { return "Private accounting result."; },
+    })],
+  });
+  try {
+    gateway.script({ tool: "codemode", id: "orchard-failure", args: {
+      code: "text('Public orchard output.'); await tools['internal_orchard_' + 'accounting']({}); throw new Error('raw-orchard-' + 'script-failure');",
+    } }, "The orchard script finished.");
+    expect((await gateway.send("local", "Check the orchard", { clientSendId: "orchard-script-error" })).status).toBe(200);
+    const tail = await (await gateway.request("local", "/api/agents/pilot/feed?limit=1")).json();
+    const detail = await (await gateway.request("local", "/api/agents/pilot/feed/messages/" + tail.items[0].id)).json();
+    expect(detail.toolCalls).toMatchObject([{
+      id: "orchard-failure", isError: true, result: { text: expect.stringContaining("Public orchard output.") },
+    }]);
+    const history = await gateway.history("local", "?view=full");
+    expect(JSON.stringify([detail, history])).not.toMatch(/raw-orchard-script-failure|Tool calls made before the failure|internal_orchard_accounting/);
+  } finally {
+    await gateway.close();
+  }
+});

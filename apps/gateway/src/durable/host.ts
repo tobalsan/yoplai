@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
-  AgentDoc, AssistantEntry, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
-  type AgentChange, type Conversation, type ConversationId, type ConversationView, type Cursor, type EntryRecord, type Extension, type LiveState, type Submission, ToolResultEntry,
+  AgentDoc, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
+  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type Extension, type LiveState, type Submission, type TaskId,
 } from "@earendil-works/pi-durable";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -11,10 +11,10 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, McpAppViewReferenceSchema, runFailureMessage, type AgentConfig, type ContentBlock, type FullHistoryMessage,
-  type HistoryViewMode, type McpAppViewReference, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
+  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
+  type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
-import { getAgent } from "../config/index.js";
+import { getAgent, isAgentActive, loadConfig } from "../config/index.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText } from "../history/condense.js";
 import { activeContextUsage, historyPage } from "../history/page.js";
@@ -22,7 +22,10 @@ import { logWarn } from "../logging.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 
 import type { WebSender } from "./contract.js";
-import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
+import { feedDetail, feedSearch } from "./feed-projection.js";
+import { getMcpAppView } from "../mcp-apps/capture.js";
+import { DurableFeed, emptyFeedWindow, entryId, observeFeed, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
@@ -36,9 +39,12 @@ const routingWarnings = new Set<string>();
 export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
+  fixture?: { extension: Extension; invisibleTools?: readonly string[] };
 };
 
 export class DurableHost {
+  private readonly feed: DurableFeed;
+  private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly listeners = new Map<string, Set<(event: WsServerMessage) => void>>();
 
@@ -53,8 +59,18 @@ export class DurableHost {
     private readonly codemode: ReturnType<typeof createCodemodeExtension>,
     private readonly sandbox: CodemodeSandbox,
     private readonly review: ReturnType<typeof createReplyReview>,
-    private readonly afterMainCommit?: DurableHostOptions["afterMainCommit"],
-  ) {}
+    private readonly options: DurableHostOptions,
+  ) {
+    this.feed = new DurableFeed(harness, agent, (selected) => {
+      const names = tools.invisibleNames(selected);
+      for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
+      return names;
+    }, (conversation, callId) => {
+      const owner = this.owners.get(conversation.id);
+      if (owner === undefined) return;
+      return getMcpAppView({ agentId: agent.id, sessionId: DURABLE_MAIN_SESSION_ID, userId: owner === "local" ? undefined : owner }, callId);
+    });
+  }
 
   static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, options: DurableHostOptions) {
     const provider = agent.model.provider;
@@ -71,7 +87,7 @@ export class DurableHost {
     });
     const owners = new Map<ConversationId, string>();
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id));
-    const review = createReplyReview(agent, runtime, tools.authority, () => {
+    const review = createReplyReview(agent, runtime, tools.authority, tools.invisibleNames, () => {
       if (!harness) throw new Error("Durable host is not open.");
       return harness;
     });
@@ -94,6 +110,7 @@ export class DurableHost {
     registry.install(CodingTools);
     registry.install(toolSearch);
     registry.install(tools.gate);
+    if (options.fixture) registry.install(options.fixture.extension);
     try {
       harness = await Harness.open(storage, {
         models,
@@ -113,7 +130,7 @@ export class DurableHost {
           };
         },
       }, context);
-      host = new DurableHost(harness, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, options.afterMainCommit);
+      host = new DurableHost(harness, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, options);
       await host.resume();
       return host;
     } catch (error) {
@@ -135,6 +152,13 @@ export class DurableHost {
     return id === undefined ? undefined : String(id);
   }
 
+  /** A passive write fixture for entry kinds the HTTP interface cannot create. */
+  async writePassiveEntry(owner: string, entry: EntryDraft) {
+    const conversation = await this.mainFor(owner);
+    if (!conversation) throw new Error("Seed a Durable Main before writing an entry.");
+    await conversation.commit((tx) => conversation.submit(tx, { type: "write", entry }), context);
+  }
+
   async submitWeb(
     sender: WebSender,
     { message, clientSendId }: { message: string; clientSendId: string },
@@ -152,8 +176,9 @@ export class DurableHost {
       return created.id;
     }, context);
     this.owners.set(id, sender.id);
+    for (const opened of this.mainWaiters.get(sender.id) ?? []) opened(id);
     await this.registerProviderSession(id);
-    await this.afterMainCommit?.();
+    await this.options.afterMainCommit?.();
     const conversation = await this.harness.conversation(id, context);
     if (!conversation) throw new Error("Could not open Durable Main.");
     const { submission, duplicate } = await this.admitWeb(conversation, sender, message, "web:" + clientSendId);
@@ -246,7 +271,7 @@ export class DurableHost {
     const change: AgentChange = {
       model: { provider, modelId: agent.model.model },
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
-      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...installed, ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
+      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
       instructions: await durableInstructions(agent, config, principal, this.runtime, summary),
     };
     const fallback = agent.fallback_model;
@@ -309,14 +334,21 @@ export class DurableHost {
     onEvent?: (event: StreamEvent) => void,
   ) {
     let streamed = "";
+    let streamedTask: TaskId | undefined;
     const watch = notify ? await conversation.watch(context) : undefined;
     let acceptingPartials = true;
     const onView = async (view: ConversationView) => {
-      const live = view.docs[LiveDoc.definition.kind] as LiveState | undefined;
-      const turn = await this.activeTurn(conversation.id, live, view.entries);
+      const observed = observeFeed(view);
+      const { live } = observed;
+      const turn = await this.activeTurn(conversation, observed);
       if (!turn || !acceptingPartials) return;
       this.publish(user, turn);
-      if (!live?.run?.inputs.includes(submission.id) || !turn.text.startsWith(streamed)) return;
+      if (!live?.run?.inputs.includes(submission.id)) return;
+      if (streamedTask !== live.run.taskId) {
+        streamedTask = live.run.taskId;
+        streamed = "";
+      }
+      if (!turn.text.startsWith(streamed)) return;
       const delta = turn.text.slice(streamed.length);
       if (delta) {
         onEvent?.({ type: "text", data: delta });
@@ -331,10 +363,11 @@ export class DurableHost {
     }
     return async () => {
       try {
-        const response = await this.settle(conversation, submission);
+        const { response, answerTask } = await this.settle(conversation, submission);
         acceptingPartials = false;
         await watch?.stop();
         const text = response.payloads[0]?.text ?? "";
+        if (answerTask !== streamedTask) streamed = "";
         if (text.startsWith(streamed)) {
           const remaining = text.slice(streamed.length);
           if (remaining) onEvent?.({ type: "text", data: remaining });
@@ -354,7 +387,7 @@ export class DurableHost {
     };
   }
 
-  private async settle(conversation: Conversation, submission: Submission): Promise<RunAgentResult> {
+  private async settle(conversation: Conversation, submission: Submission): Promise<{ response: RunAgentResult; answerTask?: TaskId }> {
     const original = await submission.wait(context);
     const result = original.status === "unanswered" && original.type === "input" && original.reason === "model_error"
       ? await settleFallback(this.harness, conversation, submission.id, this.agent.id) ?? original
@@ -407,10 +440,13 @@ export class DurableHost {
     }
     const text = assistant.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
     return {
-      payloads: text ? [{ text }] : [],
-      meta: {
-        durationMs: InputEntry.is(input) ? Math.max(0, (decision.answeredAt ?? assistant.timestamp) - input.data.timestamp) : 0,
-        sessionId: DURABLE_MAIN_SESSION_ID,
+      answerTask: answer?.byTaskId,
+      response: {
+        payloads: text ? [{ text }] : [],
+        meta: {
+          durationMs: InputEntry.is(input) ? Math.max(0, (decision.answeredAt ?? assistant.timestamp) - input.data.timestamp) : 0,
+          sessionId: DURABLE_MAIN_SESSION_ID,
+        },
       },
     };
   }
@@ -434,7 +470,7 @@ export class DurableHost {
       if (conversation) {
         const watch = await conversation.watch(context);
         try {
-          const turn = await this.activeTurn(conversation.id, watch.value.docs[LiveDoc.definition.kind] as LiveState | undefined, watch.value.entries);
+          const turn = await this.activeTurn(conversation, observeFeed(watch.value));
           if (turn && !updateSeen) listener(turn);
         } finally {
           await watch.stop();
@@ -452,115 +488,127 @@ export class DurableHost {
   }
 
   private async activeTurn(
-    conversationId: ConversationId,
-    live: LiveState | undefined,
-    entries: readonly EntryRecord[],
+    conversation: Conversation,
+    observed: ReturnType<typeof observeFeed>,
+    projection?: Awaited<ReturnType<DurableFeed["read"]>>,
   ): Promise<WsActiveTurnSnapshot | null> {
+    const { live } = observed;
     if (!live?.run?.inputs.length) return null;
-    const first = entries.find((entry) => entry.id === live.run?.first);
+    const id = live.run.first;
+    const first = id === undefined ? undefined : (await conversation.entries({ minEntryId: id, maxEntryId: id }, 1, undefined, context)).items[0];
     const partial = live.generation?.message;
     const timestamp = InputEntry.is(first) ? first.data.timestamp : partial?.timestamp ?? Date.now();
-    const review = partial ? await this.harness.snapshot(ReviewDoc, conversationId, context) : undefined;
-    const blocks = review?.byTask[live.run.taskId]?.state === "stream" ? partial?.content ?? [] : [];
+    const projected = await this.feed.live(conversation, observed, projection);
+    if (!projected) return null;
+    const attachedViews = projected.toolCalls.flatMap(({ id, parentToolCallId, name, view, status }) =>
+      parentToolCallId && view && status === "done" ? [{ id, parentToolCallId, name, view, content: "", isError: false }] : []);
     return {
       type: "active_turn", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID,
       userText: null, userTimestamp: timestamp, startedAt: timestamp,
-      text: blocks.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n"),
-      thinking: blocks.flatMap((block) => block.type === "thinking" ? [block.thinking] : []).join(""),
-      toolCalls: [],
+      text: projected.text, thinking: projected.reasoning.join(""),
+      toolCalls: projected.toolCalls.map(({ id, name, arguments: args, parentToolCallId, status, view }) => (
+        { id, name, arguments: args, parentToolCallId, status, view }
+      )),
+      ...(attachedViews.length ? { toolResults: attachedViews } : {}),
     };
+  }
+
+  async mayReadFeed(owner: string, principal: string) {
+    const agent = getAgent(this.agent.id);
+    const config = loadConfig();
+    if (!agent?.durable || !isAgentActive(agent.id) || principal !== owner || (config.extensions?.multiUser?.enabled && principal === "local")) return false;
+    try {
+      await requireActorExecution(agent.id, config, principal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async mainFor(owner: string) {
+    const id = await this.mainId(owner);
+    return id === undefined ? undefined : this.harness.conversation(id, context);
+  }
+
+  async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector) {
+    if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
+    const conversation = await this.mainFor(owner);
+    return { window: conversation ? await this.feed.window(conversation, limit, selector) : selector ? undefined : emptyFeedWindow };
+  }
+
+  private async waitForMain(owner: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const waiters = this.mainWaiters.get(owner) ?? new Set();
+    this.mainWaiters.set(owner, waiters);
+    return new Promise<ConversationId>((resolve, reject) => {
+      const cleanup = () => {
+        signal.removeEventListener("abort", abort);
+        if (waiters.delete(opened) && !waiters.size) this.mainWaiters.delete(owner);
+      };
+      const fail = (error: unknown) => { cleanup(); reject(error); };
+      const abort = () => fail(signal.reason);
+      const opened = (id: ConversationId) => { cleanup(); resolve(id); };
+      waiters.add(opened);
+      signal.addEventListener("abort", abort, { once: true });
+      // Subscribe before reading again so a concurrent first send cannot be missed.
+      void this.mainId(owner).then((id) => { if (id !== undefined) opened(id); }, fail);
+    });
+  }
+
+  async watchFeed(
+    owner: string, principal: string, limit: number, signal: AbortSignal,
+    publish: (window: FeedWindow, snapshot: boolean) => void,
+  ): Promise<"forbidden" | "unavailable"> {
+    if (!await this.mayReadFeed(owner, principal)) return "forbidden";
+    signal.throwIfAborted();
+    let conversation = await this.mainFor(owner);
+    if (!conversation) {
+      publish(emptyFeedWindow, true);
+      conversation = await this.harness.conversation(await this.waitForMain(owner, signal), context);
+    }
+    if (!conversation) return "unavailable";
+    const main = conversation;
+    const watch = await main.watch(withAbortSignal(signal, context));
+    const read = async (value: ConversationView | undefined, snapshot: boolean) => {
+      const window = await this.feed.window(main, limit, undefined, value && observeFeed(value));
+      if (window && !signal.aborted) publish(window, snapshot);
+    };
+    try {
+      await read(watch.value, true);
+      watch.start(async (call) => {
+        await read(call.kind === "value" ? call.value : undefined, call.kind === "failed");
+      });
+      await watch.closed;
+      return "unavailable";
+    } finally {
+      await watch.stop();
+    }
+  }
+
+  async feedSearch(owner: string, principal: string, query: string, limit: number) {
+    if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
+    const conversation = await this.mainFor(owner);
+    return { hits: conversation && query.trim() ? feedSearch((await this.feed.read(conversation)).records, query, limit) : [] };
+  }
+
+  async feedDetail(owner: string, principal: string, id: string) {
+    if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
+    const conversation = await this.mainFor(owner);
+    const anchor = entryId(id);
+    if (!conversation || anchor === undefined) return { detail: undefined };
+    const { records } = await this.feed.read(conversation, { id: anchor, limit: 1 });
+    return { detail: feedDetail(records, id) };
   }
 
   async history(user: string, view: HistoryViewMode, limit?: number, before?: string) {
     const id = await this.mainId(user);
     const conversation = id === undefined ? undefined : await this.harness.conversation(id, context);
     if (!conversation) return { messages: [], view };
-    const entries: EntryRecord[] = [];
-    const toolCalls = new Set<string>();
-    const full: FullHistoryMessage[] = [];
-    const views = new Map<string, McpAppViewReference>();
-    const hiddenCalls = new Set<string>();
-    const finishedCalls = new Set<string>();
-    const selected = (await this.harness.snapshot(AgentDoc, conversation.id, context))?.extensions;
-    const hiddenNames = this.tools.invisibleNames(Array.isArray(selected) ? selected : []);
-    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
-    let cursor: Cursor | undefined;
-    do {
-      const page = await conversation.entries({ order: "ascending" }, 200, cursor, context);
-      entries.push(...page.items);
-      for (const entry of page.items) {
-        if (InputEntry.is(entry)) {
-          full.push({ role: "user", content: [{ type: "text", text: entry.data.text }], timestamp: entry.data.timestamp });
-        } else if (FailureNoteEntry.is(entry)) {
-          const { kind, accessError } = entry.data;
-          const note = entry.model?.[0];
-          if (!note) continue;
-          full.push({
-            role: "assistant",
-            content: [{ type: "text", text: isSafeModelAccessError(accessError) ? accessError : runFailureMessage(kind, this.agent.language ?? "en") }],
-            timestamp: note.timestamp,
-            meta: { stopReason: "error", failure: { kind } },
-          });
-        } else if (AssistantEntry.is(entry) && entry.byTaskId !== undefined) {
-          const decision = review?.byTask[entry.byTaskId];
-          for (const message of entry.model ?? []) {
-            if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") continue;
-            const showText = decision?.state === "stream" ||
-              (decision?.state === "approved" && decision.digest === draftDigest(message.content));
-            const blocks = showText ? message.content : message.stopReason === "toolUse"
-              ? message.content.filter(({ type }) => type === "toolCall") : [];
-            const content = blocks.map((block) => {
-              switch (block.type) {
-                case "text": return { type: block.type, text: block.text } as const;
-                case "thinking": return { type: block.type, thinking: block.thinking } as const;
-                case "toolCall": return { type: block.type, id: block.id, name: block.name, arguments: block.arguments } as const;
-              }
-            });
-            if (!content.length) continue;
-            for (const block of content) if (block.type === "toolCall") toolCalls.add(block.id);
-            full.push({
-              role: "assistant", content, timestamp: decision?.answeredAt ?? message.timestamp,
-              meta: { api: message.api, provider: message.provider, model: message.model, usage: message.usage, stopReason: message.stopReason },
-            });
-          }
-        } else if (ToolResultEntry.is(entry)) {
-          for (const message of entry.model ?? []) {
-            if (message.role !== "toolResult" || !toolCalls.has(message.toolCallId)) continue;
-            finishedCalls.add(message.toolCallId);
-            const details = message.details as { kind?: string; hidden?: boolean; view?: unknown; diff?: unknown; result?: { diff?: unknown } } | undefined;
-            if (details?.kind === "yoplai.tool" && details.hidden) {
-              hiddenCalls.add(message.toolCallId);
-              continue;
-            }
-            const view = details?.kind === "yoplai.tool" ? McpAppViewReferenceSchema.safeParse(details.view).data : undefined;
-            if (view) views.set(message.toolCallId, view);
-            const diff = details?.kind === "yoplai.tool" ? details.result?.diff : details?.diff;
-            full.push({
-              role: "toolResult", toolCallId: message.toolCallId, toolName: message.toolName,
-              content: message.content.flatMap((block) => block.type === "text" ? [{ type: "text", text: block.text }] : []),
-              isError: message.isError, timestamp: message.timestamp,
-              ...(view ? { view } : {}),
-              ...(typeof diff === "string" ? { details: { diff } } : {}),
-            });
-          }
-        }
-      }
-      cursor = page.next;
-    } while (cursor !== undefined);
-    for (let index = full.length - 1; index >= 0; index--) {
-      const message = full[index];
-      if (message.role !== "assistant") continue;
-      message.content = message.content.flatMap<ContentBlock>((block) => {
-        if (block.type !== "toolCall") return [block];
-        if (hiddenCalls.has(block.id) || (!finishedCalls.has(block.id) && hiddenNames.has(block.name))) return [];
-        const view = views.get(block.id);
-        return [view ? { ...block, view } : block];
-      });
-      if (!message.content.length) full.splice(index, 1);
-    }
+    const observed = await this.feed.observe(conversation);
+    const projection = await this.feed.read(conversation, undefined, observed);
+    const full = projection.records.map(({ message }) => message);
     if (!full.length) return { messages: [], view };
-    const live = await this.harness.snapshot(LiveDoc, conversation.id, context);
-    const activeTurn = await this.activeTurn(conversation.id, live, entries);
+    const activeTurn = await this.activeTurn(conversation, observed, projection);
     const messages: (FullHistoryMessage | SimpleHistoryMessage)[] = view === "full" ? full : full.flatMap((item) => {
       if (item.role !== "user" && item.role !== "assistant") return [];
       const content = messageText(item);

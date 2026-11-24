@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Durable Main exposes windowed history, public-text search, message traces, and a live feed with stable message IDs and fresh access checks.
 - Durable Main supports workspace and extension tools, Code Mode, deferred tool search, and files and MCP Apps in chat. Tool calls use the conversation owner’s access and credentials.
 - Prepare conversation handoffs that preserve recent messages and earlier user requests verbatim, with references for clipped or omitted history.
 - A full-screen progress view shows the selected avatar during agent creation in desktop setup and on the Agents page.
@@ -38,6 +39,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable Main shows nested Code Mode file and MCP views after reload, and keeps live replies and stored tool steps from appearing twice when history reloads mid-turn.
 - Durable agents on single-user desktops can use pinned Pi, Codex, Claude Code, and OpenCode CLI logins. The desktop reads OpenCode Go keys from OpenCode v2's database as well as legacy JSON.
 - Restore inline file previews when Code Mode sends a file from a linked gateway.
 - Show failed Durable Main turns in chat and history, log one safe warning per failed send, and tell the model when its previous reply failed.
