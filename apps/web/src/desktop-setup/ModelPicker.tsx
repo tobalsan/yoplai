@@ -18,7 +18,7 @@ const labels: Record<Tab, string> = {
 const brands = new Map(Object.entries({
   openai: "OpenAI", "openai-codex": "ChatGPT", openrouter: "OpenRouter", anthropic: "Anthropic",
   google: "Google", "google-vertex": "Google", deepseek: "DeepSeek", xai: "xAI", zai: "Z.ai",
-  opencode: "OpenCode", "opencode-go": "OpenCode", "github-copilot": "GitHub Copilot", "amazon-bedrock": "Amazon Bedrock",
+  opencode: "OpenCode", "opencode-go": "OpenCode Go", "github-copilot": "GitHub Copilot", "amazon-bedrock": "Amazon Bedrock",
 }));
 const family = (id: string) => brands.get(id) ?? id.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
