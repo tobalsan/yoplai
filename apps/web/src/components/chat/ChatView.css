@@ -802,6 +802,13 @@
           width: min(78ch, 100%);
         }
 
+        .message.assistant.tool-interrupted {
+          padding: 10px 12px;
+          background: color-mix(in srgb, var(--tone-warning, #b7791f) 9%, transparent);
+          border-color: color-mix(in srgb, var(--tone-warning, #b7791f) 35%, transparent);
+          font-size: 14px;
+        }
+
         .message.tool {
           width: min(78ch, 100%);
           max-width: min(78ch, 100%);

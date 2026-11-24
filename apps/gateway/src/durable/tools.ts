@@ -23,6 +23,7 @@ export function createDurableTools(
   runtime: ExtensionRuntime,
   registry: Registry,
   ownerOf: (id: ConversationId) => string | undefined,
+  onInterrupted: () => void,
 ) {
   async function authority(id: ConversationId) {
     const owner = ownerOf(id);
@@ -126,6 +127,7 @@ export function createDurableTools(
         if (call.name === "codemode" && !call.parent && !nestedViews.has(api.taskId)) nestedViews.set(api.taskId, new Map());
       },
       async afterTool(call, result, api, context) {
+        if (!call.parent && result.diagnostics?.some(({ code }) => code === "interrupted")) onInterrupted();
         const unloaded = result.diagnostics?.some(({ code }) => code === "tool_unavailable");
         const descriptors = await selectedDescriptors(api, context);
         const descriptor = descriptors.find(({ name }) => name === call.name);

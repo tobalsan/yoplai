@@ -102,6 +102,20 @@ holding, and `restart()` to reopen the same gateway home in process. For identit
 recovery, `failBetweenCommits()` interrupts one send after Main creation and
 `mainConversationId(user)` lets the test compare the id across the restart.
 
+#### Durable crash tests
+
+`apps/gateway/src/test-utils/durable-crash-child.ts` starts the same HTTP
+gateway under Node with `--import tsx --conditions=development`. The parent
+runs it in an isolated `YOPLAI_HOME`, opens a fresh child on the same home
+after SIGKILL, and waits for the resumed Faux request log before making any
+agent request. The unsafe tool fixture records its side effect and waits past
+Durable's progress commit window before signaling readiness.
+
+Run the mid-stream and mid-tool scenarios in
+`apps/gateway/src/server/durable-crash.test.ts`. They verify the resumed model
+input, feed and history, live watch snapshot, and metrics route through the
+gateway's production auth in single-user and email/password multi-user mode.
+
 ## Remote web development
 
 When UI runs on machine A and gateway/projects on machine B:

@@ -7,6 +7,7 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | Method | Path                       | Purpose                                |
 | ------ | -------------------------- | -------------------------------------- |
 | GET    | `/health`                  | Process health                         |
+| GET    | `/api/ops/metrics`         | Per-agent gateway process counters     |
 | GET    | `/api/capabilities`        | Enabled UI/runtime capabilities        |
 | GET    | `/api/agents`              | List available agents                  |
 | GET    | `/api/agents/:id`          | Agent detail for the caller            |
@@ -49,6 +50,20 @@ Each request reads the latest persisted history, without paging or streaming.
 Unknown/revoked tokens and deleted sessions return 404. The share store is
 `$YOPLAI_HOME/chat-shares.json`; it never contributes to agent prompts.
 Media download permissions are unchanged: the shared UI renders filenames only.
+
+## Ops metrics
+
+`GET /api/ops/metrics` returns counters for the current gateway process.
+Multi-user gateways require a superadmin. Other authenticated accounts receive
+403. The route is available to the local caller in single-user mode.
+
+```json
+{ "metrics": [{ "id": "interrupted_tool_calls", "agentId": "greenhouse", "value": 2 }] }
+```
+
+`interrupted_tool_calls` counts top-level Durable tool calls that ended as
+interrupted. Counters reset on each restart and rows appear when the counter
+first increments. Nested calls inside Code Mode are outside the count.
 
 ## Desktop setup and model access
 
@@ -223,7 +238,13 @@ caller’s record. An unknown record or a record owned by another user returns
 
 When Durable mode applies, `/api/agents/:id/feed` exposes the caller's Main.
 IDs take the form `m_<entry id>` and remain stable across gateway restarts and
-context resets. An agent item groups its answer and tool rounds into one item.
+context resets. An assistant item groups consecutive answer and tool rounds.
+
+An interrupted top-level tool produces one localized `role: "failure"` item
+with `kind: "tool_interrupted"` after its round's tool results. It appears in
+feed windows, watch updates, and compatibility history. The notice persists
+across reloads and restarts and contains no tool arguments or output. Nested
+calls inside replay-safe Code Mode do not produce a notice.
 
 | Request | Result |
 | --- | --- |

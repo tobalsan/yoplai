@@ -20,6 +20,7 @@ import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText } from "../history/condense.js";
 import { activeContextUsage, historyPage } from "../history/page.js";
 import { logWarn } from "../logging.js";
+import type { OpsMetrics } from "../server/ops-metrics.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 
 import type { WebSender } from "./contract.js";
@@ -33,6 +34,7 @@ import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
+import { durableStorePath } from "./store-path.js";
 
 const context = BACKGROUND_CONTEXT;
 const toolSearch = createToolSearchExtension();
@@ -73,7 +75,7 @@ export class DurableHost {
     });
   }
 
-  static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, options: DurableHostOptions) {
+  static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions) {
     const provider = agent.model.provider;
     if (!provider) throw new Error("Durable requires model.provider to be set.");
     let harness: Harness | undefined;
@@ -82,12 +84,13 @@ export class DurableHost {
       const id = sessionId && providerConversations.get(sessionId);
       if (harness && id) return getModelPolicy(harness, id);
     });
-    const directory = path.join(home, "agents", agent.id, "durable");
-    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-    const storage = await openNodeSqliteStorage(path.join(directory, "agent.sqlite"));
+    const store = durableStorePath(home, agent.id);
+    await fs.mkdir(path.dirname(store), { recursive: true, mode: 0o700 });
+    const storage = await openNodeSqliteStorage(store);
     const registry = createRegistry();
     const owners = new Map<ConversationId, string>();
-    const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id));
+    const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
+      () => metrics.increment("interrupted_tool_calls", agent.id));
     const review = createReplyReview(agent, runtime, tools.authority, tools.invisibleNames, () => {
       if (!harness) throw new Error("Durable host is not open.");
       return harness;

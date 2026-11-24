@@ -1960,6 +1960,31 @@ describe("ChatView abort handling", () => {
     }
   });
 
+  it.each(["simple", "full"] as const)("shows the recovered tool warning between the tool activity and the next reply in %s view", async (mode) => {
+    routeState.view = mode;
+    const warning = "A tool was interrupted by a restart and may have partly run. Check its effects.";
+    fetchFullHistoryMock.mockResolvedValue({
+      sessionId: "durable-main", isStreaming: false, activeTurn: null,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Record the basil seedlings." }], timestamp: 1 },
+        { role: "assistant", content: [{ type: "toolCall", id: "basil", name: "record_seedlings", arguments: { bed: "basil" } }], timestamp: 2 },
+        { role: "toolResult", toolCallId: "basil", toolName: "record_seedlings", isError: true, content: [], timestamp: 3 },
+        { role: "assistant", content: [{ type: "text", text: warning }], timestamp: 3, meta: { stopReason: "error", failure: { kind: "tool_interrupted" } } },
+        { role: "assistant", content: [{ type: "text", text: "The greenhouse is accounted for." }], timestamp: 4 },
+      ],
+    });
+    const { container, dispose } = renderView();
+    try {
+      const notices = () => queryAllByRole(container, "status").filter((notice) => notice.textContent?.includes(warning));
+      await waitFor(() => expect(notices()).toHaveLength(1));
+      expect(notices()[0].textContent).not.toContain("unknown");
+      expect(queryAllByText(container, warning)).toHaveLength(1);
+      expect(container.textContent).toMatch(/Record the basil seedlings\.[\s\S]*Check its effects\.[\s\S]*The greenhouse is accounted for\./);
+    } finally {
+      dispose();
+    }
+  });
+
   it("passes the project query to the first run", async () => {
     routeState.project = "project-1";
     const { container, dispose } = renderView();

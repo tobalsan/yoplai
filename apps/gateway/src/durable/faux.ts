@@ -16,7 +16,11 @@ function scriptedBlock(block: ScriptedBlock) {
 }
 
 /** Test adapter. Keep the provider and all Pi types on this side of the host. */
-export function createDurableFaux(tokensPerSecond?: number, fixture?: { provider: string; model: string; observeKey: (key?: string) => void }) {
+export function createDurableFaux(
+  tokensPerSecond?: number,
+  fixture?: { provider: string; model: string; observeKey: (key?: string) => void },
+  onRequest?: (request: TranscriptContext) => Promise<void>,
+) {
   const requests: TranscriptContext[] = [];
   const faux = fauxProvider({
     provider: fixture?.provider,
@@ -34,6 +38,7 @@ export function createDurableFaux(tokensPerSecond?: number, fixture?: { provider
       async (request, options, _state, model) => {
         fixture?.observeKey(options?.apiKey);
         requests.push(request);
+        await onRequest?.(request);
         if (Array.isArray(answer)) {
           const blocks = answer.map(scriptedBlock);
           return fauxAssistantMessage(blocks, { stopReason: blocks.some(({ type }) => type === "toolCall") ? "toolUse" : "stop" });

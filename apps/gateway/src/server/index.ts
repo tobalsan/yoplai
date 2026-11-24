@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { startAppsListener } from "../mcp-apps/views.js";
 import { startUiListener } from "./ui-listener.js";
 import { logError } from "../logging.js";
+import { OpsMetrics } from "./ops-metrics.js";
 import { cors } from "hono/cors";
 import { readEnv, resolveBindHost, resolveHomeDir } from "@yoplai/shared";
 import type { GatewayBindMode, GatewayConfig } from "@yoplai/shared";
@@ -20,7 +21,7 @@ import {
   ensureAgentImage,
   ensureNetwork,
 } from "../agents/container.js";
-import { loadConfig } from "../config/index.js";
+import { getActiveAgents, loadConfig } from "../config/index.js";
 import { agentEventBus } from "../agents/index.js";
 import { getCurrentInnerApi, getExtensionRuntime } from "../extensions/registry.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
@@ -305,8 +306,8 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  const durableWeb = (c.env as { durableWeb?: DurableWeb } | undefined)?.durableWeb;
-  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress, durableWeb });
+  const { durableWeb, opsMetrics } = (c.env as { durableWeb?: DurableWeb; opsMetrics?: OpsMetrics } | undefined) ?? {};
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress, durableWeb, opsMetrics });
 });
 
 app.all("/hooks/*", async (c) => {
@@ -413,9 +414,10 @@ export function startServer(
   // Port 0 (tests) means "any free port". It is not a valid env port, and loadConfig refuses it.
   if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
-  const durableWeb = new DurableWeb(runtime, durableOptions);
+  const opsMetrics = new OpsMetrics();
+  const durableWeb = new DurableWeb(runtime, opsMetrics, durableOptions);
   const server = serve({
-    fetch: (request, env) => app.fetch(request, { ...env, durableWeb }),
+    fetch: (request, env) => app.fetch(request, { ...env, durableWeb, opsMetrics }),
     port: resolvedPort,
     hostname: resolvedHost,
   });
@@ -423,6 +425,7 @@ export function startServer(
   const recordListener = () => {
     const address = server.address();
     setGatewayListener(address && typeof address === "object" ? { address: address.address, port: address.port } : undefined);
+    void durableWeb.resumeExisting(getActiveAgents());
   };
   if (server.listening) recordListener();
   else server.once("listening", recordListener);
