@@ -146,13 +146,22 @@ Pi turns that fail on a transient provider error (rate limit, 5xx, queue/backpre
 Set `durable: true` in the agent's `agent.yaml` and restart the gateway to pilot
 its web chat on Pi Durable. Use `sdk: pi` (the default), leave `sandbox.enabled`
 off, and configure `model.provider` and `model.model` for a built-in Pi provider
-with a provider API key in the gateway environment. Use a pilot agent dedicated
+with an owned or environment credential. Use a pilot agent dedicated
 to web chat. Removing the flag returns web sends to the legacy runner, and the
 Durable transcript stays on disk for the next time the flag is enabled.
 
 A user's web chat opens their Main even after choosing New Chat. Opening an
-explicit older session continues that legacy chat. The pilot supports plain
-text and holds drafts when a reply reviewer is configured. See
+explicit older session continues that legacy chat. Main accepts plain text,
+can deliver files and MCP Apps from tools, and holds drafts when a reply reviewer
+is configured. Model, prompt and tool catalog changes apply to the next idle
+turn. Tool access and credentials are checked again on every call.
+
+- `codemode: true` enables QuickJS scripts. A script declares a deadline using first-line `// @options: {"timeout_ms": N}`. The host adds no default script or turn deadline.
+- `toolDeferral.enabled: false` exposes the full catalog immediately. With deferral enabled, `tool_search` loads matching tools and keeps them available on the conversation branch.
+- `retryMaxAttempts` is the total attempt count, including the first request. `retryBaseDelay` is the initial delay in seconds. Durable classifies provider errors and applies exponential backoff. A replayable eligible failure can continue once on `fallback_model` after the primary run fails. Safety refusals skip retry and fallback.
+- `modelRouting.enabled` has no effect on Durable Main. The gateway logs that once per agent and uses the configured default model.
+
+See
 [the API contract](api.md#durable-main) and [storage](data-layout.md#durable-web-main).
 
 ### Updating instructions from chat

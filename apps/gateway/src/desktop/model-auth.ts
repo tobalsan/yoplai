@@ -16,9 +16,9 @@ export { isLiteralKey } from "./literal-key.js";
 type AuthMode = "oauth" | "api_key";
 export const canReadExternal = () => desktopEnabled() && isRelayEnabled();
 export type ExternalCredential = { type: AuthMode; key: string; source: string };
-export async function environmentCredential(runtime: ModelRuntime, provider: string, hasOwned: boolean) {
+export async function environmentCredential(runtime: ModelRuntime, provider: string, hasOwned: boolean, env?: Record<string, string>) {
   const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
-  const key = getEnvApiKey(provider);
+  const key = getEnvApiKey(provider, env);
   if (key && key !== "<authenticated>") return { key, native: false } as const;
   if (hasOwned) return undefined;
   const status = runtime.getProviderAuthStatus(provider);
@@ -76,15 +76,18 @@ export async function createModelAuth(options: {
   primarySource?: ModelSource;
   primaryModel?: string;
   readExternal?: ReadExternal;
+  allowExternal?: boolean;
+  refreshOnCreate?: boolean;
   submitted?: { provider: string; key: string };
 } = {}) {
   const { ModelRuntime, readStoredCredential } = await import("@earendil-works/pi-coding-agent");
   const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
   const home = options.home ?? CONFIG_DIR;
+  const externalAvailable = () => options.allowExternal !== false && canReadExternal();
   const readExternal: ReadExternal = async (provider, model, mode, onlySource) => {
-    if (!canReadExternal()) return undefined;
+    if (!externalAvailable()) return undefined;
     const credential = await (options.readExternal ?? getExternalSources(home).resolve)(provider, model, mode, onlySource);
-    return canReadExternal() ? credential : undefined;
+    return externalAvailable() ? credential : undefined;
   };
   const authPath = path.join(home, "auth.json");
   const modelsPath = path.join(home, "models.json");
@@ -97,7 +100,7 @@ export async function createModelAuth(options: {
       modify: async () => { throw new Error("This store cannot save keys."); },
       delete: async () => { throw new Error("This store cannot delete keys."); },
     },
-  } : { authPath, modelsPath });
+  } : { authPath, modelsPath, refreshOnCreate: options.refreshOnCreate });
   const nativeAuth = runtime.getAuth.bind(runtime);
   const checkedModels = new Map<string, Model<Api>>();
   const request = new AsyncLocalStorage<{ external: boolean; source?: string }>();
@@ -135,7 +138,7 @@ export async function createModelAuth(options: {
         }
       } else if (source === "environment") {
         const owned = readStoredCredential(provider, authPath);
-        const credential = await environmentCredential(runtime, provider, Boolean(owned));
+        const credential = await environmentCredential(runtime, provider, Boolean(owned), overrides?.env);
         if (credential) {
           auth = await native(credential.native ? undefined : credential.key);
           if (credential.native && readStoredCredential(provider, authPath)) auth = undefined;
@@ -187,14 +190,14 @@ export async function createModelAuth(options: {
 
     let external: ExternalCredential | undefined;
     let externalDiagnosis: Error | undefined;
-    if (canReadExternal()) {
+    if (externalAvailable()) {
       if (scope) scope.external = true;
       try {
         const externalMode = mode ?? (runtime.getProvider(provider)?.auth.apiKey ? undefined : "oauth");
         external = await readExternal(provider, model, externalMode);
       } catch (error) {
         if (!(error instanceof Error) || !isSafeModelAccessError(error.message)) throw error;
-        if (canReadExternal()) externalDiagnosis = error;
+        if (externalAvailable()) externalDiagnosis = error;
       }
       if (scope) scope.external = external !== undefined;
     }
@@ -204,7 +207,7 @@ export async function createModelAuth(options: {
       return externalAuth(external, model);
     }
     if (scope) scope.source = "environment";
-    const key = mode === "api_key" ? getEnvApiKey(provider) : undefined;
+    const key = mode === "api_key" ? getEnvApiKey(provider, overrides?.env) : undefined;
     const auth = mode === "oauth" ? undefined
       : mode === "api_key" ? (key ? await native({ ...overrides, apiKey: key }) : undefined)
       : await native(overrides);
@@ -314,6 +317,27 @@ export async function createModelAuth(options: {
   };
 
   return { runtime, resolveModelAuth, requireModelAuth };
+}
+
+/** Plain request credentials for the versioned model adapter. */
+export async function resolveGatewayModelCredentials(options: {
+  provider: string;
+  model: string;
+  source?: ModelSource;
+  mode?: AuthMode;
+  env?: Record<string, string>;
+  signal?: AbortSignal;
+}) {
+  const { runtime, resolveModelAuth } = await createModelAuth({
+    primaryProvider: options.provider, primaryModel: options.model, primarySource: options.source,
+    mode: options.mode, allowExternal: false, refreshOnCreate: false,
+  });
+  const model = runtime.getModel(options.provider, options.model);
+  const auth = await resolveModelAuth(model ?? options.provider, {
+    env: options.env, signal: options.signal,
+  });
+  if (!auth) return;
+  return { apiKey: auth.auth.apiKey, headers: auth.auth.headers, baseUrl: auth.auth.baseUrl ?? model?.baseUrl, env: auth.env };
 }
 
 export async function completeModelOnce(runtime: Awaited<ReturnType<typeof createModelAuth>>["runtime"], model: Model<Api>, text: string, signal = AbortSignal.timeout(20_000), maxTokens = 256, onLength?: (text: string) => string) {

@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import { Readable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
-import type { GatewayConfig } from "@yoplai/shared";
+import { DURABLE_MAIN_SESSION_ID, type GatewayConfig } from "@yoplai/shared";
 import { isSafeSessionId } from "../history/sessions.js";
 import { readMcpAppRecord } from "./capture.js";
 import { createFileAppProvider, fileResourceDomains, fileViewerMeta } from "./file-provider.js";
@@ -384,7 +384,8 @@ export function createMcpAppRoutes(deps: {
         pending = { agentId, sessionId, ownerUserId: userId, revoked: false };
         pendingViews.add(pending);
       }
-      if (!isSafeSessionId(sessionId) || !await deps.resolveHistoryFile({ userId, agentId, sessionId })) return c.json({ error: "not_found" }, 404);
+      const durableMain = sessionId === DURABLE_MAIN_SESSION_ID && deps.getConfig().agents.some((agent) => agent.id === agentId && agent.durable);
+      if (!isSafeSessionId(sessionId) || (!durableMain && !await deps.resolveHistoryFile({ userId, agentId, sessionId }))) return c.json({ error: "not_found" }, 404);
       const record = await readMcpAppRecord({ agentId, sessionId, ownerUserId: userId }, toolCallId);
       if (!record) return c.json({ error: "not_found" }, 404);
       Object.assign(audit, { server: record.server, tool: record.tool, resource: record.resourceUri });

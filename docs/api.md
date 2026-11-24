@@ -196,6 +196,12 @@ turn fields. The synthetic id is identical across accounts and resolves using
 the authenticated caller. Sidebar, search, compact, delete, share and abort routes
 continue to use legacy sessions.
 
+Full history includes captured view references on tool calls and results. The
+existing `POST /api/agents/:agentId/sessions/:sessionId/mcp-apps/:toolCallId/:operation`
+route accepts `durable-main` for a Durable agent and reads the authenticated
+caller’s record. An unknown record or a record owned by another user returns
+404.
+
 ## Authentication
 
 Single-user mode has no Yoplai user boundary; keep it private. Multi-user extension guards `/api/*` and `/ws` using Better Auth cookie session or bearer API key. Both resolve same request auth context and agent/team access checks.

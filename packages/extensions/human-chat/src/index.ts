@@ -2,10 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { REASON_TYPES, lint, listOpenPlans, nudgeText, rulesText, type Limits, type LintResult, type ReplyMode } from "human-chat";
-import { isNoReply, type AgentConfig, type Extension, type ExtensionReplyReviewer, type ExtensionReplyReviewVerdict, type ExtensionRunInfo } from "@yoplai/shared";
+import { DURABLE_MAIN_SESSION_ID, isNoReply, type AgentConfig, type Extension, type ExtensionReplyReviewer, type ExtensionReplyReviewVerdict, type ExtensionRunInfo } from "@yoplai/shared";
 
 const HUMAN_SOURCES = new Set(["web", "telegram", "discord", "slack", "mattermost", "irc"]);
-const key = (agentId: string, sessionId: string) => `${agentId}\0${sessionId}`;
+const key = (agentId: string, sessionId: string, userId?: string) =>
+  JSON.stringify([agentId, sessionId, sessionId === DURABLE_MAIN_SESSION_ID ? userId : undefined]);
 const active = new Map<string, HumanChatReviewer>();
 
 function isHumanTurn(run?: ExtensionRunInfo): boolean {
@@ -55,13 +56,14 @@ class HumanChatReviewer implements ExtensionReplyReviewer {
     private readonly agentId: string,
     private readonly sessionId: string,
     private readonly logPath: string,
-    private readonly limits: Partial<Limits>
+    private readonly limits: Partial<Limits>,
+    private readonly userId?: string
   ) {
     this.nudge = nudgeText(limits);
   }
 
   begin(): void {
-    active.set(key(this.agentId, this.sessionId), this);
+    active.set(key(this.agentId, this.sessionId, this.userId), this);
   }
 
   declare(mode: ReplyMode): void {
@@ -100,7 +102,7 @@ class HumanChatReviewer implements ExtensionReplyReviewer {
   end(): void {
     this.declaration = undefined;
     this.result = undefined;
-    if (active.get(key(this.agentId, this.sessionId)) === this) active.delete(key(this.agentId, this.sessionId));
+    if (active.get(key(this.agentId, this.sessionId, this.userId)) === this) active.delete(key(this.agentId, this.sessionId, this.userId));
   }
 }
 
@@ -126,7 +128,7 @@ export const humanChatExtension: Extension = {
     const config = shapeConfig(agent);
     if (!config || !isHumanTurn({ ...context.run, sessionId: context.sessionId })) return undefined;
     const log = typeof config.log === "string" ? config.log : path.join(context.workspaceDir, "data", "human-chat", "long-mode.jsonl");
-    return new HumanChatReviewer(agent.id, context.sessionId, log, limitsFromConfig(config));
+    return new HumanChatReviewer(agent.id, context.sessionId, log, limitsFromConfig(config), context.userId);
   },
   getSystemPromptContributions(agent, hook) {
     const config = shapeConfig(agent);
@@ -156,7 +158,7 @@ export const humanChatExtension: Extension = {
         if (typeof note !== "string" || note.trim().split(/\s+/).filter(Boolean).length < 3) {
           throw new Error("Invalid reply_mode. note must be a short reason of at least 3 words.");
         }
-        active.get(key(agent.id, context.sessionId ?? ""))?.declare({
+        active.get(key(agent.id, context.sessionId ?? "", context.userId))?.declare({
           mode: "long",
           type: type as (typeof REASON_TYPES)[number],
           note,
