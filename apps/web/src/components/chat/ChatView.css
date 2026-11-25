@@ -2130,3 +2130,76 @@
           margin: 0;
           font-size: 12px;
         }
+
+        .feed-messages { overflow-anchor: none; }
+
+        .feed-row {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          flex-shrink: 0;
+          min-width: 0;
+        }
+
+        .feed-seam {
+          position: relative;
+          border-block-start: 1px dashed var(--border-default);
+          color: var(--text-secondary);
+          padding-block-start: 8px;
+          font-size: 13px;
+          text-align: center;
+        }
+
+        .feed-seam:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 4px;
+        }
+
+        .feed-seam:focus-visible::after {
+          content: attr(aria-description);
+          position: absolute;
+          z-index: 1;
+          inset-block-start: 100%;
+          inset-inline-start: 50%;
+          transform: translateX(-50%);
+          width: max-content;
+          max-width: 100%;
+          padding: 4px 8px;
+          border: 1px solid var(--border-default);
+          border-radius: var(--radius-md);
+          background: var(--bg-overlay);
+          color: var(--text-primary);
+        }
+
+        .feed-notice {
+          color: var(--text-secondary);
+          font-size: 14px;
+          text-align: center;
+        }
+
+        .feed-jump {
+          position: absolute;
+          inset-block-end: calc(100% + 8px);
+          inset-inline-start: 50%;
+          transform: translateX(-50%);
+          border-radius: 999px;
+          white-space: nowrap;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .feed-flash {
+          border-radius: var(--radius-md);
+          animation: feed-highlight 1.2s ease-out;
+        }
+
+        @keyframes feed-highlight {
+          from { background-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+          to { background-color: transparent; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .feed-flash {
+            animation: none;
+            outline: 2px solid var(--accent);
+          }
+        }
