@@ -33,5 +33,5 @@ export async function pair(plan: Awaited<ReturnType<typeof prepare>>, options: {
   if (!options.faux && !apiKey) throw new Error(`No environment API key for ${plan.model}`);
   const cut = await run(plan.model, plan.variant, plan.cut, { ...options, apiKey, idle: options.faux ? async () => {} : undefined });
   const baseline = await run(plan.model, "baseline", plan.baseline, { ...options, apiKey });
-  return { model: plan.model, cut, baseline };
+  return { model: plan.model, full: plan.variant === "full", cut, baseline };
 }

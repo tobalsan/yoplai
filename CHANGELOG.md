@@ -48,6 +48,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable compaction eval rejects a second cut that does not split the ledger step executions, reports full-size and second-cut distances, no longer credits a quoted probe question or a negated status as a recall source, and labels `--full` from the prepared variant.
 - Fix Durable compaction eval summary attribution and reject comparisons with unprobed cuts, a misplaced ledger cut, or a missing opening kiln read. Record stream cache retention in the reports.
 - Durable Main shows nested Code Mode file and MCP views after reload, preserves streamed text across tool rounds, and keeps replies and tool steps from appearing twice when history reloads mid-turn.
 - Open files sent from linked gateways in a new window, including files sent from Code Mode.

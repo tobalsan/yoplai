@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
-import { cold, report, sources } from "./report.js";
+import { cold, originDistances, report, sources } from "./report.js";
 import { projection, scenarioIssues, type RequestRow } from "./runner.js";
 import { facts, FULL, HAIKU, scenario, score, tokens } from "./scenario.js";
 
@@ -14,8 +14,10 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
     for (const model of [HAIKU, FULL]) {
       const full = model === FULL;
       const plan = await prepare(model, full);
-      const { cut, baseline } = await pair(plan, { faux: true, long: !full });
-      pairs.push({ model, cut, baseline });
+      const measured = await pair(plan, { faux: true, long: !full });
+      const { cut, baseline } = measured;
+      pairs.push(measured);
+      if (full) expect(projection([{ ...measured, full: false }])).toContain(`${FULL}: cut`);
       const data = scenario(plan.cut.ceiling);
       const opening = tokens(data.opening.map(({ text }) => text).join("\n") + data.kiln);
       const tools = tokens(data.ledger + data.stepOutput.slice(0, 2).join("\n"));
@@ -28,6 +30,8 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
       expect(cut.seams).toHaveLength(2);
       expect(baseline.seams).toEqual([]);
       expect(cut.steps).toEqual([1, 2, 3]);
+      expect(cut.stepRequests.map(({ request }) => request < cut.cuts[1]!)).toEqual([true, true, false]);
+      expect(Object.keys(cut.origins).sort()).toEqual(facts.map(({ id }) => id).sort());
       expect(baseline.steps).toEqual([1, 2, 3]);
       expect(cut.answers["topic-1"]).toContain("Ice");
       expect(cut.keeper.length).toBeGreaterThan(0);
@@ -49,10 +53,14 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
       expect(markdown).toMatch(/summary characters per cut [1-9]\d*, [1-9]\d*/);
       const kite = markdown.split("\n").find(line => line.startsWith("| probe-0 / kite "));
       expect(kite).toContain("summary index");
-      if (!full) expect(kite).toMatch(/ \| −[1-9]\d*, /);
+      expect(kite).toMatch(/ \| −[1-9]\d*, −[1-9]\d* \|$/);
+      for (const line of markdown.split("\n").filter(row => /^\| probe-0 \/ (kite|shipment|kiln|lantern|mosaic) /.test(row))) {
+        expect(line).not.toContain("unknown");
+      }
       const retention = full ? "default" : "long";
       expect(markdown).toContain(`cut ${retention}; baseline ${retention}.`);
       const raw = JSON.parse(await fs.readFile(reportPath.replace(/\.md$/, ".json"), "utf8"));
+      expect(raw.cut).toMatchObject({ seams: cut.seams, stepRequests: cut.stepRequests, origins: cut.origins });
       for (const run of [raw.cut, raw.baseline]) {
         expect(run.requests).toEqual(expect.arrayContaining([
           expect.objectContaining({ turn: "probe-0", cacheRetention: retention, messages: expect.any(Array) }),
@@ -91,7 +99,9 @@ it("rejects uncovered cuts, a misplaced second cut, and a seal first read during
     content: [{ type: "text", text: `Kiln seal: ${facts[2].value}\nFixture content` }], timestamp: 0,
   };
   requests[8]!.messages.push(kiln);
-  const run = { requests, seams: ["first", "second"], cuts: [1, 5], beforeProbe: [1, 2] };
+  const seam = (id: string) => ({ id, carried: { firstKept: "m_1", indexed: 0 } });
+  const stepsAt = (...indices: number[]) => indices.map((request, i) => ({ request, step: i + 1, turn: "ledger" }));
+  const run = { requests, seams: [seam("first"), seam("second")], cuts: [1, 5], beforeProbe: [1, 2], stepRequests: stepsAt(3, 4, 5) };
   const missingSeal = "Opening kiln turn did not receive a successful read_kiln result with the seal";
   const baseline = { ...run, seams: [], cuts: [], beforeProbe: [0, 0] };
   expect(scenarioIssues(run, false)).toEqual([missingSeal]);
@@ -101,11 +111,14 @@ it("rejects uncovered cuts, a misplaced second cut, and a seal first read during
   requests[0]!.messages.push({ ...kiln, toolCallId: "opening-retry" });
   expect(scenarioIssues(run, false)).toEqual([]);
   expect(scenarioIssues(baseline, true)).toEqual([]);
-  expect(scenarioIssues({ ...run, seams: ["first", "second", "extra"], cuts: [1, 2, 5], beforeProbe: [2, 3] }, false)).toEqual([
+  for (const stepRequests of [stepsAt(2, 3, 4), stepsAt(5, 6, 7), stepsAt(3, 4, 4)]) {
+    expect(scenarioIssues({ ...run, stepRequests }, false)).toEqual(["Second prefix break did not separate ordered ledger step executions"]);
+  }
+  expect(scenarioIssues({ ...run, seams: [...run.seams, seam("extra")], cuts: [1, 2, 5], beforeProbe: [2, 3] }, false)).toEqual([
     "Expected exactly one prefix break before each probe batch", "Second prefix break did not land mid ledger tool run",
   ]);
   expect(scenarioIssues({ ...run, cuts: [1, 6] }, false)).toEqual(["Second prefix break did not land mid ledger tool run"]);
-  expect(scenarioIssues({ ...run, seams: ["first", "second", "extra"], cuts: [1, 5, 8] }, false)).toEqual([
+  expect(scenarioIssues({ ...run, seams: [...run.seams, seam("extra")], cuts: [1, 5, 8] }, false)).toEqual([
     "Expected exactly one prefix break before each probe batch",
   ]);
 });
@@ -127,4 +140,25 @@ it("requires an exact paid opt-in and keeps full mode off by default", () => {
   expect(() => requirePaid("true")).toThrow("Paid eval refused");
   expect(settings([])).toMatchObject({ models: [HAIKU], full: false });
   expect(settings(["--full"])).toMatchObject({ models: [FULL], full: true });
+});
+
+it("does not credit session_history for a quoted probe or a negated status", () => {
+  const history = (text: string): RequestRow => ({ at: "", estimate: 0, cacheRetention: "default", turn: "probe-1", messages: [
+    { role: "toolResult", toolName: "session_history", toolCallId: "h", isError: false, content: [{ type: "text", text }], timestamp: 0 },
+  ] });
+  const probeText = facts.map(({ id, question }) => `${id}: ${question}`).join("\n");
+  for (const quoted of [probeText, JSON.stringify(probeText).slice(1, -1)]) {
+    for (const fact of [facts[3], facts[4]]) {
+      expect(sources({ requests: [history(quoted)], expectedReply: "" }, "probe-1", fact)).toEqual([]);
+    }
+  }
+  const run = { requests: [history("The lantern inspection is pending. The mosaic inventory is not done. Is the mosaic inventory done? mosaic: pending or done")], expectedReply: "" };
+  expect(sources(run, "probe-1", facts[3])).toEqual(["session_history"]);
+  expect(sources(run, "probe-1", facts[4])).toEqual([]);
+});
+
+it("measures the same planted entry against changing feed boundaries", () => {
+  const history = [4, 8, 16, 0, 0].map((chars, i) => ({ id: `m_${i}`, chars }));
+  const seams = [0, 2].map((kept, i) => ({ id: `m_${i + 3}`, carried: { firstKept: `m_${kept}`, indexed: 0 } }));
+  expect(originDistances({ history, seams, cuts: [4, 9], origins: { kite: "m_1" } }, facts[0])).toBe("+1, −2");
 });

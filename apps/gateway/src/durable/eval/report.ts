@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { facts, probe, STEPS, score, tokens, type Fact } from "./scenario.js";
+import { facts, probe, STEPS, score, type Fact } from "./scenario.js";
 import type { RequestRow, Run } from "./runner.js";
 
 const text = (message: RequestRow["messages"][number]) => typeof message.content === "string" ? message.content
@@ -16,8 +16,17 @@ const summary = (message: RequestRow["messages"][number]) => {
 };
 const isProbe = (message: RequestRow["messages"][number]) =>
   message.role === "user" && text(message).endsWith(probe);
-const matches = (fact: Fact, value: string, expected: string) => Boolean(expected) && (
-  fact.id === "lantern" || fact.id === "mosaic" ? new RegExp(`${fact.id}[^.\\n]{0,30}\\b${expected}\\b`, "i").test(value) : value.includes(expected));
+// Drop quoted probe questions (raw or JSON-escaped): they list both statuses and reveal no answer.
+const unquoted = (value: string) => [probe, ...facts.map(({ id, question }) => `${id}: ${question}`)]
+  .flatMap(quoted => [quoted, JSON.stringify(quoted).slice(1, -1)])
+  .reduce((rest, quoted) => rest.replaceAll(quoted, ""), value);
+const matches = (fact: Fact, value: string, expected: string) => {
+  if (!expected) return false;
+  const content = unquoted(value);
+  if (fact.id !== "lantern" && fact.id !== "mosaic") return content.includes(expected);
+  const task = fact.id === "lantern" ? "lantern(?: inspection)?" : "mosaic(?: inventory)?";
+  return new RegExp(`\\b${task}(?: status)?(?:\\s*:\\s*|\\s+is\\s+(?:still\\s+)?)${expected}(?=\\s*(?:[.\\n";]|\\\\n|$))`, "i").test(content);
+};
 const expected = (run: Pick<Run, "expectedReply">, fact: Fact) => fact.id === "shipment" ? run.expectedReply : fact.value;
 
 export function sources(run: Pick<Run, "requests" | "expectedReply">, turn: string, fact: Fact) {
@@ -46,15 +55,15 @@ export function sources(run: Pick<Run, "requests" | "expectedReply">, turn: stri
   return [...found];
 }
 
-function originDistances(run: Run, fact: Fact) {
-  return run.cuts.map(i => {
-    const previous = run.requests[i - 1]!.messages;
-    const next = run.requests[i]!.messages.find(m => m.role !== "system" && summary(m) === undefined);
-    const boundary = previous.findIndex(m => JSON.stringify(m) === JSON.stringify(next));
-    const origin = previous.findIndex(m => m.role !== "system" && summary(m) === undefined && !isProbe(m) && matches(fact, text(m), expected(run, fact)));
-    if (origin < 0 || boundary < 0) return "unknown";
-    const distance = tokens(JSON.stringify(previous.slice(Math.min(origin, boundary), Math.max(origin, boundary))));
-    return origin < boundary ? `−${distance}` : `+${origin === boundary ? 0 : distance}`;
+export function originDistances(run: Pick<Run, "history" | "origins" | "seams" | "cuts">, fact: Fact) {
+  const origin = run.history.findIndex(entry => entry.id === run.origins[fact.id]);
+  return run.cuts.map((_, index) => {
+    const seam = run.seams[index];
+    const boundary = run.history.findIndex(entry => entry.id === seam?.carried.firstKept);
+    const cut = run.history.findIndex(entry => entry.id === seam?.id);
+    if (origin < 0 || boundary < 0 || cut < 0 || origin >= cut || boundary >= cut) return "unknown";
+    const chars = run.history.slice(Math.min(origin, boundary), Math.max(origin, boundary)).reduce((sum, entry) => sum + entry.chars, 0);
+    return `${origin < boundary ? "−" : "+"}${Math.ceil(chars / 4)}`;
   }).join(", ") || "n/a";
 }
 
@@ -100,7 +109,7 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
     `- Side effects (exactly one per step): ${verdict(sideEffects)}`,
     `- Cold requests (≤1 per cut): ${full ? "informational; " : ""}${coldCounts ? `${full ? "counts" : verdict(coldCounts.every(n => n <= 1))}: ${coldCounts.join(", ") || "none"}` : "unmeasurable"}`,
     "", "## Recall", "",
-    "Availability is not causality. Distances are estimated tokens from each cut boundary (negative = removed; positive = retained; unknown = not measurable from adjoining requests).", "",
+    "Availability is not causality. Distances use original entry IDs and the feed’s first retained entry (estimated tokens: negative = removed; zero or positive = retained; unknown = no matching entry before the cut).", "",
     "| Source | Cut | Baseline | Gap (points) | Warning |", "|---|---:|---:|---:|---|",
   ];
   for (const source of ["user", "reply", "tool"] as const) {

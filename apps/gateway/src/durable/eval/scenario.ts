@@ -66,7 +66,7 @@ export function scenario(ceiling: number) {
   return { opening, kiln, stepOutput, digests, relevance, ledger };
 }
 
-export function fixture(home: () => string, data: ReturnType<typeof scenario>) {
+export function fixture(home: () => string, data: ReturnType<typeof scenario>, onStep: (step: number) => void) {
   return defineExtension({ name: "compaction-eval", tools: [
     defineTool({ name: "read_kiln", description: "Read the invented kiln fixture file", parameters: { type: "object" },
       outputLimits: { maxBytes: Buffer.byteLength(data.kiln) },
@@ -77,6 +77,7 @@ export function fixture(home: () => string, data: ReturnType<typeof scenario>) {
     }, async execute({ step }) {
       if (!STEPS.includes(step)) throw new Error("Invalid ledger step");
       await fs.appendFile(path.join(home(), "steps.txt"), `${step}\n`);
+      onStep(step);
       return { output: [{ type: "text", text: data.stepOutput[step - 1]! }] };
     } }),
   ] });

@@ -1,11 +1,16 @@
 import { lazyStream, type Message, type SimpleStreamOptions, type Usage } from "@earendil-works/pi-ai-durable";
-import type { FeedWindow } from "@yoplai/shared";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { CompactionEntry, type ConversationId, type Cursor, type EntryRecord } from "@earendil-works/pi-durable";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import type { FeedItem, FeedWindow } from "@yoplai/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { vi } from "vitest";
 import { startDurableTestGateway, type RealTestModel } from "../../test-utils/durable-gateway.js";
 import type { DurableModelsFactory } from "../models.js";
+import { InputEntry } from "../state.js";
+import { durableStorePath } from "../store-path.js";
 import { CHEAP_CEILING, CHEAP_WINDOW, facts, fixture, FULL_CEILING, IDLE_MS, OUTPUT_CAP, probe, scenario, shipmentCode, STEPS, tokens } from "./scenario.js";
 
 export type Counts = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">;
@@ -18,7 +23,10 @@ type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; re
 export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number };
 export type Run = {
   budget: Budget; requests: RequestRow[]; keeper: KeeperRow[]; answers: Record<string, string>;
-  steps: number[]; seams: string[]; cuts: number[]; beforeProbe: number[]; gapRequest: number; gapMs: number;
+  steps: number[]; stepRequests: { step: number; turn: string; request: number }[];
+  seams: Pick<Extract<FeedItem, { role: "seam" }>, "id" | "carried">[];
+  cuts: number[]; beforeProbe: number[]; gapRequest: number; gapMs: number;
+  history: { id: string; chars: number }[]; origins: Partial<Record<typeof facts[number]["id"], string>>;
   expectedReply: string; issues: string[];
 };
 
@@ -31,7 +39,7 @@ export const breaks = (requests: RequestRow[]) => requests.slice(1).flatMap(({ m
   return JSON.stringify(messages.slice(0, prev.length)) === JSON.stringify(prev) ? [] : [index + 1];
 });
 
-export function scenarioIssues({ requests, seams, cuts, beforeProbe }: Pick<Run, "requests" | "seams" | "cuts" | "beforeProbe">, baseline: boolean) {
+export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequests }: Pick<Run, "requests" | "seams" | "cuts" | "beforeProbe" | "stepRequests">, baseline: boolean) {
   const issues: string[] = [];
   if (seams.length !== cuts.length) issues.push(`Seams (${seams.length}) differ from prefix breaks (${cuts.length})`);
   if (baseline) {
@@ -46,6 +54,14 @@ export function scenarioIssues({ requests, seams, cuts, beforeProbe }: Pick<Run,
     }
     if (second === undefined || requests[second - 1]?.turn !== "ledger" || requests[second]?.turn !== "ledger") {
       issues.push("Second prefix break did not land mid ledger tool run");
+    } else {
+      const ledger = stepRequests.filter(event => event.turn === "ledger");
+      // Request index `second` is the first after the break.
+      if (ledger.length !== STEPS.length || ledger.some(({ step, request }, i) =>
+        step !== STEPS[i] || request <= (ledger[i - 1]?.request ?? -1)) ||
+        !ledger.some(event => event.request < second) || !ledger.some(event => event.request >= second)) {
+        issues.push("Second prefix break did not separate ordered ledger step executions");
+      }
     }
   }
   const seal = `Kiln seal: ${facts[2].value}`;
@@ -118,6 +134,37 @@ export async function preflight(ref: string, variant: "cheap" | "full" | "baseli
   } finally { await gateway.close(); }
 }
 
+async function loggedHistory(home: string, conversationId: ConversationId, data: ReturnType<typeof scenario>, shipmentId: string, redact: (value: string) => string) {
+  const storage = await openNodeSqliteStorage(durableStorePath(home, "pilot"));
+  const entries: EntryRecord[] = [];
+  try {
+    let cursor: Cursor | undefined;
+    do {
+      const page = await storage.scanEntries({ conversationId, order: "ascending" }, 200, cursor, BACKGROUND_CONTEXT);
+      entries.push(...page.items);
+      cursor = page.next;
+    } while (cursor !== undefined);
+  } finally { await storage.close(BACKGROUND_CONTEXT); }
+  const openings = new Map(data.opening.map(({ id, text }) => [text, id]));
+  const origins: Run["origins"] = {};
+  let opening: string | undefined;
+  const history = entries.map(entry => {
+    const id = `m_${entry.id}`;
+    if (InputEntry.is(entry)) {
+      opening = openings.get(entry.data.text);
+      if (opening === "kite" || opening === "lantern" || opening === "mosaic") origins[opening] ??= id;
+    }
+    if (id === shipmentId && entry.model?.some(message => message.role === "assistant")) origins.shipment = id;
+    if (opening === "kiln" && entry.model?.some(message => message.role === "toolResult" && message.toolName === "read_kiln" && !message.isError &&
+      message.content.some(block => block.type === "text" && block.text.split("\n", 1)[0] === `Kiln seal: ${facts[2].value}`))) origins.kiln ??= id;
+    // Exclude summaries and bookkeeping; count original serialized message bodies once.
+    const chars = CompactionEntry.is(entry) ? 0 : (entry.model ?? []).reduce((sum, message) =>
+      sum + JSON.stringify(message, (_name, value: unknown) => typeof value === "string" ? redact(value) : value).length, 0);
+    return { id, chars };
+  });
+  return { history, origins };
+}
+
 const feedUrl = "/api/agents/pilot/feed?limit=200";
 export async function run(ref: string, variant: "cheap" | "full" | "baseline", budget: Budget, options: {
   faux?: boolean; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string;
@@ -126,6 +173,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
   const data = scenario(variant === "full" ? FULL_CEILING : CHEAP_CEILING);
   const requests: RequestRow[] = [];
   const keeper: KeeperRow[] = [];
+  const stepRequests: Run["stepRequests"] = [];
   let home = "";
   let turn = "";
   const redact = (value: string) => options.apiKey ? value.replaceAll(options.apiKey, "[redacted]") : value;
@@ -135,7 +183,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     } },
     fauxLimits: options.faux ? { contextWindow: budget.contextWindow, maxTokens: budget.maxTokens } : undefined,
     fixtureExtensions: async () => [(await import("../../session-history/index.js")).sessionHistoryExtension],
-    fixture: { extension: fixture(() => home, data) },
+    fixture: { extension: fixture(() => home, data, step => stepRequests.push({ step, turn, request: requests.length - 1 })) },
     wrapModels: observe(requests, () => turn, redact),
     extraYaml: "toolDeferral: { enabled: false }\nretryMaxAttempts: 1" + (options.long ? "\nsandbox:\n  env: { PI_CACHE_RETENTION: long }" : ""),
   });
@@ -157,7 +205,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
   type Script = Parameters<typeof gateway.script>[number];
   const warm = { input: 1200, output: 20, cacheRead: 2200, cacheWrite: 0 };
   const use = (content: string) => ({ content, usage: warm });
-  let seams: string[] = [];
+  let seams: Run["seams"] = [];
   async function send(id: string, text: string, ...script: Script[]) {
     turn = id;
     if (options.faux) gateway.script(...script);
@@ -166,7 +214,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     if (!feedResponse.ok) throw new Error(`Feed returned HTTP ${feedResponse.status}`);
     const feed: FeedWindow = await feedResponse.json();
     if (feed.hasBefore) issues.push(`${id}: feed was truncated`);
-    seams = feed.items.filter(item => item.role === "seam").map(item => item.id);
+    seams = feed.items.flatMap(item => item.role === "seam" ? [{ id: item.id, carried: item.carried }] : []);
     const last = feed.items.at(-1);
     if (!response.ok || last?.role !== "assistant") issues.push(`${id}: no settled answer (HTTP ${response.status})`);
     else {
@@ -215,20 +263,22 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
         { content: { tool: "read_kiln", id: `probe-kiln-${index}` }, usage: warm }, use(reply));
     }
     const cuts = breaks(requests);
-    issues.push(...scenarioIssues({ requests, seams, cuts, beforeProbe }, baseline));
+    issues.push(...scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequests }, baseline));
     if (requests.some(row => !row.stopped || row.stopped === "error" || row.stopped === "aborted")) issues.push("Incomplete or failed model request");
     if (!baseline && !options.faux && gapMs < IDLE_MS) issues.push("Idle gap was shorter than six minutes");
     const steps = (await fs.readFile(path.join(home, "steps.txt"), "utf8")).trim().split("\n").filter(Boolean).map(Number);
-    return { budget, requests, keeper, answers, steps, seams, cuts, beforeProbe, gapRequest, gapMs, expectedReply, issues } satisfies Run;
+    const conversationId = await gateway.mainConversationId("local") as ConversationId | undefined;
+    const journal = conversationId ? await loggedHistory(home, conversationId, data, shipmentId, redact) : { history: [], origins: {} };
+    return { ...journal, budget, requests, keeper, answers, steps, stepRequests, seams, cuts, beforeProbe, gapRequest, gapMs, expectedReply, issues } satisfies Run;
   } finally {
     await gateway.close();
     maintenance.mockRestore();
   }
 }
 
-export function projection(pairs: { model: string; cut: Run; baseline: Run }[]) {
+export function projection(pairs: { model: string; full: boolean; cut: Run; baseline: Run }[]) {
   const total = (run: Run) => run.requests.reduce((sum, row) => sum + row.estimate + run.budget.maxTokens, 0);
-  const lines = pairs.map(({ model, cut, baseline }) => `${model}${model.includes("deepseek") ? " --full" : ""}: cut ${total(cut)} + baseline ${total(baseline)} = ${total(cut) + total(baseline)} tokens`);
+  const lines = pairs.map(({ model, full, cut, baseline }) => `${model}${full ? " --full" : ""}: cut ${total(cut)} + baseline ${total(baseline)} = ${total(cut) + total(baseline)} tokens`);
   // Batches group complete public turns: reserve one capped completion per scripted turn per run,
   // including catch-up, using one token per input byte plus system/framing room.
   const allowance = pairs.flatMap(({ cut, baseline }) => [cut, baseline]).reduce((sum, run) => sum + Object.keys(run.answers).length * 23_000, 0);
