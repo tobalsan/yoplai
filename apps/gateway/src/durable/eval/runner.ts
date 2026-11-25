@@ -11,7 +11,7 @@ import { startDurableTestGateway, type RealTestModel } from "../../test-utils/du
 import type { DurableModelsFactory } from "../models.js";
 import { InputEntry } from "../state.js";
 import { durableStorePath } from "../store-path.js";
-import { CHEAP_CEILING, CHEAP_WINDOW, facts, fixture, FULL_CEILING, IDLE_MS, OUTPUT_CAP, probe, scenario, shipmentCode, STEPS, tokens } from "./scenario.js";
+import { CHEAP_CEILING, CHEAP_WINDOW, facts, filler, fixture, FULL_CEILING, IDLE_MS, OUTPUT_CAP, probe, scenario, shipmentCode, STEPS, tokens } from "./scenario.js";
 
 export type Counts = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">;
 export type RequestRow = {
@@ -20,6 +20,8 @@ export type RequestRow = {
   usage?: Counts; stopped?: string;
 };
 type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; result?: "ok" | "failed" };
+type Padding = { id: string; chars: number };
+export type Drive = { opening: Padding[]; ledger: Padding[]; steps: number[] };
 export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number };
 export type Run = {
   budget: Budget; requests: RequestRow[]; keeper: KeeperRow[]; answers: Record<string, string>;
@@ -27,7 +29,7 @@ export type Run = {
   seams: Pick<Extract<FeedItem, { role: "seam" }>, "id" | "carried">[];
   cuts: number[]; beforeProbe: number[]; gapRequest: number; gapMs: number;
   history: { id: string; chars: number }[]; origins: Partial<Record<typeof facts[number]["id"], string>>;
-  expectedReply: string; issues: string[];
+  expectedReply: string; issues: string[]; drive: Drive;
 };
 
 function counts({ input, output, cacheRead, cacheWrite }: Counts): Counts {
@@ -79,7 +81,8 @@ export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequest
   return issues;
 }
 
-function observe(requests: RequestRow[], current: () => string, redact: (value: string) => string) {
+function observe(requests: RequestRow[], current: () => string, redact: (value: string) => string, fauxRatio?: number) {
+  let prefix = 0;
   return (factory: DurableModelsFactory): DurableModelsFactory => async (agent, policy) => {
     const models = await factory(agent, policy);
     const stream = models.streamSimple.bind(models);
@@ -92,6 +95,18 @@ function observe(requests: RequestRow[], current: () => string, redact: (value: 
       requests.push(row);
       async function* recorded() {
         for await (const event of stream(model, transcript, options)) {
+          if (event.type === "done" && fauxRatio !== undefined) {
+            const prev = requests.at(-2);
+            const prompt = Math.ceil(row.estimate * fauxRatio);
+            if (!prev) prefix = prompt;
+            const cold = !prev || JSON.stringify(row.messages.slice(0, prev.messages.length)) !== JSON.stringify(prev.messages)
+              || (row.turn === "probe-0" && prev.turn === "topic-0");
+            const cacheRead = cold ? 0 : Math.min(prompt, prefix + 1);
+            const input = prompt - cacheRead;
+            const output = Math.max(6, tokens(JSON.stringify(event.message.content)));
+            const usage = { ...event.message.usage, input, cacheRead, cacheWrite: 0, output, totalTokens: prompt + output };
+            event.message = { ...event.message, usage };
+          }
           const final = event.type === "done" ? event.message : event.type === "error" ? event.error : undefined;
           if (final) { row.usage = counts(final.usage); row.stopped = final.stopReason; }
           yield event;
@@ -171,12 +186,38 @@ async function loggedHistory(home: string, conversationId: ConversationId, data:
   return { history, origins };
 }
 
+// Durable starts with measured prompt + output, then charges new text at chars/3.5.
+const contextSize = (row?: RequestRow) => row?.usage && row.stopped !== "error" && row.stopped !== "aborted"
+  ? row.usage.input + row.usage.cacheRead + row.usage.cacheWrite + row.usage.output : 0;
+const payloadChars = (budget: number) => Math.ceil(3.5 * budget);
+const PADDING_CAP = 24;
+
+export function keeperCompletions() {
+  const pending = new Set<Promise<unknown>>();
+  return {
+    track<T>(promise: Promise<T>) {
+      pending.add(promise);
+      const remove = () => { pending.delete(promise); };
+      void promise.then(remove, remove);
+      return promise;
+    },
+    async close(closeGateway: () => Promise<void>) {
+      try { await closeGateway(); }
+      finally { await Promise.allSettled(pending); }
+    },
+  };
+}
+
 const feedUrl = "/api/agents/pilot/feed?limit=200";
 export async function run(ref: string, variant: "cheap" | "full" | "baseline", budget: Budget, options: {
-  faux?: boolean; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string;
+  faux?: boolean; fauxRatio?: number; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string; replay?: Drive;
 }) {
   const baseline = variant === "baseline";
-  const data = scenario(variant === "full" ? FULL_CEILING : CHEAP_CEILING);
+  const data = scenario();
+  const drive: Drive = { opening: [], ledger: [], steps: [] };
+  const size = () => contextSize(requests.at(-1));
+  const issues: string[] = [];
+  const chunk = Math.floor(budget.ceiling / 8);
   const requests: RequestRow[] = [];
   const keeper: KeeperRow[] = [];
   const stepRequests: Run["stepRequests"] = [];
@@ -189,28 +230,42 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     } },
     fauxLimits: options.faux ? { contextWindow: budget.contextWindow, maxTokens: budget.maxTokens } : undefined,
     fixtureExtensions: async () => [(await import("../../session-history/index.js")).sessionHistoryExtension],
-    fixture: { extension: fixture(() => home, data, step => stepRequests.push({ step, turn, request: requests.length - 1 })) },
-    wrapModels: observe(requests, () => turn, redact),
+    fixture: { extension: fixture(() => home, data, step => {
+      stepRequests.push({ step, turn, request: requests.length - 1 });
+      let chars = options.replay?.steps[step - 1] ?? 0;
+      if (!baseline && step < 3) {
+        const remaining = budget.ceiling - size();
+        // Re-measure at each tool call. The first result is deliberately sub-threshold;
+        // the second crosses using Durable's estimate for the as-yet unseen result.
+        const amount = step === 1 ? Math.floor(remaining * 0.45) : remaining + 128;
+        if (!size() || amount <= 0 || amount > budget.ceiling * 0.5 || remaining < 0) {
+          issues.push(`Ledger step ${step}: no safe output size (context ${size()}, remaining ${remaining})`);
+        } else {
+          chars = payloadChars(amount);
+        }
+      }
+      drive.steps[step - 1] = chars;
+      return chars ? filler(chars, 20 + step) : "Ledger sealed.";
+    }) },
+    wrapModels: observe(requests, () => turn, redact, options.faux ? options.fauxRatio ?? 1 : undefined),
     extraYaml: "toolDeferral: { enabled: false }\nretryMaxAttempts: 1" + (options.long ? "\nsandbox:\n  env: { PI_CACHE_RETENTION: long }" : ""),
   });
   home = gateway.home;
   const { MaintenanceCompletion, completeMaintenance } = await import("../../maintenance/completion.js");
-  const maintenance = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation(async (params) => {
+  const completions = keeperCompletions();
+  const maintenance = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation((params) => completions.track((async () => {
     const row: KeeperRow = { at: new Date().toISOString(), estimate: tokens(params.system + params.prompt), cap: params.maxTokens };
     keeper.push(row);
     const result = options.faux ? '{"topics":[]}' : await completeMaintenance(params, { onUsage: usage => { row.usage = counts(usage); } });
     row.result = result === null ? "failed" : "ok";
     return result;
-  });
+  })()));
   const answers: Record<string, string> = {};
   let shipmentId = "";
   const beforeProbe: number[] = [];
-  const issues: string[] = [];
   let gapMs = 0;
   let gapRequest = -1;
   type Script = Parameters<typeof gateway.script>[number];
-  const warm = { input: 1200, output: 20, cacheRead: 2200, cacheWrite: 0 };
-  const use = (content: string) => ({ content, usage: warm });
   let seams: Run["seams"] = [];
   async function send(id: string, text: string, ...script: Script[]) {
     turn = id;
@@ -228,6 +283,29 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       if (id === "shipment") shipmentId = last.id;
     }
   }
+  async function pad(phase: "opening" | "ledger", { id, chars }: Padding) {
+    drive[phase].push({ id, chars });
+    await send(id, "File this invented clipping. Reply only 'Noted'.\n" + filler(chars, 100 + drive[phase].length), "Noted.");
+  }
+  async function fill(phase: "opening" | "ledger", ready: () => boolean) {
+    if (baseline) {
+      for (const padding of options.replay?.[phase] ?? []) await pad(phase, padding);
+      return true;
+    }
+    for (let i = 0; i < PADDING_CAP && !ready(); i++) {
+      if (!size() || issues.length || seams.length > (phase === "opening" ? 0 : 1)) break;
+      await pad(phase, { id: `${phase}-padding-${i}`, chars: payloadChars(chunk) });
+    }
+    if (ready()) return true;
+    issues.push(`${phase}: padding did not reach target (cap ${PADDING_CAP}, used ${drive[phase].length}, context ${size()}, seams ${seams.length})`);
+    return false;
+  }
+  function headroom(label: string, expectedSeams: number) {
+    if (baseline) return true;
+    if (seams.length === expectedSeams && size() > 0 && size() < budget.ceiling * 0.84) return true;
+    issues.push(`${label}: expected ${expectedSeams} seams and probe headroom (got ${seams.length}, context ${size()}/${budget.ceiling})`);
+    return false;
+  }
   try {
     await fs.writeFile(path.join(home, "kiln.txt"), data.kiln);
     await fs.writeFile(path.join(home, "steps.txt"), "");
@@ -239,22 +317,21 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
         ] });
       }
       const short = opening.id === "shipment" ? "FEN-742" : opening.id === "kiln" ? "Kiln checked" : "Noted.";
-      // Faux exercises these two boundaries deterministically; real runs use measured provider usage.
-      const input = index === data.opening.length - 2 ? Math.floor((variant === "full" ? FULL_CEILING : CHEAP_CEILING) * 0.88) : 1200;
-      const usage = { input, output: 6, cacheRead: 50, cacheWrite: 50 };
-      await send(opening.id, opening.text, ...(opening.id === "kiln" ? [{ content: { tool: "read_kiln", id: "initial-kiln" }, usage: warm }] : []), { content: short, usage });
+      await send(opening.id, opening.text, ...(opening.id === "kiln" ? [{ tool: "read_kiln", id: "initial-kiln" }] : []), short);
     }
     const expectedReply = shipmentCode(answers.shipment ?? "");
     if (!expectedReply) issues.push("No valid reply-sourced shipment code");
-    for (const index of [0, 1]) {
+    const openingReady = await fill("opening", () => seams.length === 1);
+    for (const index of openingReady ? [0, 1] : []) {
       if (index === 1) {
-        const script = STEPS.map(step => ({ content: { tool: "record_eval_step", id: `step-${step}`, args: { step } }, usage: {
-          input: step === 2 ? Math.floor(budget.ceiling * 0.62) : 2600, cacheRead: step === 3 ? 0 : 2200, output: 30,
-        } }));
-        await send("ledger", data.ledger, ...script, use("The ledger is sealed."));
+        if (!await fill("ledger", () => seams.length === 1 && size() >= budget.ceiling * 0.54) || !headroom("Before ledger", 1)) break;
+        const script = STEPS.map(step => ({ tool: "record_eval_step", id: `step-${step}`, args: { step } }));
+        await send("ledger", data.ledger, ...script, "The ledger is sealed.");
       }
+      if (!headroom(`Before topic ${index}`, index + 1)) break;
       // First relevance question opens the post-cut cache prefix before the idle check.
-      await send(`topic-${index}`, data.relevance[index]!, use(index ? "Ice is less dense than liquid water." : "We see different fractions of the Moon's sunlit half."));
+      await send(`topic-${index}`, data.relevance[index]!, index ? "Ice is less dense than liquid water." : "We see different fractions of the Moon's sunlit half.");
+      if (!headroom(`Before probe ${index}`, index + 1)) break;
       if (index === 0 && !baseline) {
         const start = Date.now();
         await (options.idle ?? sleep)(IDLE_MS);
@@ -264,9 +341,8 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       beforeProbe.push(seams.length);
       const reply = facts.map(({ id, value }) => `${id}: ${id === "shipment" ? expectedReply : id === "kiln" && index === 1 && !baseline ? "unknown" : value}`).join("\n");
       await send(`probe-${index}`, probe,
-        { content: { tool: "session_history", id: `probe-history-${index}`, args: { action: "read", around: shipmentId, role: "assistant", n: 1 } },
-          usage: index === 0 && !baseline ? { ...warm, cacheRead: 0 } : warm },
-        { content: { tool: "read_kiln", id: `probe-kiln-${index}` }, usage: warm }, use(reply));
+        { tool: "session_history", id: `probe-history-${index}`, args: { action: "read", around: shipmentId, role: "assistant", n: 1 } },
+        { tool: "read_kiln", id: `probe-kiln-${index}` }, reply);
     }
     const cuts = breaks(requests);
     if (requests.some(row => !row.stopped || row.stopped === "error" || row.stopped === "aborted")) issues.push("Incomplete or failed model request");
@@ -275,19 +351,19 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     const conversationId = await gateway.mainConversationId("local") as ConversationId | undefined;
     const journal = conversationId ? await loggedHistory(home, conversationId, data, shipmentId, redact) : { history: [], origins: {} };
     issues.push(...scenarioIssues({ ...journal, requests, seams, cuts, beforeProbe, stepRequests }, baseline));
-    return { ...journal, budget, requests, keeper, answers, steps, stepRequests, seams, cuts, beforeProbe, gapRequest, gapMs, expectedReply, issues } satisfies Run;
+    return { ...journal, budget, requests, keeper, answers, steps, stepRequests, seams, cuts, beforeProbe, gapRequest, gapMs, expectedReply, issues, drive } satisfies Run;
   } finally {
-    await gateway.close();
-    maintenance.mockRestore();
+    try { await completions.close(gateway.close); }
+    finally { maintenance.mockRestore(); }
   }
 }
 
-export function projection(pairs: { model: string; full: boolean; cut: Run; baseline: Run }[]) {
-  const total = (run: Run) => run.requests.reduce((sum, row) => sum + row.estimate + run.budget.maxTokens, 0);
+export function projection(pairs: { model: string; full: boolean; cut: Run; baseline?: Run }[]) {
+  const total = (run?: Run) => run?.requests.reduce((sum, row) => sum + contextSize(row) - (row.usage?.output ?? 0) + run.budget.maxTokens, 0) ?? 0;
   const lines = pairs.map(({ model, full, cut, baseline }) => `${model}${full ? " --full" : ""}: cut ${total(cut)} + baseline ${total(baseline)} = ${total(cut) + total(baseline)} tokens`);
   // Batches group complete public turns: reserve one capped completion per scripted turn per run,
   // including catch-up, using one token per input byte plus system/framing room.
-  const allowance = pairs.flatMap(({ cut, baseline }) => [cut, baseline]).reduce((sum, run) => sum + Object.keys(run.answers).length * 23_000, 0);
+  const allowance = pairs.flatMap(({ cut, baseline }) => baseline ? [cut, baseline] : [cut]).reduce((sum, run) => sum + Object.keys(run.answers).length * 23_000, 0);
   const main = pairs.reduce((sum, { cut, baseline }) => sum + total(cut) + total(baseline), 0);
   return [...lines, `Keeper allowance: ${allowance} tokens`, `Total: ${main + allowance} tokens`].join("\n");
 }

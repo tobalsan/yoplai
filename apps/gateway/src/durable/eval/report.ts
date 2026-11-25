@@ -23,7 +23,10 @@ const unquoted = (value: string) => [probe, ...facts.map(({ id, question }) => `
 const matches = (fact: Fact, value: string, expected: string) => {
   if (!expected) return false;
   const content = unquoted(value);
-  if (fact.id !== "lantern" && fact.id !== "mosaic") return content.includes(expected);
+  if (fact.id !== "lantern" && fact.id !== "mosaic") {
+    const identifier = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}_-])${identifier}(?![\\p{L}\\p{N}_-])`, "u").test(content);
+  }
   const task = fact.id === "lantern" ? "lantern(?: inspection)?" : "mosaic(?: inventory)?";
   return new RegExp(`\\b${task}(?: status)?(?:\\s*:\\s*|\\s+is\\s+(?:still\\s+)?)${expected}(?=\\s*(?:[.\\n";]|\\\\n|$))`, "i").test(content);
 };
@@ -85,29 +88,31 @@ const pct = (value: number) => (100 * value).toFixed(1);
 const verdict = (passed: boolean) => passed ? "PASS" : "FAIL";
 const usageCells = (usage?: RequestRow["usage"]) => usage ? `${usage.input} | ${usage.cacheRead} | ${usage.cacheWrite} | ${usage.output}` : "— | — | — | —";
 
-export async function report(dir: string, model: string, cut: Run, baseline: Run, full: boolean) {
+export async function report(dir: string, model: string, cut: Run, baseline: Run | undefined, full: boolean) {
   const rows = [0, 1].flatMap(batch => facts.map(fact => {
     const turn = `probe-${batch}`;
     const a = score(fact, cut.answers[turn] ?? "", expected(cut, fact));
-    const b = score(fact, baseline.answers[turn] ?? "", expected(baseline, fact));
+    const b = baseline && score(fact, baseline.answers[turn] ?? "", expected(baseline, fact));
     return { fact, turn, a, b };
   }));
   const rate = (items: typeof rows, key: "a" | "b") => items.filter(row => row[key]).length / items.length;
   const a = rate(rows, "a"), b = rate(rows, "b");
   const coldCounts = cold(cut);
   const counts = (run: Run) => STEPS.map(step => run.steps.filter(value => value === step).length);
-  const sideEffects = [cut, baseline].every(run => run.steps.length === STEPS.length && counts(run).every(n => n === 1));
-  const issues = [...cut.issues.map(s => `cut: ${s}`), ...baseline.issues.map(s => `baseline: ${s}`)];
+  const runs = baseline ? [["Cut", cut], ["Baseline", baseline]] as const : [["Cut", cut]] as const;
+  const sideEffects = runs.every(([, run]) => run.steps.length === STEPS.length && counts(run).every(n => n === 1));
+  const issues = [...cut.issues.map(s => `cut: ${s}`), ...(baseline?.issues ?? []).map(s => `baseline: ${s}`)];
   const lines = [
     `# Durable compaction eval — ${model}`, "", issues.length ? `**INVALID:** ${issues.join("; ")}` : "**Valid scenario.**", "",
-    `Stream cache retention (default = delegated to provider): cut ${retention(cut)}; baseline ${retention(baseline)}.`,
+    `Stream cache retention (default = delegated to provider): cut ${retention(cut)}; baseline ${baseline ? retention(baseline) : "skipped"}.`,
+    ...(!baseline ? ["Baseline skipped because the cut run was INVALID."] : []),
     full ? "Full-size cut vs cheap-scenario baseline on the same model (a full-size uncut baseline exceeds the 150k ceiling). Cache is informational only." :
       "Cheap cuts do not test the production 20k tail or 16k-character summary budget at scale. At 150k the tail is ~4× larger and the same summary takes ~7× less of the ceiling.",
     "OpenCode Go's Anthropic route does not use pi-ai Anthropic message threads; direct Anthropic may behave differently.",
     "Cold proxy: post-cut cacheRead ≤ P (first request input + cacheRead + cacheWrite). Requests are grouped through the next cut; exclude the idle-gap request. Pi normalizes missing cache fields to zero; without any positive cache usage the proxy is unmeasurable.",
     "Keeper calls use separate completions. Both runs have a 20,000-byte transcript/memory prompt budget and a 2,000-token output cap.",
     "", "## Pass bars", "",
-    `- Recall (≤10 points below baseline): ${verdict((b - a) <= 0.1 + Number.EPSILON)} (${pct(a)}% vs ${pct(b)}%; Δ ${pct(a - b)} points)`,
+    `- Recall (≤10 points below baseline): ${baseline ? `${verdict((b - a) <= 0.1 + Number.EPSILON)} (${pct(a)}% vs ${pct(b)}%; Δ ${pct(a - b)} points)` : `not compared (${pct(a)}% cut)`}`,
     `- Side effects (exactly one per step): ${verdict(sideEffects)}`,
     `- Cold requests (≤1 per cut): ${full ? "informational; " : ""}${coldCounts ? `${full ? "counts" : verdict(coldCounts.every(n => n <= 1))}: ${coldCounts.join(", ") || "none"}` : "unmeasurable"}`,
     "", "## Recall", "",
@@ -117,20 +122,20 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
   for (const source of ["user", "reply", "tool"] as const) {
     const items = rows.filter(row => row.fact.source === source);
     const x = rate(items, "a"), y = rate(items, "b");
-    lines.push(`| ${source} | ${pct(x)}% | ${pct(y)}% | ${pct(x - y)} | ${x < 0.7 ? "⚠ source below 70%" : "—"} |`);
+    lines.push(`| ${source} | ${pct(x)}% | ${baseline ? pct(y) + "%" : "—"} | ${baseline ? pct(x - y) : "—"} | ${x < 0.7 ? "⚠ source below 70%" : "—"} |`);
   }
   lines.push("", "| Probe / fact | Cut result / answer | Baseline result / answer | Cut available sources | Baseline available sources | Cut distances |",
     "|---|---|---|---|---|---|");
   for (const { fact, turn, a: hit, b: baseHit } of rows) {
     const excerpt = (run: Run) => cell((run.answers[turn]?.split("\n").find(line => line.includes(`${fact.id}:`)) ?? run.answers[turn] ?? "—").slice(0, 160));
-    lines.push(`| ${turn} / ${fact.id} (${fact.source}) | ${hit ? "hit" : "miss"}: ${excerpt(cut)} | ${baseHit ? "hit" : "miss"}: ${excerpt(baseline)} | ${hit ? sources(cut, turn, fact).join(", ") || "none found" : "—"} | ${baseHit ? sources(baseline, turn, fact).join(", ") || "none found" : "—"} | ${originDistances(cut, fact)} |`);
+    lines.push(`| ${turn} / ${fact.id} (${fact.source}) | ${hit ? "hit" : "miss"}: ${excerpt(cut)} | ${baseline ? `${baseHit ? "hit" : "miss"}: ${excerpt(baseline)}` : "—"} | ${hit ? sources(cut, turn, fact).join(", ") || "none found" : "—"} | ${baseline && baseHit ? sources(baseline, turn, fact).join(", ") || "none found" : "—"} | ${originDistances(cut, fact)} |`);
   }
   lines.push("", "## Side effects", "", "| Step | Cut | Baseline |", "|---|---:|---:|");
-  for (const [i, step] of STEPS.entries()) lines.push(`| ${step} | ${counts(cut)[i]} | ${counts(baseline)[i]} |`);
+  for (const [i, step] of STEPS.entries()) lines.push(`| ${step} | ${counts(cut)[i]} | ${baseline ? counts(baseline)[i] : "—"} |`);
   lines.push("", "## Relevance", "", "| New topic | Cut answer | Baseline answer |", "|---|---|---|");
-  for (const [i, label] of ["Moon phases", "Floating ice"].entries()) lines.push(`| ${label} | ${cell(cut.answers[`topic-${i}`] ?? "—")} | ${cell(baseline.answers[`topic-${i}`] ?? "—")} |`);
+  for (const [i, label] of ["Moon phases", "Floating ice"].entries()) lines.push(`| ${label} | ${cell(cut.answers[`topic-${i}`] ?? "—")} | ${cell(baseline?.answers[`topic-${i}`] ?? "—")} |`);
   lines.push("", "## Cache and request usage");
-  for (const [label, run] of [["Cut", cut], ["Baseline", baseline]] as const) {
+  for (const [label, run] of runs) {
     const sizes = run.cuts.map(i => run.requests[i]!.messages.map(summary).find(body => body !== undefined)?.length ?? 0);
     lines.push("", `### ${label}: ceiling ${run.budget.ceiling}, tail ${run.budget.tail}, summary characters per cut ${sizes.join(", ") || "none"}`,
       "", `Seams: ${run.seams.length}; prefix breaks: ${run.cuts.length}; idle gap: ${run.gapRequest < 0 ? "none" : `${run.gapMs} ms`}.`, "",
@@ -141,17 +146,17 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
     });
   }
   lines.push("", "## Keeper completions", "", "| Run | Timestamp | Est. prompt | Output cap | Result | Input | Read | Write | Output |", "|---|---|---:|---:|---|---:|---:|---:|---:|");
-  for (const [label, run] of [["Cut", cut], ["Baseline", baseline]] as const) for (const row of run.keeper) {
+  for (const [label, run] of runs) for (const row of run.keeper) {
     lines.push(`| ${label} | ${row.at} | ${row.estimate} | ${row.cap} | ${row.result ?? "pending"} | ${usageCells(row.usage)} |`);
   }
   lines.push("", "## Recommendations", "",
-    `- Summary kind: no change; data insufficient (${pct(a - b)} point recall gap; no alternate summary tested).`,
+    `- Summary kind: no change; data insufficient (${baseline ? `${pct(a - b)} point recall gap` : "no baseline"}; no alternate summary tested).`,
     `- Ceiling: no change; data insufficient (${cut.budget.ceiling} tokens; cold counts ${coldCounts?.join(", ") || "unmeasurable"}).`,
     `- Tail: no change; data insufficient (${cut.budget.tail} tokens; see per-fact distances; no alternate tail tested).`,
     "", "The companion JSON retains the original request context for auditing probe availability and prefix breaks.", "");
   await fs.mkdir(dir, { recursive: true });
   const base = path.join(dir, model.replace(/[^a-z\d.-]+/gi, "-") + (full ? "-full" : ""));
-  await fs.writeFile(`${base}.json`, JSON.stringify({ cut, baseline }, null, 2));
+  await fs.writeFile(`${base}.json`, JSON.stringify({ cut, baseline: baseline ?? null }, null, 2));
   await fs.writeFile(`${base}.md`, lines.join("\n"));
   return `${base}.md`;
 }

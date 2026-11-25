@@ -34,17 +34,17 @@ export function score(fact: Fact, answer: string, expected: string) {
   return values[0] === expected && !("stale" in fact && answer.includes(fact.stale));
 }
 
-// Varied invented prose rather than a single repeated token; still only a chars/4 estimate.
-function filler(target: number, seed: number) {
+// Varied invented prose rather than a single repeated token.
+export function filler(chars: number, seed: number) {
   const words = "orchard lantern cedar lagoon copper planet basket marble canvas willow teapot pebble meadow ribbon garden summer walnut amber kettle harbor linen saddle clover velvet acorn almond silver winter barley lichen tender chalk coral basin creek cradle petal feather thistle pine rust shell opal fern".split(" ");
   let state = seed;
-  return Array.from({ length: Math.ceil(target * 4 / 6) }, () => {
+  return Array.from({ length: Math.ceil(chars / 4) }, () => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
     return words[(state >>> 16) % words.length];
-  }).join(" ").slice(0, target * 4);
+  }).join(" ").slice(0, chars);
 }
 
-export function scenario(ceiling: number) {
+export function scenario() {
   const opening = [
     ["kite-old", "The old kite seal is Quillfeather-18. Acknowledge briefly without repeating the seal."],
     ["shipment", "Invent a shipment code in the format of three uppercase letters, hyphen, three digits. Reply with just that code."],
@@ -57,28 +57,26 @@ export function scenario(ceiling: number) {
     ["ferry", "File the ferry timetable clipping. Acknowledge briefly."],
     ["planetarium", "File the planetarium exhibit clipping. Acknowledge briefly."],
     ["loom", "File the loom exhibit clipping. Acknowledge briefly."],
-  ].map(([id, text], index) => ({ id: id!, text: text! + (index < 4 ? "" : "\nInvented clipping (ignore): " + filler(Math.ceil(ceiling * 0.147), index)) }));
-  const kiln = `Kiln seal: ${facts[2].value}\n` + filler(Math.ceil(ceiling * 0.09), 19);
-  const stepOutput = [filler(Math.ceil(ceiling * 0.54), 20), filler(Math.ceil(ceiling * 0.49), 21), "Ledger sealed."];
+  ].map(([id, text]) => ({ id: id!, text: text! }));
+  const kiln = `Kiln seal: ${facts[2].value}\n` + filler(2_000, 19);
   const digests = ["Belfry digest: chimes varnished.", "Aquarium digest: spare filter delivered.", "Folio digest: blank dividers filed."];
   const relevance = ["New topic: why does the Moon show phases? Answer in one sentence.", "New topic: why does ice float? Answer in one sentence."];
   const ledger = "Call record_eval_step once each for steps 1, 2, and 3 in that order. Call only one step per tool round; wait for its result before proceeding. Do not repeat a completed step. Then give a one-sentence confirmation.";
-  return { opening, kiln, stepOutput, digests, relevance, ledger };
+  return { opening, kiln, digests, relevance, ledger };
 }
 
-export function fixture(home: () => string, data: ReturnType<typeof scenario>, onStep: (step: number) => void) {
+export function fixture(home: () => string, data: ReturnType<typeof scenario>, stepResult: (step: number) => string) {
   return defineExtension({ name: "compaction-eval", tools: [
     defineTool({ name: "read_kiln", description: "Read the invented kiln fixture file", parameters: { type: "object" },
       outputLimits: { maxBytes: Buffer.byteLength(data.kiln) },
       async execute() { return { output: [{ type: "text", text: await fs.readFile(path.join(home(), "kiln.txt"), "utf8") }] }; } }),
     defineTool({ name: "record_eval_step", description: "Append one numbered step to the eval ledger",
-      outputLimits: { maxBytes: Math.max(...data.stepOutput.map(value => Buffer.byteLength(value))) }, parameters: {
+      outputLimits: { maxBytes: FULL_CEILING * 2 }, parameters: {
       type: "object", properties: { step: { type: "number", enum: STEPS } }, required: ["step"],
     }, async execute({ step }) {
       if (!STEPS.includes(step)) throw new Error("Invalid ledger step");
       await fs.appendFile(path.join(home(), "steps.txt"), `${step}\n`);
-      onStep(step);
-      return { output: [{ type: "text", text: data.stepOutput[step - 1]! }] };
+      return { output: [{ type: "text", text: stepResult(step) }] };
     } }),
   ] });
 }

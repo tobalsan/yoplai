@@ -5,8 +5,8 @@ import { expect, it } from "vitest";
 import { emptyMemory, renderMemory } from "../memory.js";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
 import { cold, originDistances, report, sources } from "./report.js";
-import { projection, scenarioIssues, type RequestRow } from "./runner.js";
-import { facts, FULL, HAIKU, scenario, score, tokens } from "./scenario.js";
+import { keeperCompletions, projection, scenarioIssues, type RequestRow } from "./runner.js";
+import { facts, FULL, HAIKU, score } from "./scenario.js";
 
 it("drives cheap and full compaction scenarios through the gateway with Faux", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "compaction-eval-report-"));
@@ -19,15 +19,11 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
       const { cut, baseline } = measured;
       pairs.push(measured);
       if (full) expect(projection([{ ...measured, full: false }])).toContain(`${FULL}: cut`);
-      const data = scenario(plan.cut.ceiling);
-      const opening = tokens(data.opening.map(({ text }) => text).join("\n") + data.kiln);
-      const tools = tokens(data.ledger + data.stepOutput.slice(0, 2).join("\n"));
-      expect(opening).toBeGreaterThan(plan.cut.ceiling);
-      expect(tools).toBeGreaterThan(plan.cut.ceiling);
-      expect(Math.max(...baseline.requests.map(row => row.estimate))).toBeLessThan(plan.baseline.ceiling / 2);
       expect(cut.issues, JSON.stringify({ cuts: cut.cuts.map(i => cut.requests[i]?.turn), seams: cut.seams, beforeProbe: cut.beforeProbe })).toEqual([]);
+      if (!baseline) throw new Error("Expected valid baseline");
+      expect(Math.max(...baseline.requests.map(row => row.estimate))).toBeLessThan(plan.baseline.ceiling / 2);
       expect(baseline.issues).toEqual([]);
-      expect(cut.cuts.map(i => cut.requests[i]?.turn)).toEqual(["loom", "ledger"]);
+      expect(cut.cuts.map(i => cut.requests[i]?.turn)).toEqual([cut.drive.opening.at(-1)?.id, "ledger"]);
       expect(cut.seams).toHaveLength(2);
       expect(baseline.seams).toEqual([]);
       expect(cut.steps).toEqual([1, 2, 3]);
@@ -39,7 +35,6 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
       expect(sources(cut, "probe-0", facts[1]), JSON.stringify(cut.requests.filter(row => row.turn === "probe-0").at(-1)?.messages.filter(m => m.role === "toolResult" && m.toolName.includes("history")))).toContain("session_history");
       expect(sources(cut, "probe-0", facts[2])).toContain("tool re-read");
       expect(cut.requests[cut.gapRequest]?.usage?.cacheRead).toBe(0);
-      expect(cut.requests.some(row => row.turn === "ledger" && JSON.stringify(row.messages).includes(data.stepOutput[1]!))).toBe(true);
       expect(cold(cut), JSON.stringify(cut.requests.map((row, i) => [row.turn, cut.cuts.includes(i), row.usage?.cacheRead, i === cut.gapRequest]))).toEqual([1, 1]);
       expect(cold({ ...cut, requests: cut.requests.map(row => ({ ...row, usage: undefined })) })).toBeUndefined();
       const reportPath = await report(dir, model, cut, baseline, full);
@@ -75,6 +70,46 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
     console.log(projected);
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }, 60_000);
+
+it.each([0.7, 1.4])("keeps both cut placements at %s× chars/4", async fauxRatio => {
+  for (const model of [HAIKU, FULL]) {
+    const { cut, baseline } = await pair(await prepare(model, model === FULL), { faux: true, fauxRatio });
+    expect(cut.issues).toEqual([]);
+    expect(cut.steps).toEqual([1, 2, 3]);
+    expect(cut.beforeProbe).toEqual([1, 2]);
+    expect(baseline?.issues).toEqual([]);
+  }
+}, 60_000);
+
+it("stops at the padding cap and skips the baseline for an invalid cut", async () => {
+  const { cut, baseline } = await pair(await prepare(HAIKU, false), { faux: true, fauxRatio: 0.1 });
+  expect(cut.issues).toContainEqual(expect.stringContaining("opening: padding did not reach target (cap 24, used 24"));
+  expect(baseline).toBeUndefined();
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "compaction-eval-skipped-"));
+  try {
+    const file = await report(dir, HAIKU, cut, baseline, false);
+    expect(await fs.readFile(file, "utf8")).toContain("Baseline skipped because the cut run was INVALID.");
+    expect(JSON.parse(await fs.readFile(file.replace(/\.md$/, ".json"), "utf8")).baseline).toBeNull();
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+}, 60_000);
+
+it("drains already-started keeper calls after shutdown before exposing their rows", async () => {
+  const completions = keeperCompletions();
+  const usage = { input: 123, cacheRead: 5, cacheWrite: 6, output: 7 };
+  let finish!: (counts: typeof usage) => void;
+  const provider = new Promise<typeof usage>(resolve => { finish = resolve; });
+  const row: { result: string; usage?: typeof usage } = { result: "pending" };
+  void completions.track(provider.then(counts => { Object.assign(row, { result: "ok", usage: counts }); }));
+  let closed = false;
+  let serialized: string | undefined;
+  const teardown = completions.close(async () => { closed = true; }).then(() => { serialized = JSON.stringify(row); });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(closed).toBe(true);
+  expect(serialized).toBeUndefined();
+  finish(usage);
+  await teardown;
+  expect(serialized).toBe(JSON.stringify({ result: "ok", usage }));
+});
 
 it("attributes wrapped summary sections even when the index quotes an older probe", () => {
   const memory = renderMemory({ ...emptyMemory(), topics: [
@@ -158,10 +193,13 @@ it("requires an exact paid opt-in and keeps full mode off by default", () => {
   expect(settings(["--full"])).toMatchObject({ models: [FULL], full: true });
 });
 
-it("does not credit session_history for a quoted probe or a negated status", () => {
+it("does not credit session_history for quoted probes, negated statuses, or near-miss identifiers", () => {
   const history = (text: string): RequestRow => ({ at: "", estimate: 0, cacheRetention: "default", turn: "probe-1", messages: [
     { role: "toolResult", toolName: "session_history", toolCallId: "h", isError: false, content: [{ type: "text", text }], timestamp: 0 },
   ] });
+  const identify = (text: string) => sources({ requests: [history(text)], expectedReply: "" }, "probe-1", facts[2]);
+  expect(identify("kiln: Amberflute-621; XAmberflute-62; Amberflute-62-extra")).toEqual([]);
+  expect(identify("kiln: (Amberflute-62).")).toEqual(["session_history"]);
   const probeText = facts.map(({ id, question }) => `${id}: ${question}`).join("\n");
   for (const quoted of [probeText, JSON.stringify(probeText).slice(1, -1)]) {
     for (const fact of [facts[3], facts[4]]) {
