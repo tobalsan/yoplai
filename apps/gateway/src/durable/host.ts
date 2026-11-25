@@ -3,7 +3,7 @@ import path from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
   AgentDoc, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
-  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type Submission, type TaskId,
+  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type SettledSubmissionRecord, type Submission, type SubmissionId, type TaskId,
 } from "@earendil-works/pi-durable";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -12,7 +12,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
-  type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
+  type ChannelAdmission, type ChannelInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
@@ -35,6 +35,7 @@ import { durableInstructions } from "./prompt.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 import { durableStorePath } from "./store-path.js";
+import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
 
 const context = BACKGROUND_CONTEXT;
 const toolSearch = createToolSearchExtension();
@@ -43,14 +44,21 @@ export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
   fixture?: { extension: Extension; invisibleTools?: readonly string[] };
+  wakeDelivery?: () => void;
+  deliveryFixture?: DeliveryFixture;
 };
 
+type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string } | ChannelInput;
+const CHANNEL_NO_LONGER_ELIGIBLE = Symbol("channel-no-longer-eligible");
+
 export class DurableHost {
+  readonly deliveries: DeliveryQueue;
   private readonly feed: DurableFeed;
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
   private readonly listeners = new Map<string, Set<(event: WsServerMessage) => void>>();
+  private readonly feedListeners = new Map<ConversationId, Set<() => void>>();
 
   private constructor(
     private readonly harness: Harness,
@@ -65,6 +73,21 @@ export class DurableHost {
     private readonly review: ReturnType<typeof createReplyReview>,
     private readonly options: DurableHostOptions,
   ) {
+    this.deliveries = new DeliveryQueue(harness, agent.id, async (conversation, submission) => {
+      const status = await submission.status(context);
+      if (status.status === "queued" || status.status === "placed") return "waiting";
+      const result = await this.effectiveSettlement(conversation, status, false);
+      if (!result) return "waiting";
+      if (result.status === "unanswered") {
+        if (result.reason !== "aborted") await this.recordFailure(conversation, submission.id, result);
+        return undefined;
+      }
+      if (result.type === "write") return undefined;
+      const answer = await this.publicAnswer(conversation, result.answer);
+      if (answer?.text) return result.answer;
+    }, async (conversation, id) => (await this.publicAnswer(conversation, id))?.text, (id) => {
+      for (const changed of this.feedListeners.get(id) ?? []) changed();
+    }, options.deliveryFixture);
     this.feed = new DurableFeed(harness, agent, (selected) => {
       const names = tools.invisibleNames(selected);
       for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
@@ -73,7 +96,7 @@ export class DurableHost {
       const owner = this.owners.get(conversation.id);
       if (owner === undefined) return;
       return getMcpAppView({ agentId: agent.id, sessionId: DURABLE_MAIN_SESSION_ID, userId: owner === "local" ? undefined : owner }, callId);
-    });
+    }, this.deliveries);
   }
 
   static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions) {
@@ -169,32 +192,54 @@ export class DurableHost {
     { message, clientSendId }: { message: string; clientSendId: string },
     onEvent?: (event: StreamEvent) => void,
   ): Promise<RunAgentResult> {
+    const conversation = await this.openMain(sender.id);
+    const { submission, duplicate } = await this.admit(conversation, { surface: "web", sender, text: message, requestId: "web:" + clientSendId });
+    const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
+    return wait();
+  }
+
+  async submitChannel(input: ChannelInput, eligible: () => Promise<boolean>): Promise<ChannelAdmission> {
+    const conversation = await this.openMain(input.owner);
+    const admitted = await this.admit(conversation, input, eligible).catch((error: unknown) => {
+      if (error !== CHANNEL_NO_LONGER_ELIGIBLE && !(error instanceof DurableAccessDenied)) throw error;
+    });
+    if (!admitted) return { status: "not_durable" };
+    const { submission, duplicate } = admitted;
+    if (!duplicate) {
+      void this.attachSubmission(conversation, submission, input.owner, true)
+        .then((wait) => wait()).catch(() => { /* The public feed records settlement failures. */ });
+    }
+    return { status: "admitted", duplicate };
+  }
+
+  private async openMain(owner: string) {
     // Durable serializes commits on the Session line. The map and its ownerless
     // conversation are committed together before a separate admission.
     const id = await this.harness.commit(async (tx) => {
       const map = await tx.doc(MainMap);
-      const key = `main:${sender.id}`;
+      const key = `main:${owner}`;
       const existing = map.conversations[key] as ConversationId | undefined;
       if (existing !== undefined) return existing;
       const created = await tx.createConversation({ ownership: { kind: "ownerless" } });
       map.conversations[key] = created.id;
       return created.id;
     }, context);
-    this.owners.set(id, sender.id);
-    for (const opened of this.mainWaiters.get(sender.id) ?? []) opened(id);
+    this.owners.set(id, owner);
+    for (const opened of this.mainWaiters.get(owner) ?? []) opened(id);
     await this.registerProviderSession(id);
     await this.options.afterMainCommit?.();
     const conversation = await this.harness.conversation(id, context);
     if (!conversation) throw new Error("Could not open Durable Main.");
-    const { submission, duplicate } = await this.admitWeb(conversation, sender, message, "web:" + clientSendId);
-    const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
-    return wait();
+    return conversation;
   }
 
-  private async admitWeb(conversation: Conversation, sender: WebSender, message: string, requestId: string) {
+  private async admit(conversation: Conversation, source: Admission, eligible?: () => Promise<boolean>) {
+    const { requestId, surface, text } = source;
+    const name = source.surface === "web" ? source.sender.name : source.actor.name;
     const id = conversation.id;
     const existing = await conversation.commit((tx) => tx.submissionByRequest(id, requestId), context);
     if (existing) {
+      if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
       const submission = await this.harness.submission(existing.id, context);
       if (!submission) throw new Error("Could not find the admitted Durable input.");
       return { submission, duplicate: true };
@@ -206,29 +251,37 @@ export class DurableHost {
     const admission = previous.then(async () => {
       const hold = this.review.holdsReplies();
       if (hold) await conversation.waitForIdle(context);
-      const admit = (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => this.mutateConversation(id, () => conversation.commit(async (tx) => {
-        const existing = await tx.submissionByRequest(conversation.id, requestId);
-        if (existing) return { submissionId: existing.id, duplicate: true };
-        const live = await tx.doc(LiveDoc, id);
-        if (live.run?.afterRun) return undefined;
-        if (!live.run) {
-          if (!configuration || live.runFailure?.taskId !== seenFailure?.taskId) return undefined;
-          await configure(tx, id, configuration.change);
-          await setModelPolicy(tx, id, configuration.primary, configuration.fallback);
-        }
-        const submissionId = await conversation.submit(tx, {
-          type: "input",
-          requestId,
-          content: `[from ${sender.name.replace(/[\r\n[\]]/g, " ")} via web]\n${message}`,
-          whenBusy: "steer",
-          onAbort: "keep",
-          entry: {
-            kind: InputEntry.kind,
-            data: { timestamp: Date.now(), sender, text: message, surface: "web", route: { surface: "web", user: sender.id } },
-          },
-        });
-        return { submissionId, duplicate: false };
-      }, context));
+      const admit = (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => this.mutateConversation(id, async () => {
+        // Reviewed replies and fallback can delay the admission while the actor unlinks.
+        if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
+        return conversation.commit(async (tx) => {
+          const existing = await tx.submissionByRequest(conversation.id, requestId);
+          if (existing) return { submissionId: existing.id, duplicate: true };
+          const live = await tx.doc(LiveDoc, id);
+          if (live.run?.afterRun) return undefined;
+          if (!live.run) {
+            if (!configuration || live.runFailure?.taskId !== seenFailure?.taskId) return undefined;
+            await configure(tx, id, configuration.change);
+            await setModelPolicy(tx, id, configuration.primary, configuration.fallback);
+          }
+          const timestamp = Date.now();
+          const submissionId = await conversation.submit(tx, {
+            type: "input",
+            requestId,
+            content: `[from ${name.replace(/[\r\n[\]]/g, " ")} via ${surface}]\n${text}`,
+            whenBusy: "steer",
+            onAbort: "keep",
+            entry: {
+              kind: InputEntry.kind,
+              data: source.surface === "web"
+                ? { timestamp, text, surface, sender: source.sender, route: { surface: "web", user: source.sender.id } }
+                : { timestamp, text, surface, owner: source.owner, actor: source.actor, route: source.route },
+            },
+          });
+          if (source.surface !== "web") await this.deliveries.enqueue(tx, id, submissionId, source, timestamp);
+          return { submissionId, duplicate: false };
+        }, context);
+      });
       let admission;
       while (!admission) {
         const live = await this.harness.snapshot(LiveDoc, id, context);
@@ -465,6 +518,7 @@ export class DurableHost {
         throw error;
       } finally {
         await watch?.stop();
+        this.options.wakeDelivery?.();
         if (notify) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
       }
     };
@@ -479,75 +533,86 @@ export class DurableHost {
     this.publish(user, { type: "history_updated", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID });
   }
 
-  private async settle(conversation: Conversation, submission: Submission): Promise<{
-    response: RunAgentResult; answerTask?: TaskId; inputEntry?: EntryId; answerEntry?: EntryId;
-  }> {
-    const original = await submission.wait(context);
-    const result = original.status === "unanswered" && original.type === "input" && original.reason === "model_error"
-      ? await settleFallback(this.harness, conversation, submission.id, this.agent.id) ?? original
-      : original;
-    if (result.status === "unanswered") {
-      if (result.reason === "aborted") {
-        return { response: { payloads: [], meta: { durationMs: 0, sessionId: DURABLE_MAIN_SESSION_ID, aborted: true } } };
-      }
-      const kind = result.reason === "no_model" ||
-        (result.reason === "model_error" && typeof result.detail === "string" && result.detail.startsWith("Provider is not configured:"))
-        ? "provider_not_configured"
-        : durableFailureKind(result.detail);
-      // These legacy notices describe input removal or admin notifications.
-      const durableKind = kind === "safety_refusal" || kind === "quota" ? "generic" : kind;
-      const accessError = result.reason === "model_error" &&
-        typeof result.detail === "string" && isSafeModelAccessError(result.detail) ? result.detail : undefined;
-      const requestId = "failed:" + submission.id;
-      const recorded = await conversation.commit(async (tx) => {
-        if (await tx.submissionByRequest(conversation.id, requestId)) return false;
-        const phrase = durableKind === "provider_not_configured" ? "model provider not configured" : "model error";
-        await conversation.submit(tx, {
-          type: "write",
-          requestId,
-          entry: {
-            kind: FailureNoteEntry.kind,
-            data: { submissionId: submission.id, kind: durableKind, ...(accessError && { accessError }) },
-            model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
-          },
-        });
-        return true;
-      }, context);
-      if (recorded) {
-        logWarn("Durable turn failed", {
-          agentId: this.agent.id, conversationId: conversation.id, submissionId: submission.id,
-          reason: result.reason, kind: durableKind,
-        });
-      }
-      throw new Error(accessError ?? runFailureMessage(durableKind, this.agent.language ?? "en"));
-    }
-    if (result.status !== "done" || result.type === "write" || original.entry === undefined) {
-      throw new Error("Yoplai could not complete the turn.");
-    }
-    const [input, answer] = await conversation.commit(async (tx) => [
-      await tx.entry(original.entry!),
-      await tx.entry(result.answer),
-    ], context);
+  private async effectiveSettlement(conversation: Conversation, original: Awaited<ReturnType<Submission["wait"]>>, wait: boolean) {
+    if (original.status !== "unanswered" || original.type !== "input" || original.reason !== "model_error") return original;
+    const fallback = await settleFallback(this.harness, conversation, original.id, this.agent.id, wait);
+    return fallback === "waiting" ? undefined : fallback ?? original;
+  }
+
+  private async publicAnswer(conversation: Conversation, id: EntryId) {
+    const answer = await conversation.commit((tx) => tx.entry(id), context);
     const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
     const decision = answer?.byTaskId === undefined ? undefined : review?.byTask[answer.byTaskId];
     const assistant = answer?.model?.find((item) => item.role === "assistant");
     if (!assistant || (decision?.state !== "stream" &&
-        !(decision?.state === "approved" && decision.digest === draftDigest(assistant.content)))) {
-      throw new Error(WITHHELD_REPLY);
-    }
+        !(decision?.state === "approved" && decision.digest === draftDigest(assistant.content)))) return;
     const text = assistant.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
+    return { task: answer?.byTaskId, text, timestamp: decision.answeredAt ?? assistant.timestamp };
+  }
+
+  private async settle(conversation: Conversation, submission: Submission): Promise<{
+    response: RunAgentResult; answerTask?: TaskId; inputEntry?: EntryId; answerEntry?: EntryId;
+  }> {
+    const original = await submission.wait(context);
+    const result = await this.effectiveSettlement(conversation, original, true) ?? original;
+    if (result.status === "unanswered") {
+      if (result.reason === "aborted") {
+        return { response: { payloads: [], meta: { durationMs: 0, sessionId: DURABLE_MAIN_SESSION_ID, aborted: true } } };
+      }
+      throw new Error(await this.recordFailure(conversation, submission.id, result));
+    }
+    if (result.status !== "done" || result.type === "write" || original.entry === undefined) {
+      throw new Error("Yoplai could not complete the turn.");
+    }
+    const input = await conversation.commit((tx) => tx.entry(original.entry!), context);
+    const answer = await this.publicAnswer(conversation, result.answer);
+    if (!answer) throw new Error(WITHHELD_REPLY);
+    const { text } = answer;
     return {
-      answerTask: answer?.byTaskId,
+      answerTask: answer.task,
       inputEntry: original.entry,
       answerEntry: result.answer,
       response: {
         payloads: text ? [{ text }] : [],
         meta: {
-          durationMs: InputEntry.is(input) ? Math.max(0, (decision.answeredAt ?? assistant.timestamp) - input.data.timestamp) : 0,
+          durationMs: InputEntry.is(input) ? Math.max(0, answer.timestamp - input.data.timestamp) : 0,
           sessionId: DURABLE_MAIN_SESSION_ID,
         },
       },
     };
+  }
+
+  private async recordFailure(conversation: Conversation, submissionId: SubmissionId, result: Extract<SettledSubmissionRecord, { status: "unanswered" }>) {
+    const kind = result.reason === "no_model" ||
+      (result.reason === "model_error" && typeof result.detail === "string" && result.detail.startsWith("Provider is not configured:"))
+      ? "provider_not_configured"
+      : durableFailureKind(result.detail);
+    // These legacy notices describe input removal or admin notifications.
+    const durableKind = kind === "safety_refusal" || kind === "quota" ? "generic" : kind;
+    const accessError = result.reason === "model_error" &&
+      typeof result.detail === "string" && isSafeModelAccessError(result.detail) ? result.detail : undefined;
+    const requestId = "failed:" + submissionId;
+    const recorded = await conversation.commit(async (tx) => {
+      if (await tx.submissionByRequest(conversation.id, requestId)) return false;
+      const phrase = durableKind === "provider_not_configured" ? "model provider not configured" : "model error";
+      await conversation.submit(tx, {
+        type: "write",
+        requestId,
+        entry: {
+          kind: FailureNoteEntry.kind,
+          data: { submissionId, kind: durableKind, ...(accessError && { accessError }) },
+          model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
+        },
+      });
+      return true;
+    }, context);
+    if (recorded) {
+      logWarn("Durable turn failed", {
+        agentId: this.agent.id, conversationId: conversation.id, submissionId,
+        reason: result.reason, kind: durableKind,
+      });
+    }
+    return accessError ?? runFailureMessage(durableKind, this.agent.language ?? "en");
   }
 
   async subscribe(user: string, listener: (event: WsServerMessage) => void): Promise<() => void> {
@@ -687,18 +752,32 @@ export class DurableHost {
     if (!conversation) return "unavailable";
     const main = conversation;
     const watch = await main.watch(withAbortSignal(signal, context));
+    let latest: ConversationView | undefined = watch.value;
+    let refresh = Promise.resolve();
     const read = async (value: ConversationView | undefined, snapshot: boolean) => {
       const window = await this.feed.window(main, limit, undefined, value && observeFeed(value));
       if (window && !signal.aborted) publish(window, snapshot);
     };
+    const queueRead = (snapshot: boolean) => {
+      const next = refresh.then(() => read(latest, snapshot));
+      refresh = next.catch(() => { /* The feed or harness may be closing. */ });
+      return next;
+    };
+    const listeners = this.feedListeners.get(main.id) ?? new Set<() => void>();
+    this.feedListeners.set(main.id, listeners);
+    const changed = () => { void queueRead(false).catch(() => undefined); };
+    listeners.add(changed);
     try {
-      await read(watch.value, true);
+      await queueRead(true);
       watch.start(async (call) => {
-        await read(call.kind === "value" ? call.value : undefined, call.kind === "failed");
+        latest = call.kind === "value" ? call.value : undefined;
+        await queueRead(call.kind === "failed");
       });
       await watch.closed;
       return "unavailable";
     } finally {
+      listeners.delete(changed);
+      if (!listeners.size) this.feedListeners.delete(main.id);
       await watch.stop();
     }
   }

@@ -8,6 +8,11 @@ import { clearTimeout, setTimeout } from "node:timers";
 import { getAgentDataDir, resolveAgentConfigRoute, resolveBindHost, sanitizeAgentToolName } from "@yoplai/shared";
 import type {
   DeliverySink,
+  ChannelAdmission,
+  ChannelInput,
+  ChannelOwnerRequest,
+  ChannelOwnerResolver,
+  ChannelSurface,
   UserNotifier,
   AgentConfig,
   ExtensionAgentTool,
@@ -94,19 +99,35 @@ export function bindExtensionContext(context: ExtensionContext, extension: Pick<
   };
 }
 
-export function createExtensionContext(
-  _resolvedConfig: GatewayConfig
-): Parameters<Extension["start"]>[0] {
+export type GatewayExtensionContext = ExtensionContext & {
+  connectChannelInput: (submit: (input: ChannelInput) => Promise<ChannelAdmission>) => void;
+  resolveChannelOwner: (surface: ChannelSurface, input: ChannelOwnerRequest) => ReturnType<ChannelOwnerResolver>;
+};
+
+export function createExtensionContext(_resolvedConfig: GatewayConfig): GatewayExtensionContext {
   // Host-owned delivery sink registry. Extensions register in `start` and drop
   // their entry in `stop` via the returned unregister, so a restart re-registers
   // cleanly instead of leaving a stale sink behind.
   const deliverySinks = new Map<string, { sink: DeliverySink }>();
+  const ownerResolvers = new Map<ChannelSurface, ChannelOwnerResolver>();
+  let submitChannelInput: ((input: ChannelInput) => Promise<ChannelAdmission>) | undefined;
   const deliveryOffers = new Map<string, DeliveryOfferProvider>();
   const userNotifiers = new Map<string, UserNotifier>();
   let credentialStore: CredentialStore | undefined;
   const getCredentialStore = () => credentialStore ??= new CredentialStore();
 
   return {
+    connectChannelInput(submit) { submitChannelInput = submit; },
+    async submitChannelInput(input) {
+      return submitChannelInput ? submitChannelInput(input) : { status: "not_durable" };
+    },
+    registerChannelOwnerResolver(surface, resolver) {
+      ownerResolvers.set(surface, resolver);
+      return () => {
+        if (ownerResolvers.get(surface) === resolver) ownerResolvers.delete(surface);
+      };
+    },
+    resolveChannelOwner: (surface, input) => ownerResolvers.get(surface)?.(input),
     supportsFrameViews: true,
     canUserAccessAgent: async (userId, agentId) => {
       if (!loadConfig().extensions?.multiUser?.enabled) return true;
@@ -419,5 +440,5 @@ export function createExtensionContext(
         logError(String(msg), error ?? msg, isPlainObject(fields) ? fields : {});
       },
     },
-  } satisfies ExtensionContext;
+  } satisfies GatewayExtensionContext;
 }

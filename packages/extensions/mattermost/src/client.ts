@@ -202,7 +202,8 @@ export class MattermostRestClient {
     method: string,
     path: string,
     body: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
+    attempts = MAX_ATTEMPTS,
   ): Promise<Response> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
@@ -223,9 +224,10 @@ export class MattermostRestClient {
         headers,
         body: payload,
         signal,
+        ...(attempts === 1 ? { redirect: "error" } : {}),
       });
       if (response.ok) return response;
-      if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+      if (RETRYABLE_STATUS.has(response.status) && attempt < attempts) {
         await response.body?.cancel();
         // Mattermost's rate limiter says when the bucket refills.
         const reset = Number(response.headers.get("x-ratelimit-reset"));
@@ -263,7 +265,8 @@ export class MattermostRestClient {
     path: string,
     body?: unknown,
     caller?: AbortSignal,
-    timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    attempts = MAX_ATTEMPTS,
   ): Promise<T> {
     return this.withDeadline(
       method,
@@ -271,7 +274,7 @@ export class MattermostRestClient {
       caller,
       timeoutMs,
       async (signal) => {
-        const response = await this.sendWithRetries(method, path, body, signal);
+        const response = await this.sendWithRetries(method, path, body, signal, attempts);
         if (response.headers.get("content-type")?.startsWith("text/html")) {
           throw new MattermostUrlError(response.status, method, path);
         }
@@ -335,9 +338,10 @@ export class MattermostRestClient {
 
   createPost(
     input: CreatePostInput,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    { singleAttempt = false } = {},
   ): Promise<MattermostPost> {
-    return this.json("POST", "/posts", input, signal);
+    return this.json("POST", "/posts", input, signal, undefined, singleAttempt ? 1 : MAX_ATTEMPTS);
   }
 
   /** Posts created or changed in a channel since `since` (epoch ms), oldest first. */

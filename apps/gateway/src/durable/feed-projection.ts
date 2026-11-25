@@ -1,6 +1,6 @@
-import { AssistantEntry, ToolResultEntry, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
+import { AssistantEntry, ToolResultEntry, type EntryId, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
 import {
-  McpAppViewReferenceSchema, runFailureMessage, type ContentBlock, type FeedDetail, type FeedHit, type FeedItem, type FeedLive, type FeedToolCall, type FullHistoryMessage,
+  McpAppViewReferenceSchema, runFailureMessage, type ContentBlock, type FeedDelivery, type FeedDetail, type FeedHit, type FeedItem, type FeedLive, type FeedToolCall, type FullHistoryMessage,
   type McpAppViewReference, type ModelMeta, type RunFailureKind, type ToolCallBlock,
 } from "@yoplai/shared";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
@@ -30,9 +30,9 @@ type PublicBlock = Exclude<ContentBlock, ToolCallBlock> | PublicToolCall;
 type ToolResult = { message: PublicResult; nested: Array<{ call: PublicToolCall; message: PublicResult }> };
 type PublicAssistant = Omit<Extract<FullHistoryMessage, { role: "assistant" }>, "content"> & { content: PublicBlock[] };
 type PublicRecord =
-  | { kind: "user"; id: string; sender: string; message: Extract<FullHistoryMessage, { role: "user" }> }
+  | { kind: "user"; id: string; sender: string; surface: NonNullable<Extract<FeedItem, { role: "user" }>["surface"]>; message: Extract<FullHistoryMessage, { role: "user" }> }
   | { kind: "failure"; id: string; message: PublicAssistant & { meta: { failure: NonNullable<ModelMeta["failure"]>; stopReason: "error" } } }
-  | { kind: "assistant"; id: string; message: PublicAssistant }
+  | { kind: "assistant"; id: string; entryId: EntryId; message: PublicAssistant }
   | { kind: "result"; message: PublicResult };
 type FailureRecord = Extract<PublicRecord, { kind: "failure" }>;
 
@@ -167,7 +167,7 @@ export function projectRecords(
         return [block, ...(results.get(block.id)?.nested.map(({ call }) => call) ?? [])];
       });
       if (!content.length) continue;
-      records.push({ kind: "assistant", id: anchor ?? "m_" + entry.id, message: {
+      records.push({ kind: "assistant", id: anchor ?? "m_" + entry.id, entryId: entry.id, message: {
         role: "assistant", content, timestamp: decision?.answeredAt ?? message.timestamp,
         meta: { api: message.api, provider: message.provider, model: message.model, usage: publicUsage(message.usage), stopReason: message.stopReason },
       } });
@@ -187,7 +187,9 @@ export function projectRecords(
     if (InputEntry.is(entry)) {
       flush();
       anchor = undefined;
-      records.push({ kind: "user", id: "m_" + entry.id, sender: entry.data.sender.name, message: {
+      const { data } = entry;
+      const sender = "sender" in data ? data.sender.name : data.actor.name;
+      records.push({ kind: "user", id: "m_" + entry.id, sender, surface: data.surface ?? "web", message: {
         role: "user", timestamp: entry.data.timestamp, content: [{ type: "text", text: entry.data.text }],
       } });
     } else if (FailureNoteEntry.is(entry)) {
@@ -256,7 +258,7 @@ export function publicText(content: readonly ContentBlock[]) {
   return content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
 }
 
-export function feedItems(records: readonly PublicRecord[]): FeedItem[] {
+export function feedItems(records: readonly PublicRecord[], deliveries?: ReadonlyMap<EntryId, FeedDelivery[]>): FeedItem[] {
   const items: FeedItem[] = [];
   let answer: Extract<FeedItem, { role: "assistant" }> | undefined;
   for (const record of records) {
@@ -274,11 +276,13 @@ export function feedItems(records: readonly PublicRecord[]): FeedItem[] {
         if (text) answer.text = answer.text ? answer.text + "\n" + text : text;
         answer.toolCallCount += count;
       }
+      const answerDeliveries = deliveries?.get(record.entryId);
+      if (answerDeliveries) answer.deliveries = [...(answer.deliveries ?? []), ...answerDeliveries];
       continue;
     }
     answer = undefined;
     const base = { id, timestamp: message.timestamp, text: publicText(message.content) };
-    items.push(record.kind === "user" ? { ...base, role: "user", sender: record.sender }
+    items.push(record.kind === "user" ? { ...base, role: "user", sender: record.sender, surface: record.surface }
       : { ...base, role: "failure", kind: record.message.meta.failure.kind });
   }
   return items;

@@ -1,4 +1,5 @@
 import { readAgentChannelConfig } from "./config.js";
+import { limitChannelReply } from "@yoplai/shared";
 import type {
   AgentConfig,
   DeliveryDestination,
@@ -11,11 +12,11 @@ import type {
 } from "@yoplai/shared";
 import { z } from "zod";
 import type { MattermostBot } from "./bot.js";
-import { getActiveBot, getComponentBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot, getMattermostIngressBot } from "./bot-registry.js";
 import { getMattermostContextIfInitialized } from "./context.js";
 import { postReply } from "./handlers/message.js";
 import { withThreadBindings } from "./thread-session-bindings.js";
-import { splitMessage } from "./utils/chunk.js";
+import { MATTERMOST_MAX, splitMessage } from "./utils/chunk.js";
 
 const sendMessageSchema = z
   .object({
@@ -204,7 +205,17 @@ export function parseDestination(destination: DeliveryDestination): {
 export function createMattermostDeliverySink(
   ctx: ExtensionContext
 ): DeliverySink {
-  return async ({ agent, destination, text }) => {
+  return async ({ agent, destination, text, durable }) => {
+    if (durable) {
+      const { ingress, feedUrl } = durable;
+      const bot = getMattermostIngressBot(agent.id, ingress);
+      if (!bot || ingress.channel !== destination.channel) throw new Error("Mattermost DM bot unavailable.");
+      const post = await bot.rest.createPost({
+        channel_id: ingress.channel,
+        message: limitChannelReply(text, MATTERMOST_MAX, feedUrl ? `[Read in web chat](${feedUrl})` : undefined),
+      }, AbortSignal.timeout(10_000), { singleAttempt: true });
+      return { receipt: post.id };
+    }
     const input = { ...parseDestination(destination), text };
     const own = getActiveBot(agent.id);
     // Host deliveries have an explicit destination. A dedicated bot can

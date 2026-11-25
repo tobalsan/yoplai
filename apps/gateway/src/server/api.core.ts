@@ -306,6 +306,13 @@ api.get("/ops/metrics", async (c) => {
   return c.json({ metrics: opsMetrics?.snapshot() ?? [] });
 });
 
+api.get("/admin/durable/delivery", async (c) => {
+  if (!(await isSuperadminRequest(c))) return c.json({ error: "forbidden" }, 403);
+  c.header("Cache-Control", "no-store");
+  const durableWeb = (c.env as { durableWeb?: DurableWeb } | undefined)?.durableWeb;
+  return c.json(await durableWeb?.deliveryMetrics() ?? { queueAgeSeconds: 0, pending: 0, uncertain: 0 });
+});
+
 async function getAgentManagementRequest(c: Context) {
   const multiUser = loadConfig().extensions?.multiUser?.enabled === true;
   return agentManagementRequest(multiUser, multiUser ? await getRequestUserId(c) : undefined);

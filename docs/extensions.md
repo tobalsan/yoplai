@@ -124,6 +124,22 @@ Slack and Threadit sinks preserve the supplied thread or parent, and Threadit
 uses the agent's current board credentials. Sinks throw on delivery failure.
 Telegram and Discord delivery stays at the chat/channel level.
 
+Slack and Mattermost register an optional `ctx.registerChannelOwnerResolver`
+and submit eligible DMs with `ctx.submitChannelInput`. Pass the verified
+speaker, bound owner, stable platform request ID and reply route. The route
+records the ingress workspace or server, bot key and channel. An `admitted`
+result transfers delivery to the gateway, including on duplicate admission.
+A `not_durable` result uses the legacy route.
+The verified envelope establishes the DM at admission. The resolver also
+receives `verifyDestination: true` before delivery to recheck the channel
+type and participants with the provider.
+
+Delivery sinks can return `{ receipt: string }` for an acknowledged post.
+A Durable reply supplies `durable.ingress` and, when configured, a
+`durable.feedUrl`. Send through that ingress bot in one attempt and return the
+provider post ID. The worker records a missing receipt or thrown error as
+uncertain. Existing scheduler and tool callers can use sinks that return void.
+
 ### Chat commands and reply review
 
 Extensions can implement `getChatCommands(agent, context)` to return commands matched against the complete, trimmed incoming message. Each command's `run(context)` returns its reply without a model turn. `ExtensionTurnContext` extends the normal hook context with the resolved `workspaceDir` and `sessionId`.

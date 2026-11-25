@@ -36,7 +36,7 @@ it("groups public rounds behind their first entry and ignores unknown entries an
   const project = (entries: EntryRecord[]) => projectRecords(entries, decisions, new Set(), "en");
   const early = project([input, firstRound, ignored]);
   expect(feedItems(early)).toEqual([
-    { id: "m_10", role: "user", sender: "Casey", text: "Check the orchard", timestamp: 100 },
+    { id: "m_10", role: "user", sender: "Casey", surface: "web", text: "Check the orchard", timestamp: 100 },
     { id: "m_11", role: "assistant", text: "", toolCallCount: 1, timestamp: 110 },
   ]);
   const settled = project([input, firstRound, ignored, result, finalRound]);

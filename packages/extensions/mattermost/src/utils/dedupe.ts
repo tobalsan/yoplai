@@ -17,4 +17,8 @@ export class RecentIds {
     }
     return true;
   }
+
+  release(id: string): void {
+    this.ids.delete(id);
+  }
 }

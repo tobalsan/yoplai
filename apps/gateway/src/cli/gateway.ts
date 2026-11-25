@@ -106,7 +106,7 @@ export async function startGatewayCommand(
     await extension.start(bindExtensionContext(extensionContext, extension));
   }, buildInnerApi, innerApi);
 
-  const server = startServer(port, opts.host, extensionRuntime);
+  const server = startServer(port, opts.host, extensionRuntime, { channelContext: extensionContext });
   startGatewayHotReload(runtimeConfig, {
     onError(error) {
       console.warn(

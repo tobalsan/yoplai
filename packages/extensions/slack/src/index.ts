@@ -20,6 +20,7 @@ import {
   getActiveBots,
   getComponentBot,
   registerComponentBot,
+  resolveSlackDmOwner,
 } from "./bot-registry.js";
 import {
   clearSlackClientCache,
@@ -106,6 +107,7 @@ export {
 let unregisterConnectLinks: (() => void) | undefined;
 let unregisterPairingLinks: (() => void) | undefined;
 let unregisterDeliverySink: (() => void) | undefined;
+let unregisterOwnerResolver: (() => void) | undefined;
 let unregisterUserNotifier: (() => void) | undefined;
 
 const slackExtension: Extension = {
@@ -140,6 +142,7 @@ const slackExtension: Extension = {
     return slackAgentTools();
   },
   async start(ctx) {
+    unregisterOwnerResolver = ctx.registerChannelOwnerResolver?.("slack", resolveSlackDmOwner);
     unregisterConnectLinks = registerCredentialConnectLinkProvider(createCredentialConnectLink);
     unregisterPairingLinks = registerSlackPairingLinkProvider(async (context) => {
       const pair = slackAgentTools().find((tool) => tool.name === "slack.pair")!;
@@ -173,6 +176,8 @@ const slackExtension: Extension = {
   },
   onConfigReload: () => reconcileBots(getSlackContext()),
   async stop() {
+    unregisterOwnerResolver?.();
+    unregisterOwnerResolver = undefined;
     unregisterPairingLinks?.();
     unregisterPairingLinks = undefined;
     unregisterConnectLinks?.();

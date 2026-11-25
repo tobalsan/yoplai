@@ -105,12 +105,13 @@ export async function reserveFallback(conversation: Conversation, id: Submission
   }, context);
 }
 
-export async function settleFallback(harness: Harness, conversation: Conversation, id: SubmissionId, agentId: string): Promise<SettledSubmissionRecord | undefined> {
+export async function settleFallback(harness: Harness, conversation: Conversation, id: SubmissionId, agentId: string, wait: boolean): Promise<SettledSubmissionRecord | "waiting" | undefined> {
   const fallbackId = await reserveFallback(conversation, id);
   if (fallbackId === undefined) return;
   const submission = await harness.submission(fallbackId, context);
   if (!submission) throw new Error("Could not find the Durable fallback.");
-  const outcome = await submission.wait(context);
+  const outcome = wait ? await submission.wait(context) : await submission.status(context);
+  if (outcome.status === "placed" || outcome.status === "queued") return "waiting";
   const attempt = (await harness.snapshot(FallbackDoc, conversation.id, context))?.attempts[fallbackId];
   if (!attempt) return outcome;
   const log = await conversation.commit(async (tx) => {

@@ -8,6 +8,7 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | ------ | -------------------------- | -------------------------------------- |
 | GET    | `/health`                  | Process health                         |
 | GET    | `/api/ops/metrics`         | Per-agent gateway process counters     |
+| GET    | `/api/admin/durable/delivery` | Durable channel queue and uncertain deliveries |
 | GET    | `/api/capabilities`        | Enabled UI/runtime capabilities        |
 | GET    | `/api/agents`              | List available agents                  |
 | GET    | `/api/agents/:id`          | Agent detail for the caller            |
@@ -64,6 +65,16 @@ Multi-user gateways require a superadmin. Other authenticated accounts receive
 `interrupted_tool_calls` counts top-level Durable tool calls that ended as
 interrupted. Counters reset on each restart and rows appear when the counter
 first increments. Nested calls inside Code Mode are outside the count.
+
+`GET /api/admin/durable/delivery` reports persistent delivery state across
+agents. Multi-user gateways require a superadmin. Single-user gateways expose
+it to the local caller. `pending` counts routes awaiting settlement and effects
+awaiting send. `queueAgeSeconds` is the age of the oldest of these, or zero when
+the queue is empty. `uncertain` counts effects without a confirmed outcome.
+
+```json
+{ "queueAgeSeconds": 21.5, "pending": 2, "uncertain": 1 }
+```
 
 ## Desktop setup and model access
 
@@ -258,6 +269,12 @@ The model and the transcript receive neither command.
 When Durable mode applies, `/api/agents/:id/feed` exposes the caller's Main.
 IDs take the form `m_<entry id>` and remain stable across gateway restarts and
 context resets. An assistant item groups consecutive answer and tool rounds.
+
+User items carry a `sender` and a `surface` of `web`, `slack` or `mattermost`.
+Assistant items with channel delivery include `deliveries`, an array of
+`{ surface, state }` entries. A delivery is `pending` while queued or sending,
+`sent` after a channel receipt, or `uncertain` when the post could not be
+confirmed. Delivery changes appear in live feed frames.
 
 An interrupted top-level tool produces one localized `role: "failure"` item
 with `kind: "tool_interrupted"` after its round's tool results. It appears in

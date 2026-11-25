@@ -3,6 +3,7 @@ import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Curso
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
 import { feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
+import type { DeliveryQueue } from "./outbox.js";
 
 export const emptyFeedWindow: FeedWindow = { items: [], hasBefore: false, hasAfter: false, live: null };
 
@@ -40,6 +41,7 @@ export class DurableFeed {
     private readonly agent: AgentConfig,
     private readonly invisibleNames: (selected: readonly string[]) => ReadonlySet<string>,
     private readonly viewFor: (conversation: Conversation, id: string) => unknown,
+    private readonly deliveries: DeliveryQueue,
   ) {}
 
   private async scan(conversation: Conversation, query: Omit<EntryQuery, "conversationId">, boundaries?: number) {
@@ -101,7 +103,7 @@ export class DurableFeed {
     const observed = observation ?? await this.observe(conversation);
     const projection = await this.read(conversation, { limit, id }, observed);
     const { records } = projection;
-    const items = feedItems(records);
+    const items = feedItems(records, await this.deliveries.forFeed(conversation.id));
     let start = Math.max(0, items.length - limit);
     let end = items.length;
     if (selector) {

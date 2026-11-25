@@ -127,9 +127,7 @@ describe("startGatewayCommand", () => {
       gateway: { port: 4003 },
       ui: { enabled: true, port: 3003 },
     });
-    expect(startServer).toHaveBeenCalledWith(undefined, undefined, {
-      runtime: true,
-    });
+    expect(startServer).toHaveBeenCalledWith(undefined, undefined, { runtime: true }, { channelContext: { ctx: true } });
     expect(setLoadedConfig).toHaveBeenCalledWith(config);
     expect(result.actualPort).toBe(4003);
     expect(result.uiPort).toBe(3003);

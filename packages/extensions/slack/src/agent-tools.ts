@@ -1,5 +1,6 @@
 import { readAgentChannelConfig } from "./config.js";
 import { WebClient } from "@slack/web-api";
+import { limitChannelReply } from "@yoplai/shared";
 import type {
   AgentConfig,
   DeliveryOffer,
@@ -11,13 +12,13 @@ import type {
   SlackComponentConfig,
 } from "@yoplai/shared";
 import { z } from "zod";
-import { getActiveBot, getComponentBot } from "./bot-registry.js";
+import { getActiveBot, getComponentBot, getSlackIngressBot } from "./bot-registry.js";
 import { getSlackContextIfInitialized } from "./context.js";
 import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import { findSlackSender, getCachedSlackWorkspace, getSlackWorkspace, SLACK_PAIR_LINK_PLACEHOLDER } from "./requester.js";
 import { withProactiveDmNotes, withThreadBindings } from "./store-scope.js";
 import { markdownToMrkdwn } from "./utils/mrkdwn.js";
-import { splitMessage } from "./utils/chunk.js";
+import { SLACK_MAX, splitMessage } from "./utils/chunk.js";
 import type { SlackWebClient } from "./types.js";
 
 const sendMessageSchema = z.object({
@@ -509,7 +510,14 @@ async function sendSlackMessage(
  * leaves the same proactive-DM note a manual send would.
  */
 export function createSlackDeliverySink(ctx: ExtensionContext): DeliverySink {
-  return async ({ agent, destination, text }) => {
+  return async ({ agent, destination, text, durable }) => {
+    if (durable) {
+      const { ingress, feedUrl } = durable;
+      const bot = getSlackIngressBot(agent.id, ingress);
+      if (!bot || ingress.channel !== destination.channel) throw new Error("Slack DM bot unavailable.");
+      const rendered = limitChannelReply(markdownToMrkdwn(text), SLACK_MAX, feedUrl ? `<${feedUrl}|Read in web chat>` : undefined);
+      return { receipt: await bot.postDmReply(ingress.channel, rendered) };
+    }
     const [channel, threadTs] = destination.channel
       ? destination.channel.split(":", 2)
       : [destination.user];
