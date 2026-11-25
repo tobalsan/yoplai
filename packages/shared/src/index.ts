@@ -32,3 +32,4 @@ export * from "./surface-links.js";
 export * from "./device-link.js";
 export * from "./channel-settings.js";
 export * from "./channel-bots.js";
+export * from "./channel-reply.js";

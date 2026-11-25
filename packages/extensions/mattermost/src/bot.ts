@@ -1,7 +1,8 @@
 import { readAgentChannelConfig } from "./config.js";
-import { registerSurfaceIdentityProvider } from "@yoplai/shared";
+import { getSurfaceLinkService, registerSurfaceIdentityProvider } from "@yoplai/shared";
 import type {
   AgentConfig,
+  ChannelOwnerResolver,
   MattermostComponentConfig,
 } from "@yoplai/shared";
 import {
@@ -21,6 +22,7 @@ import {
 } from "./handlers/message.js";
 import { withThreadBindings } from "./thread-session-bindings.js";
 import { RecentIds } from "./utils/dedupe.js";
+import { matchesUserAllowlist } from "./utils/allowlist.js";
 import {
   MattermostSocket,
   type MattermostSocketEvent,
@@ -33,6 +35,7 @@ export type MattermostBot = {
   rest: MattermostRestClient;
   /** Known once started. */
   identity: () => BotIdentity | undefined;
+  resolveDmOwner: ChannelOwnerResolver;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   /** Feed one WebSocket event (exposed for tests). */
@@ -105,9 +108,11 @@ export function toInboundPost(
 
 function createBot(params: {
   id: string;
+  botKey: string;
   url: string;
   token: string;
   resolveRoute: RouteResolver;
+  dmFor: (agentId: string) => { enabled?: boolean; allowFrom?: string[] } | undefined;
   /** Channels re-read after a gap: the configured ones plus DMs seen. */
   watchedChannels: () => string[];
   options?: CreateBotOptions;
@@ -204,7 +209,9 @@ function createBot(params: {
       return;
     }
     if (!seen.claim(post.id)) return;
-    const deps: MattermostTurnDeps = { rest, bot: identity, userNames };
+    const deps: MattermostTurnDeps = {
+      rest, bot: identity, userNames, botKey: params.botKey, releaseClaim: () => seen.release(post.id),
+    };
     await handleMattermostPost(inbound, route, deps, gate.text);
   };
 
@@ -248,6 +255,29 @@ function createBot(params: {
     agentId: params.id,
     rest,
     identity: () => identity,
+    async resolveDmOwner({ agentId, ingress, actor, verifyDestination }) {
+      const dm = params.dmFor(agentId);
+      if (stopped || !identity || !dm || dm.enabled === false || actor.surface !== "mattermost" ||
+          ingress.surface !== "mattermost" || ingress.server !== rest.baseUrl ||
+          actor.server !== rest.baseUrl || ingress.botKey !== params.botKey || actor.id === identity.id) return;
+      const multiUser = getMattermostContext().getConfig().extensions?.multiUser?.enabled === true;
+      if (!multiUser && dm.allowFrom?.length !== 1) return;
+      const resolveOwner = () => multiUser ? getSurfaceLinkService()?.resolve("mattermost", rest.baseUrl, actor.id) : "local";
+      if (!verifyDestination) {
+        if (!dm.allowFrom?.length || matchesUserAllowlist({ id: actor.id, username: actor.name }, dm.allowFrom)) return resolveOwner();
+        return;
+      }
+      const signal = AbortSignal.timeout(4000);
+      if (dm.allowFrom?.length && !matchesUserAllowlist(actor, dm.allowFrom)) {
+        const user = await rest.getUser(actor.id, signal);
+        if (user.is_bot || !matchesUserAllowlist(user, dm.allowFrom)) return;
+      }
+      const channel = await rest.getChannel(ingress.channel, signal);
+      if (channel.id !== ingress.channel || channel.type !== "D") return;
+      const [a, b, extra] = channel.name.split("__");
+      if (extra !== undefined || !((a === identity.id && b === actor.id) || (b === identity.id && a === actor.id))) return;
+      return resolveOwner();
+    },
     handleEvent,
     start: async () => {
       stopped = false;
@@ -336,9 +366,11 @@ export function createMattermostBot(
 
   return createBot({
     id: "mattermost",
+    botKey: "component",
     url: config.url,
     token: config.token,
     resolveRoute,
+    dmFor: (agentId) => config.dm?.agent === agentId ? config.dm : undefined,
     watchedChannels: () => Object.keys(config.channels ?? {}),
     options,
   });
@@ -382,9 +414,11 @@ export function createMattermostAgentBot(
 
   return createBot({
     id: agent.id,
+    botKey: "agent:" + agent.id,
     url: config.url,
     token: config.token,
     resolveRoute,
+    dmFor: (agentId) => agentId === agent.id ? config.dm : undefined,
     watchedChannels: () => Object.keys(config.channels ?? {}),
     options,
   });

@@ -119,6 +119,25 @@ Behind a reverse proxy, `/api/v4/websocket` must pass WebSocket upgrades (the Ma
 
 Human senders can use `!pair` to link their Yoplai identity through a ten-minute, single-use link sent by DM. Multi-user sign-in and a matching email visible to the bot are required. Linked runs use that user's personal credentials and agent access; thread storage ownership stays unchanged. Manage links in **Account connections**; see [Account linking](../packages/extensions/mattermost/README.md#account-linking).
 
+## Slack and Mattermost DMs in Durable Main
+
+With Durable mode enabled, an allowed 1:1 DM from a paired sender with agent
+access lands in that person's web Main. Slack bots need the `im:read` scope
+to verify the DM. [Slack scopes](https://docs.slack.dev/reference/scopes/im.read/)
+
+Single-user gateways bind a DM to the local Main only when the routing bot
+has exactly one `dm.allowFrom` entry and it matches the sender. Each bot's
+allowlist is evaluated separately. If you configure several single-sender
+bots for one agent, their senders share that agent's local Main.
+
+Allowed unbound senders, users with Durable mode off, group DMs, channels,
+threads, commands and messages with attachments use legacy routing. The
+allowlist continues to reject disallowed senders. Eligible Durable replies
+return as one post through the bot that received the DM. Long replies link
+to the web feed when a base URL is configured. The feed shows an uncertain
+delivery when the gateway cannot confirm the post. These deliveries require
+manual checking and are never retried automatically.
+
 ## IRC
 
 IRC supports TLS/plain connections, channel and DM routing, mention/reply-all policies, batching, context, and safe reply formatting. See [IRC README](../packages/extensions/irc/README.md).

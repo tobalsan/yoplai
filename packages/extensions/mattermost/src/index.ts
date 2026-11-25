@@ -19,6 +19,7 @@ import {
   getActiveBots,
   getComponentBot,
   registerComponentBot,
+  resolveMattermostDmOwner,
 } from "./bot-registry.js";
 import {
   createMattermostDeliverySink,
@@ -34,6 +35,7 @@ async function reconcileBots(ctx?: ExtensionContext): Promise<void> {
 }
 
 let unregisterDeliverySink: (() => void) | undefined;
+let unregisterOwnerResolver: (() => void) | undefined;
 
 type StartMattermostBotsOptions = {
   agents: AgentConfig[];
@@ -117,6 +119,7 @@ const mattermostExtension: Extension = {
     return mattermostAgentTools();
   },
   async start(ctx) {
+    unregisterOwnerResolver = ctx.registerChannelOwnerResolver?.("mattermost", resolveMattermostDmOwner);
     unregisterDeliverySink = ctx.registerDeliverySink(
       "mattermost",
       createMattermostDeliverySink(ctx),
@@ -146,6 +149,8 @@ const mattermostExtension: Extension = {
   },
   onConfigReload: () => reconcileBots(getMattermostContext()),
   async stop() {
+    unregisterOwnerResolver?.();
+    unregisterOwnerResolver = undefined;
     unregisterDeliverySink?.();
     unregisterDeliverySink = undefined;
     await stopMattermostBots();

@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import type { Extension, ExtensionReplyReviewer, ModelSource, WsClientMessage, WsSendMessage, WsServerMessage } from "@yoplai/shared";
+import type { Extension, ExtensionContext, ExtensionReplyReviewer, ModelSource, WsClientMessage, WsSendMessage, WsServerMessage } from "@yoplai/shared";
 import { vi } from "vitest";
 import { z } from "zod";
 import { WebSocket } from "ws";
@@ -16,8 +16,8 @@ type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionI
 type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -27,6 +27,7 @@ export async function startDurableTestGateway({
   let startAuth: (() => Promise<void>) | undefined;
   let stopAuth: (() => Promise<void>) | undefined;
   let restoreLegacy: (() => void) | undefined;
+  let stopChannels: (() => void | Promise<void>) | void;
 
   let appsPort: number | undefined;
   if (appViews) {
@@ -56,6 +57,7 @@ export async function startDurableTestGateway({
   const { startServer } = await import("../server/index.js");
   const { loadConfig, reloadConfig } = await import("../config/index.js");
   const { getExtensionRuntime } = await import("../extensions/registry.js");
+  const { createExtensionContext } = await import("../extensions/context.js");
   const { createDurableFaux } = await import("../durable/faux.js");
   const faux = createDurableFaux(tokensPerSecond, modelFixture);
   faux.script("The seedlings are ready.");
@@ -74,7 +76,6 @@ export async function startDurableTestGateway({
 
   if (multiUser) {
     const { multiUserExtension } = await import("@yoplai/extension-multi-user");
-    const { createExtensionContext } = await import("../extensions/context.js");
     const { api } = await import("../server/api.core.js");
     extensions.push(multiUserExtension);
     multiUserExtension.registerRoutes(api);
@@ -98,9 +99,13 @@ export async function startDurableTestGateway({
   }
 
   async function open() {
+    const channels = startChannels && createExtensionContext(loadConfig());
+    if (channels) stopChannels = await startChannels?.(channels, home);
     server = startServer(0, "127.0.0.1", runtime, {
       createModels: customModel ? undefined : faux.createModels,
       fixture,
+      deliveryFixture,
+      channelContext: channels,
       afterMainCommit() {
         if (!fault) return;
         fault = false;
@@ -117,6 +122,8 @@ export async function startDurableTestGateway({
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
     await server?.durableWeb.close();
+    await stopChannels?.();
+    stopChannels = undefined;
   }
 
   function cookie(user: TestUser) {

@@ -1,4 +1,4 @@
-const SLACK_MAX = 4000;
+export const SLACK_MAX = 4000;
 const CLOSING_FENCE = "\n```";
 
 function isInsideCodeBlock(text: string, openFence: string | null): boolean {

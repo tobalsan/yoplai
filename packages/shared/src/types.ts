@@ -1520,6 +1520,39 @@ export type DeliveryDestination = { channel?: string; user?: string };
 
 export type RunOrigin = { sink: string; destination: DeliveryDestination };
 
+export type ChannelSurface = "slack" | "mattermost";
+
+export type ChannelActor = { id: string; name: string } & (
+  | { surface: "slack"; team: string }
+  | { surface: "mattermost"; server: string }
+);
+
+export type ChannelIngress = { botKey: string; channel: string } & (
+  | { surface: "slack"; team: string }
+  | { surface: "mattermost"; server: string }
+);
+
+export type ChannelRoute = RunOrigin & { ingress: ChannelIngress };
+
+export type ChannelOwnerRequest = {
+  agentId: string;
+  ingress: ChannelIngress;
+  actor: ChannelActor;
+  /** Recheck the DM with the provider before a stored reply leaves the gateway. */
+  verifyDestination?: boolean;
+};
+export type ChannelOwnerResolver = (input: ChannelOwnerRequest) => string | undefined | Promise<string | undefined>;
+
+export type ChannelInput = Pick<ChannelOwnerRequest, "agentId" | "actor"> & {
+  owner: string;
+  surface: ChannelSurface;
+  requestId: string;
+  text: string;
+  route: ChannelRoute;
+};
+
+export type ChannelAdmission = { status: "admitted"; duplicate: boolean } | { status: "not_durable" };
+
 /**
  * Runtime push of a text result into a comm channel. Registered by comm
  * extensions under their extension id and called by the host (never by an
@@ -1529,7 +1562,8 @@ export type DeliverySink = (input: {
   agent: AgentConfig;
   destination: DeliveryDestination;
   text: string;
-}) => Promise<void>;
+  durable?: { ingress: ChannelIngress; feedUrl?: string };
+}) => Promise<void | { receipt?: string }>;
 
 export type UserNotifier = (input: {
   agent: AgentConfig;
@@ -1759,6 +1793,8 @@ export interface ExtensionContext {
   // and unregister in `stop` with the returned function)
   registerDeliverySink(id: string, sink: DeliverySink, offer?: DeliveryOfferProvider): () => void;
   getDeliverySink(id: string): DeliverySink | undefined;
+  registerChannelOwnerResolver?(surface: ChannelSurface, resolver: ChannelOwnerResolver): () => void;
+  submitChannelInput?(input: ChannelInput): Promise<ChannelAdmission>;
   registerUserNotifier(id: string, notifier: UserNotifier): () => void;
   getUserNotifiers(): Map<string, UserNotifier>;
   resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
@@ -2691,9 +2727,11 @@ export type WsActiveTurnSnapshot = {
 
 type FeedMessage = { id: string; text: string; timestamp: number };
 
+export type FeedDelivery = { surface: ChannelSurface; state: "pending" | "sent" | "uncertain" };
+
 export type FeedItem = FeedMessage & (
-  | { role: "user"; sender: string }
-  | { role: "assistant"; toolCallCount: number }
+  | { role: "user"; sender: string; surface?: "web" | ChannelSurface }
+  | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[] }
   | { role: "failure"; kind: RunFailureKind }
 );
 

@@ -6,7 +6,7 @@ import { withDurableRequestPolicy, type DurableModelsFactory } from "./models.js
 
 type ScriptedTool = { tool: string; args?: Parameters<typeof fauxToolCall>[1]; id?: string };
 type ScriptedBlock = string | ScriptedTool | { thinking: string; redacted?: boolean; signature?: string };
-type ScriptedAnswer = string | ((modelId: string) => string | Promise<string>)
+type ScriptedAnswer = string | ((modelId: string, signal?: AbortSignal) => string | Promise<string>)
   | { errorMessage: string; partial?: string } | ScriptedTool | ScriptedBlock[];
 
 function scriptedBlock(block: ScriptedBlock) {
@@ -49,7 +49,7 @@ export function createDurableFaux(
         if (typeof answer === "object") {
           return fauxAssistantMessage(answer.partial ?? [], { stopReason: "error", errorMessage: answer.errorMessage });
         }
-        return fauxAssistantMessage(typeof answer === "string" ? answer : await answer(model.id));
+        return fauxAssistantMessage(typeof answer === "string" ? answer : await answer(model.id, options?.signal));
       })),
     callCount: () => faux.state.callCount,
     requests,

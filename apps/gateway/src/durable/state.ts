@@ -1,8 +1,14 @@
 import { defineDoc, defineEntry, type SubmissionId } from "@earendil-works/pi-durable";
-import type { RunFailureKind } from "@yoplai/shared";
+import type { ChannelActor, ChannelRoute, RunFailureKind } from "@yoplai/shared";
 import type { WebSender } from "./contract.js";
 
-type WebInput = { timestamp: number; sender: WebSender; surface: "web"; route: { surface: "web"; user: string }; text: string };
+type WebInput = { timestamp: number; sender: WebSender; surface?: "web"; route: { surface: "web"; user: string }; text: string };
+type ChannelEntry = Pick<WebInput, "timestamp" | "text"> & {
+  surface: ChannelActor["surface"];
+  actor: ChannelActor;
+  owner: string;
+  route: ChannelRoute;
+};
 
 export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
   kind: "yoplai.main",
@@ -12,7 +18,7 @@ export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
   checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
 });
 
-export const InputEntry = defineEntry<WebInput>("yoplai.web-input");
+export const InputEntry = defineEntry<WebInput | ChannelEntry>("yoplai.web-input");
 export const FailureNoteEntry = defineEntry<{ submissionId: SubmissionId; kind: RunFailureKind; accessError?: string }>("yoplai.failure-note");
 
 export const AbortedRuns = defineDoc<{ byFirst: Record<string, number[]> }>({

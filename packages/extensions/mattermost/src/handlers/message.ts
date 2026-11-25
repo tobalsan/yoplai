@@ -18,6 +18,7 @@ import type {
 import { getMattermostContext } from "../context.js";
 import { withThreadBindings } from "../thread-session-bindings.js";
 import { matchesUserAllowlist } from "../utils/allowlist.js";
+import { resolveMattermostDmOwner } from "../bot-registry.js";
 import { collectMattermostAttachments } from "../utils/attachments.js";
 import { splitMessage } from "../utils/chunk.js";
 import { StatusReaction } from "../utils/status-reaction.js";
@@ -208,6 +209,8 @@ export type MattermostTurnDeps = {
   bot: BotIdentity;
   /** Display names by user ID, shared by every turn of one bot. */
   userNames: Map<string, string>;
+  botKey?: string;
+  releaseClaim?: () => void;
 };
 
 async function displayName(
@@ -470,6 +473,30 @@ export async function handleMattermostPost(
   if (isResetCommand(text) && (p.file_ids?.length ?? 0) === 0) {
     await handleReset(inbound, route, deps);
     return;
+  }
+
+  if (ctx.submitChannelInput && deps.botKey && route.isDm && !p.root_id && !isBotPost(p) &&
+      text.trim() && !/^[!/]/.test(text.trim()) && postFiles(p).length === 0) {
+    const surface = "mattermost";
+    const server = deps.rest.baseUrl;
+    const ingress = { surface, server, botKey: deps.botKey, channel: p.channel_id } as const;
+    const name = (inbound.senderName ?? p.user_id).replace(/^@/, "");
+    const actor = { surface, server, id: p.user_id, name } as const;
+    const verified = { agentId: agent.id, ingress, actor };
+    try {
+      const owner = await resolveMattermostDmOwner(verified);
+      if (owner) {
+        const result = await ctx.submitChannelInput({
+          agentId: agent.id, owner, surface, actor, text,
+          requestId: `mm:${server}:${p.id}`,
+          route: { sink: surface, destination: { channel: p.channel_id }, ingress },
+        });
+        if (result.status === "admitted") return;
+      }
+    } catch (error) {
+      deps.releaseClaim?.();
+      throw error;
+    }
   }
 
   const rootId = replyRootId(p, route.isDm);

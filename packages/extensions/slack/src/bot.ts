@@ -1,7 +1,10 @@
 import { readAgentChannelConfig } from "./config.js";
 import { App, SocketModeReceiver } from "@slack/bolt";
+import { WebClient } from "@slack/web-api";
 import type {
   AgentConfig,
+  ChannelIngress,
+  ChannelOwnerResolver,
   ChannelConversationType,
   FileAttachment,
   FileOutputEvent,
@@ -11,6 +14,7 @@ import type {
 } from "@yoplai/shared";
 import { classifyRunFailure, runFailureMessage, DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import { getSlackContext } from "./context.js";
+import { resolveSlackDmOwner } from "./bot-registry.js";
 import {
   detectBangCommand,
   processMessage,
@@ -76,6 +80,7 @@ import { getSlackPairingService, SlackPairingError } from "./pairing.js";
 import {
   type ActiveSlackSender,
   cacheSlackWorkspace,
+  getCachedSlackWorkspace,
   getSlackWorkspace,
   resolveSlackRequester,
   resolveProactiveSlackRequester,
@@ -88,6 +93,9 @@ export type SlackBot = {
   agentId: string;
   start: (signal?: AbortSignal) => Promise<void>;
   stop: () => Promise<void>;
+  matchesIngress: (ingress: ChannelIngress) => boolean;
+  resolveDmOwner: ChannelOwnerResolver;
+  postDmReply: (channel: string, text: string) => Promise<string | undefined>;
 };
 
 type SlackMessageTarget = {
@@ -425,7 +433,7 @@ async function getChannelMetadata(client: SlackWebClient, channel: string) {
 }
 
 async function getSlackUserDisplayName(
-  client: SlackWebClient,
+  client: Pick<SlackWebClient, "users">,
   userId: string | undefined
 ): Promise<string | undefined> {
   if (!userId || !client.users?.info) return undefined;
@@ -941,7 +949,8 @@ async function handleSlackMessage(
   // Drops the claim taken via claimEvent above. Only called on a genuine
   // unhandled failure (see the two call sites below), never when an error
   // was already caught and reported to the user.
-  releaseEvent: () => void = () => {}
+  releaseEvent: () => void = () => {},
+  submitDm?: (text: string) => Promise<boolean>,
 ): Promise<void> {
   // Detect bang commands on raw text before any normalization/mention gating.
   // Bang commands bypass mention requirements — they're slash-command alternatives.
@@ -1009,6 +1018,14 @@ async function handleSlackMessage(
   if (target.proactiveReply && !claimProactiveReply(target, data)) {
     console.debug(`${target.logPrefix} Ignored: proactive_reply_not_allowed`);
     return;
+  }
+  if (submitDm && !target.proactiveReply) {
+    try {
+      if (await submitDm(result.normalizedContent)) return;
+    } catch (error) {
+      releaseClaim();
+      throw error;
+    }
   }
 
   const threadPolicy = target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy;
@@ -1572,7 +1589,10 @@ function resolveCommandTarget(
 type SlackBotWiring = {
   app: App;
   agentId: string;
+  botKey: string;
+  token: string;
   logPrefix: string;
+  dmFor(agentId: string): SlackComponentDmConfig | undefined;
   resolveMessageTarget(data: MessageData): SlackMessageTarget | null;
   resolveReactionTarget(data: ReactionData): SlackReactionTarget | null;
   resolveCommandTarget(command: SlackCommandData): SlackCommandTarget | null;
@@ -1598,6 +1618,15 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   let botUserId: string | undefined;
   let botId: string | undefined;
   let stopped = false;
+  let replyClient: WebClient | undefined;
+  const clientForDm = () => replyClient ??= new WebClient(w.token, {
+    slackApiUrl: app.client.slackApiUrl,
+    timeout: 10_000,
+    retryConfig: { retries: 0 },
+    rejectRateLimitedCalls: true,
+  });
+  const matchesIngress = (ingress: ChannelIngress) => !stopped && ingress.surface === "slack"
+    && ingress.botKey === w.botKey && ingress.team === getCachedSlackWorkspace(client);
 
   app.message(async ({ message, client: eventClient, body }) => {
     if (stopped) return;
@@ -1626,7 +1655,30 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       botUserId,
       busyNotice,
       () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
-      () => releaseSlackMessageEvent(deduper, body, data)
+      () => releaseSlackMessageEvent(deduper, body, data),
+      async (text) => {
+        const ctx = getSlackContext();
+        if (!ctx.submitChannelInput || data.channel_type !== "im" || !data.user || data.bot_id ||
+            (data.thread_ts && data.thread_ts !== data.ts) || data.files?.length ||
+            (Array.isArray(asRecord(message).attachments) && (asRecord(message).attachments as unknown[]).length) ||
+            !text.trim() || /^[!/]/.test(text.trim()) || /^[!/]/.test(data.text?.trim() ?? "")) return false;
+        const team = getCachedSlackWorkspace(client);
+        const event = toSlackEventIdentity(body, data);
+        if (!team || (event.team && team !== event.team)) return false;
+        const surface = "slack";
+        const ingress = { surface, team, botKey: w.botKey, channel: data.channel } as const;
+        const actor = { surface, team, id: data.user, name: data.user } as const;
+        const agentId = target.agent.id;
+        const owner = await resolveSlackDmOwner({ agentId, ingress, actor });
+        if (!owner) return false;
+        const name = await getSlackUserDisplayName(clientForDm(), data.user) ?? data.user;
+        const result = await ctx.submitChannelInput({
+          agentId, owner, surface, actor: { ...actor, name }, text,
+          requestId: `slack:${team}:${data.channel}:${event.eventId ?? data.ts}`,
+          route: { sink: surface, destination: { channel: data.channel }, ingress },
+        });
+        return result.status === "admitted";
+      }
     );
   });
 
@@ -1736,6 +1788,28 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   return {
     app,
     agentId: w.agentId,
+    matchesIngress,
+    async resolveDmOwner({ agentId, ingress, actor, verifyDestination }) {
+      const dm = w.dmFor(agentId);
+      if (!matchesIngress(ingress) || !dm || dm.enabled === false || actor.surface !== "slack" ||
+          ingress.surface !== "slack" || actor.team !== ingress.team || actor.id === botUserId ||
+          !isDmUserAllowed(dm, actor.id)) return;
+      const multiUser = getSlackContext().getConfig().extensions?.multiUser?.enabled === true;
+      if (!multiUser && dm.allowFrom?.length !== 1) return;
+      if (verifyDestination) {
+        const { channel } = await clientForDm().conversations.info({ channel: ingress.channel });
+        // The SDK's Channel type omits the peer id from its DM response.
+        if (channel?.id !== ingress.channel || !channel.is_im || channel.is_mpim || channel.is_ext_shared ||
+            !("user" in channel) || channel.user !== actor.id) return;
+      }
+      return multiUser ? resolveSlackRequester(client, actor.id) : "local";
+    },
+    async postDmReply(channel, text) {
+      const result = await clientForDm().chat.postMessage({
+        channel, text, mrkdwn: true, unfurl_links: false, unfurl_media: false,
+      });
+      return result.ts;
+    },
     start: async (signal) => {
       stopped = false;
       try {
@@ -1890,6 +1964,9 @@ export function createSlackBot(
   return wireSlackBot({
     app,
     agentId: "slack",
+    botKey: "component",
+    token: componentConfig.token,
+    dmFor: (agentId) => componentConfig.dm?.agent === agentId ? componentConfig.dm : undefined,
     logPrefix: "[slack]",
     resolveMessageTarget,
     resolveReactionTarget,
@@ -2038,6 +2115,9 @@ export function createSlackAgentBot(agent: AgentConfig): SlackBot | null {
   return wireSlackBot({
     app,
     agentId: agent.id,
+    botKey: "agent:" + agent.id,
+    token: agentSlackConfig.token,
+    dmFor: (agentId) => agentId === agent.id ? agentSlackConfig.dm : undefined,
     initialize: () => app.init(),
     logPrefix,
     resolveMessageTarget,
