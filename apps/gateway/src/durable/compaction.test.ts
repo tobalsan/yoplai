@@ -3,6 +3,7 @@ import { AssistantEntry, CompactionEntry, LiveDoc, ToolResultEntry, type Convers
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai-durable/providers/faux";
 import { expect, it, vi } from "vitest";
 import { summarizeCompaction } from "./compaction.js";
+import { emptyMemory, renderMemory } from "./memory.js";
 import { InputEntry, ReviewDoc } from "./state.js";
 
 const conversationId = 1 as ConversationId;
@@ -113,6 +114,54 @@ it("carries older request ids from the previous native checkpoint", async () => 
   const { summary } = await summarizeCompaction({ entries: [previous, newer], firstKept: 30 as EntryId },
     history([newer], 34), BACKGROUND_CONTEXT, async () => new Set());
   expect(summary.split("\n").slice(-2)).toEqual([
+    "[m_25] 2026-08-12 · Casey · web · Read the orchard plan.",
+    "[m_10] 2026-08-12 · Casey · web · Check the greenhouse.",
+  ]);
+});
+
+it("places bounded memory after the running turn and before the request index", async () => {
+  const opening = input(20, "Check the apple crates.");
+  const line = "- Open: Wait for the orchard report (refs: m_10)";
+  const { summary } = await summarizeCompaction({ entries: [opening], firstKept: 21 as EntryId },
+    history([opening], 20), BACKGROUND_CONTEXT, async () => new Set(),
+    async () => Array<string>(100).fill(line).join("\n"));
+  const [, running, memory, index] = summary.split("\n\n");
+  expect(running).toBe("Running turn\n- Check the apple crates.");
+  expect(memory).toMatch(/^Memory\n- Open: Wait for the orchard report \(refs: m_10\)/);
+  expect(memory!.length).toBeLessThanOrEqual(4_000);
+  expect(memory?.split("\n").at(-1)).toBe(line);
+  expect(index).toBe("Older requests\n[m_20] 2026-08-12 · Casey · web · Check the apple crates.");
+});
+
+it("still indexes earlier requests when reading memory fails", async () => {
+  const earlier = input(10, "Check the greenhouse.");
+  const { summary } = await summarizeCompaction({ entries: [earlier], firstKept: 15 as EntryId },
+    history([earlier], 20), BACKGROUND_CONTEXT, async () => new Set(),
+    async () => { throw new Error("fixture memory read failed"); });
+  expect(summary).toContain("Bracketed ids identify older requests.");
+  expect(summary).toContain("\n\nOlder requests\n[m_10] 2026-08-12 · Casey · web · Check the greenhouse.");
+  expect(summary).not.toContain("\n\nMemory\n");
+});
+
+it("carries only request index lines at the next cut", async () => {
+  const earlier = input(10, "Check the greenhouse.");
+  const memory = {
+    ...emptyMemory(), topics: [{
+      id: "report", kind: "decision" as const, title: "Report",
+      note: "Use the new form.\n[m_55] This is not an index entry.", refs: ["m_12"],
+    }],
+  };
+  const first = await summarizeCompaction({ entries: [earlier], firstKept: 20 as EntryId },
+    history([earlier], 30), BACKGROUND_CONTEXT, async () => new Set(), async () => renderMemory(memory, 4_000));
+  expect(first.summary).toContain("This is not an index entry. (refs: m_12)");
+  const previous = {
+    ...entry(32, CompactionEntry.kind, { model: [{ role: "user", timestamp: date, content: first.summary }] }),
+    head: 20 as EntryId,
+  };
+  const newer = input(25, "Read the orchard plan.");
+  const second = await summarizeCompaction({ entries: [previous, newer], firstKept: 30 as EntryId },
+    history([newer], 34), BACKGROUND_CONTEXT, async () => new Set());
+  expect(second.summary.split("\n\nOlder requests\n")[1]?.split("\n")).toEqual([
     "[m_25] 2026-08-12 · Casey · web · Read the orchard plan.",
     "[m_10] 2026-08-12 · Casey · web · Check the greenhouse.",
   ]);

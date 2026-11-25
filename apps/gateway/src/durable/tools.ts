@@ -38,7 +38,7 @@ export function createDurableTools(
   async function describe(id: ConversationId) {
     const { agent, config, principal } = await authority(id);
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
-    const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode"]);
+    const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update"]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
       ...descriptors.filter(({ extensionId }) => runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
         .map((tool) => ({ ...tool, kind: "extension" as const })),

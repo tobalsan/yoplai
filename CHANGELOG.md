@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Durable Main remembers open questions, decisions, and the agent's plan across context cuts.
 - Durable Main compacts model context automatically, keeps long tool runs going through cuts, and preserves full history with seams in the feed API.
 - Eligible Slack and Mattermost direct messages share the user's Durable Main. Replies return to the same DM, and the web feed shows confirmed or uncertain delivery.
 - Stop a Durable Main run with the web Stop button or `/stop`. A stop tied to a finished run reports that it already ended, and queued follow-ups continue after an abort.

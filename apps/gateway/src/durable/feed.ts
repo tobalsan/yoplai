@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
-import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
+import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
 import type { DeliveryQueue } from "./outbox.js";
 
@@ -74,6 +74,26 @@ export class DurableFeed {
     return projectReplyRounds(entries.filter(({ id }) => id > after), review?.byTask ?? {});
   }
 
+  private async project(conversation: Conversation, entries: EntryRecord[], selected?: readonly string[]) {
+    const extensions = selected ?? (await this.harness.snapshot(AgentDoc, conversation.id, context))?.extensions;
+    const hiddenNames = this.invisibleNames(Array.isArray(extensions) ? extensions : []);
+    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
+    const records = projectRecords(entries, review?.byTask ?? {}, hiddenNames, this.agent.language ?? "en");
+    return { records, review, hiddenNames };
+  }
+
+  async memoryBatch(conversation: Conversation, min: EntryId, max: EntryId) {
+    const entries = await this.scan(conversation, { order: "ascending", minEntryId: min, maxEntryId: max });
+    const { records } = await this.project(conversation, entries);
+    const messages = feedItems(records).flatMap((item) => item.role === "user" || item.role === "assistant"
+      ? [{ id: item.id, role: item.role, text: item.text.slice(0, 4_000) }]
+      : []);
+    const toolResults = records.flatMap((record) => record.kind === "result"
+      ? [{ name: record.message.toolName, text: publicText(record.message.content).slice(0, 1_000) }]
+      : []);
+    return { messages, toolResults, through: entries.at(-1)?.id };
+  }
+
   async read(conversation: Conversation, window?: { limit: number; id?: EntryId }, observation?: FeedObservation) {
     // Watch entries supply a high-water mark only. Page the transcript at that
     // revision so a stored answer and its earlier partial cannot coexist.
@@ -89,12 +109,7 @@ export class DurableFeed {
         if (entry.id !== window.id || entries.at(-1)?.id !== window.id) entries.push(entry);
       }
     }
-    const selected = observation?.selected ?? (await this.harness.snapshot(AgentDoc, conversation.id, context))?.extensions;
-    const hiddenNames = this.invisibleNames(Array.isArray(selected) ? selected : []);
-    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
-    const records = projectRecords(entries, review?.byTask ?? {},
-      hiddenNames, this.agent.language ?? "en");
-    return { records, review, hiddenNames, contextUsage: activeDurableContextUsage(entries) };
+    return { ...await this.project(conversation, entries, observation?.selected), contextUsage: activeDurableContextUsage(entries) };
   }
 
   async window(conversation: Conversation, limit: number, selector?: FeedSelector, observation?: FeedObservation): Promise<FeedWindow | undefined> {

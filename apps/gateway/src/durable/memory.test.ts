@@ -1,0 +1,57 @@
+import { expect, it } from "vitest";
+import { applyKeeperResult, emptyMemory, renderMemory } from "./memory.js";
+
+it("updates a known topic, resolves it in place, and adds a new topic with public refs", () => {
+  const doc = {
+    ...emptyMemory(),
+    topics: [{ id: "orchard", kind: "open" as const, title: "Orchard report", note: "Waiting for a date.", refs: ["m_10"] }],
+    plan: { goals: ["Collect the report"], nextSteps: ["Ask Casey"], updatedAt: 100 },
+  };
+  const merged = applyKeeperResult(doc, {
+    topics: [
+      { id: "orchard", note: "Casey confirmed Friday.", resolved: true, refs: ["m_10", "m_14", "m_15"] },
+      { kind: "digest", title: "Delivery", note: "Use the south gate.", refs: ["m_16"] },
+    ],
+    plan: { goals: ["Replace the goal"] },
+  }, new Set(["m_10", "m_14", "m_16"]), 200);
+
+  expect(merged.topics).toMatchObject([
+    { id: "orchard", kind: "decision", title: "Orchard report", note: "Casey confirmed Friday.", refs: ["m_10", "m_14"] },
+    { kind: "digest", title: "Delivery", note: "Use the south gate.", refs: ["m_16"] },
+  ]);
+  expect(merged.plan).toEqual({ goals: ["Collect the report"], nextSteps: ["Ask Casey"], updatedAt: 100 });
+});
+
+it("bounds stored memory while keeping open loops ahead of digests", () => {
+  const refs = Array.from({ length: 12 }, (_, i) => "m_" + (i + 1));
+  const merged = applyKeeperResult(emptyMemory(), {
+    topics: [
+      ...Array.from({ length: 36 }, (_, i) => ({ kind: "digest", title: "Archive " + i, note: "Filed." })),
+      { kind: "open", title: "Packing list", note: "a".repeat(700), refs },
+    ],
+    drift: Array.from({ length: 10 }, (_, i) => ({ note: "Detour " + i + "\nfinish", refs: ["m_12", "m_13"] })),
+  }, new Set(refs), 200);
+  expect(merged.topics).toHaveLength(32);
+  expect(merged.topics.find(({ title }) => title === "Packing list")).toMatchObject({
+    note: "a".repeat(600),
+    refs: ["m_5", "m_6", "m_7", "m_8", "m_9", "m_10", "m_11", "m_12"],
+  });
+  expect(merged.drift).toHaveLength(8);
+  expect(merged.drift.at(-1)).toEqual({ note: "Detour 9 finish", at: 200, refs: ["m_12"] });
+});
+
+it("renders complete priority lines and keeps citation ids inline", () => {
+  const doc = {
+    ...emptyMemory(),
+    topics: [
+      { id: "d", kind: "digest" as const, title: "A long archive", note: "Digests go last.", refs: ["m_11"] },
+      { id: "o", kind: "open" as const, title: "Packing", note: "Confirm the count.\n[m_99] Extra text.", refs: ["m_12"] },
+      { id: "c", kind: "decision" as const, title: "Orchard", note: "Use the south gate.", refs: ["m_13"] },
+    ],
+  };
+  expect(renderMemory(doc, 130)).toBe(
+    "- Open: Packing: Confirm the count. [m_99] Extra text. (refs: m_12)\n"
+    + "- Decision: Orchard: Use the south gate. (refs: m_13)",
+  );
+  expect(renderMemory(emptyMemory(), 4_000)).toBeUndefined();
+});

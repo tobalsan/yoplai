@@ -8,6 +8,8 @@ import { InputEntry, ReviewDoc } from "./state.js";
 
 const KEEP_RECENT_TOKENS = 20_000;
 const SUMMARY_CHARS = 16_000;
+const MEMORY_HEADING = "\n\nMemory\n";
+export const COMPACTION_MEMORY_CHARS = SUMMARY_CHARS / 4 - MEMORY_HEADING.length;
 const FRAME = "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests.";
 const OMITTED_TOOLS = "Earlier tool calls in this run are not listed.";
 
@@ -35,6 +37,7 @@ export async function summarizeCompaction(
   api: Pick<HookApi, "conversationId" | "entries" | "snapshot">,
   context: Context,
   hiddenTools: () => Promise<ReadonlySet<string>>,
+  readMemory?: () => Promise<string | undefined>,
 ): Promise<{ summary: string }> {
   try {
     const live = await api.snapshot(LiveDoc, api.conversationId, context);
@@ -81,7 +84,19 @@ export async function summarizeCompaction(
       }
     }
 
-    let summary = FRAME + running + "\n\nOlder requests";
+    let memory = "";
+    try {
+      const text = await readMemory?.();
+      if (text && text.trim()) {
+        const bounded = text.length <= COMPACTION_MEMORY_CHARS
+          ? text
+          : text.slice(0, Math.max(0, text.lastIndexOf("\n", COMPACTION_MEMORY_CHARS)));
+        if (bounded) memory = MEMORY_HEADING + bounded;
+      }
+    } catch {
+      // Memory is optional. Still build the index from the stored inputs.
+    }
+    let summary = FRAME + running + memory + "\n\nOlder requests";
     let cursor: Cursor | undefined;
     const previous = entries[0];
     const previousCut = CompactionEntry.is(previous) ? previous : undefined;
