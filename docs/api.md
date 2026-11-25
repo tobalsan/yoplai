@@ -282,9 +282,16 @@ feed windows, watch updates, and compatibility history. The notice persists
 across reloads and restarts and contains no tool arguments or output. Nested
 calls inside replay-safe Code Mode do not produce a notice.
 
+Native Main compaction adds a `role: "seam"` item with its own stable `id`,
+`timestamp`, label `text`, and `reason` (`threshold`, `overflow`, or `manual`).
+`carried.firstKept` gives the first retained entry ID and `carried.indexed` is
+the number of older requests in the model's summary. All earlier feed items
+remain pageable. A mid-run seam appears immediately before the grouped
+assistant item. The summary stays in model context.
+
 | Request | Result |
 | --- | --- |
-| `GET /api/agents/:id/feed?limit=50` | Latest items in chronological order with `hasBefore`, `hasAfter`, and the current `live` state. |
+| `GET /api/agents/:id/feed?limit=50` | Latest items in feed order with `hasBefore`, `hasAfter`, and the current `live` state. |
 | `GET /api/agents/:id/feed?before=<id>` | Items immediately before the anchor. |
 | `GET /api/agents/:id/feed?after=<id>` | Items immediately after the anchor. |
 | `GET /api/agents/:id/feed?around=<id>` | Items around and including the anchor. |
@@ -293,15 +300,19 @@ calls inside replay-safe Code Mode do not produce a notice.
 
 Windows accept limits from 1 through 200 and one selector. Search accepts limits
 from 1 through 50. Invalid limits or multiple selectors return 400. A missing or
-out-of-scope anchor, or a detail request for a user message or failure notice,
+out-of-scope anchor, or a detail request for a user message, failure notice, or seam,
 returns 404. Before the first send the caller's tail and search are empty.
+Search and compatibility history omit seams. In compatibility history,
+`activeContextUsage` counts input and cache tokens from the latest assistant
+usage after the most recent seam. It reports zero until that usage is available.
 
 Send `subscribeFeed` on `/ws` with the agent ID and optional window limit.
 Each subscription starts at sequence 1 with a `feed_snapshot`. A snapshot
 replaces the client window. For a `feed_delta`, update or append the listed
 items by ID and then discard all items before `dropBefore` when present.
-Both frames carry the latest `hasBefore` and `live` values. Reconnects and
-changes coalesced during a pending send receive a fresh snapshot.
+Both frames carry the latest `hasBefore` and `live` values and may include seams.
+Reconnects, changes coalesced during a pending send, and reorderings such as
+inserting a seam ahead of a visible answer receive a fresh snapshot.
 While a run is live, `live.runId` and the compatibility `active_turn.runId`
 carry its opaque stop id when available. The id stays stable through steers,
 tool rounds, and after-run work. A kept-input run started by a stop receives

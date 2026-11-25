@@ -2733,6 +2733,7 @@ export type FeedItem = FeedMessage & (
   | { role: "user"; sender: string; surface?: "web" | ChannelSurface }
   | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[] }
   | { role: "failure"; kind: RunFailureKind }
+  | { role: "seam"; reason: "manual" | "threshold" | "overflow"; carried: { firstKept: string; indexed: number } }
 );
 
 export type FeedToolCall = {

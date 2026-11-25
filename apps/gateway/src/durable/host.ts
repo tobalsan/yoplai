@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
-  AgentDoc, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
+  AgentDoc, CompactionTask, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
   type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type SettledSubmissionRecord, type Submission, type SubmissionId, type TaskId,
 } from "@earendil-works/pi-durable";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
@@ -18,10 +18,11 @@ import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText } from "../history/condense.js";
-import { activeContextUsage, historyPage } from "../history/page.js";
+import { historyPage } from "../history/page.js";
 import { logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
+import { createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
 import type { WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
@@ -108,6 +109,7 @@ export class DurableHost {
       const id = sessionId && providerConversations.get(sessionId);
       if (harness && id) return getModelPolicy(harness, id);
     });
+    const compactionSettings = createMainCompactionSettings(models);
     const store = durableStorePath(home, agent.id);
     await fs.mkdir(path.dirname(store), { recursive: true, mode: 0o700 });
     const storage = await openNodeSqliteStorage(store);
@@ -131,6 +133,15 @@ export class DurableHost {
           if (inbox?.items.some(({ mode }) => mode !== "write")) await host.configureQueuedRun(api.conversationId);
           return undefined;
         },
+      }), hook(CompactionTask, {
+        beforeCompact(compaction, api, context) {
+          return summarizeCompaction(compaction, api, context, async () => {
+            const selected = (await api.snapshot(AgentDoc, api.conversationId, context))?.extensions;
+            const names = tools.invisibleNames(Array.isArray(selected) ? selected : []);
+            for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
+            return names;
+          });
+        },
       })],
     });
     registry.install(boundary);
@@ -150,7 +161,8 @@ export class DurableHost {
         settings() {
           const current = getAgent(agent.id) ?? agent;
           return {
-            compaction: { enabled: false }, steeringMode: "all", followUpMode: "all",
+            compaction: compactionSettings(current), steeringMode: "all", followUpMode: "all",
+            ...(current.sandbox?.env?.PI_CACHE_RETENTION === "long" && { stream: { cacheRetention: "long" } }),
             retry: {
               maxRetries: (current.retryMaxAttempts ?? DEFAULT_RETRY_MAX_ATTEMPTS) - 1,
               baseDelayMs: Math.round((current.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_SECONDS) * 1000),
@@ -803,7 +815,7 @@ export class DurableHost {
     if (!conversation) return { messages: [], view };
     const observed = await this.feed.observe(conversation);
     const projection = await this.feed.read(conversation, undefined, observed);
-    const full = projection.records.map(({ message }) => message);
+    const full = projection.records.flatMap((record) => record.kind === "seam" ? [] : [record.message]);
     if (!full.length) return { messages: [], view };
     const activeTurn = await this.activeTurn(conversation, observed, projection);
     const messages: (FullHistoryMessage | SimpleHistoryMessage)[] = view === "full" ? full : full.flatMap((item) => {
@@ -822,7 +834,7 @@ export class DurableHost {
     }
     return {
       ...page,
-      activeContextUsage: activeContextUsage(full),
+      activeContextUsage: projection.contextUsage,
       sessionId: DURABLE_MAIN_SESSION_ID,
       view,
       isStreaming: activeTurn !== null,
