@@ -13,6 +13,7 @@ it("continues a tool-heavy run after a native cut with complete retained tool pa
   const toolHeld = new Promise<void>((resolve) => { releaseTool = resolve; });
   const gateway = await startDurableTestGateway({
     extraYaml: "toolDeferral: { enabled: false }",
+    keeper: { idleMs: 60_000, turns: 1 },
     fixture: { extension: defineExtension({
       name: "compaction-fixture",
       tools: [defineTool({
@@ -26,11 +27,20 @@ it("continues a tool-heavy run after a native cut with complete retained tool pa
       })],
     }) },
   });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const keeper = vi.spyOn(MaintenanceCompletion, "complete").mockResolvedValue('{"topics":[]}');
+  keeper.mockImplementationOnce(async ({ prompt }) => JSON.stringify({
+    topics: [{ kind: "open", title: "Greenhouse report", note: "Send the seedling inventory Friday.", refs: [JSON.parse(prompt).messages[0].id] }],
+  }));
+  keeper.mockImplementationOnce(async ({ prompt }) => JSON.stringify({
+    topics: [{ id: JSON.parse(prompt).topics[0].id, note: "Inventory moved to Monday." }],
+  }));
   try {
     const previous = "Check the greenhouse. " + "seedling ".repeat(130);
     const opening = "Inspect the apple orchard. " + "apple ".repeat(100);
     gateway.script({ content: "The seedlings are ready. " + "sprout ".repeat(130), usage: { input: 200 } });
     expect((await gateway.send("local", previous, { clientSendId: "greenhouse" })).status).toBe(200);
+    await vi.waitFor(() => expect(keeper).toHaveBeenCalledTimes(1));
     const before: FeedWindow = await (await gateway.request("local", feed)).json();
     const socket = await gateway.socket();
     socket.send({ type: "subscribeFeed", agentId: "pilot" });
@@ -72,6 +82,13 @@ it("continues a tool-heavy run after a native cut with complete retained tool pa
     expect(summary).toMatchObject({
       role: "user", content: [{ type: "text", text: expect.stringContaining("Answer the latest request") }],
     });
+    const summaryBlock = summary?.role === "user" && Array.isArray(summary.content) ? summary.content[0] : undefined;
+    const summaryText = summaryBlock?.type === "text" ? summaryBlock.text : "";
+    expect(summaryText).toMatch(/Running turn[\s\S]*\n\nMemory\n[\s\S]*\n\nOlder requests/);
+    const memory = summaryText.split("\n\nMemory\n")[1]?.split("\n\nOlder requests")[0];
+    expect(memory).toBe("- Open: Greenhouse report: Send the seedling inventory Friday. (refs: " + before.items[0]!.id + ")");
+    expect(memory!.length).toBeLessThanOrEqual(4_000);
+    expect(JSON.stringify(gateway.requests.slice(0, 3))).not.toContain("Send the seedling inventory Friday.");
     const transcript = JSON.stringify(messages);
     expect(transcript).toContain("Inspect the apple orchard.");
     expect(summary).toMatchObject({
@@ -106,9 +123,11 @@ it("continues a tool-heavy run after a native cut with complete retained tool pa
       { content: "The orchard report is complete.", usage: { input: 220 } },
       { content: "The report is saved.", usage: { input: 240 } },
     );
+    await vi.waitFor(() => expect(keeper).toHaveBeenCalledTimes(2));
     expect((await gateway.send("local", "Give me the orchard report", { clientSendId: "orchard-report" })).status).toBe(200);
     expect((await gateway.send("local", "Confirm the report", { clientSendId: "orchard-confirm" })).status).toBe(200);
     expect(gateway.requests).toHaveLength(6);
+    expect(JSON.stringify(gateway.requests.slice(3))).not.toContain("Inventory moved to Monday.");
     const prefixBreaks = gateway.requests.slice(1).flatMap((request, index) => {
       const prior = gateway.requests[index]!.messages;
       return JSON.stringify(request.messages.slice(0, prior.length)) === JSON.stringify(prior) ? [] : [index + 1];
@@ -118,6 +137,7 @@ it("continues a tool-heavy run after a native cut with complete retained tool pa
     releaseTool();
     finish();
     await gateway.close();
+    keeper.mockRestore();
   }
 }, 20000);
 

@@ -16,8 +16,8 @@ type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionI
 type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -105,6 +105,7 @@ export async function startDurableTestGateway({
       createModels: customModel ? undefined : faux.createModels,
       fixture,
       deliveryFixture,
+      keeper,
       channelContext: channels,
       afterMainCommit() {
         if (!fault) return;

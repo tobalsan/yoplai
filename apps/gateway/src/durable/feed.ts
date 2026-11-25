@@ -1,11 +1,18 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
-import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
+import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
 import type { DeliveryQueue } from "./outbox.js";
 
 export const emptyFeedWindow: FeedWindow = { items: [], hasBefore: false, hasAfter: false, live: null };
+
+type MemoryTranscript = {
+  messages: { id: string; role: "user" | "assistant"; text: string }[];
+  toolResults: { name: string; text: string }[];
+};
+
+const transcriptBytes = (transcript: MemoryTranscript) => Buffer.byteLength(JSON.stringify(transcript));
 
 export function entryId(id: string): EntryId | undefined {
   if (!/^m_(?:0|[1-9]\d*)$/.test(id)) return;
@@ -74,6 +81,87 @@ export class DurableFeed {
     return projectReplyRounds(entries.filter(({ id }) => id > after), review?.byTask ?? {});
   }
 
+  private async projectionRules(conversation: Conversation, selected?: readonly string[]) {
+    const extensions = selected ?? (await this.harness.snapshot(AgentDoc, conversation.id, context))?.extensions;
+    const hiddenNames = this.invisibleNames(Array.isArray(extensions) ? extensions : []);
+    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
+    const project = (entries: EntryRecord[]) => projectRecords(entries, review?.byTask ?? {}, hiddenNames, this.agent.language ?? "en");
+    return { project, review, hiddenNames };
+  }
+
+  private async project(conversation: Conversation, entries: EntryRecord[], selected?: readonly string[]) {
+    const { project, review, hiddenNames } = await this.projectionRules(conversation, selected);
+    return { records: project(entries), review, hiddenNames };
+  }
+
+  private async *memoryTurns(conversation: Conversation, min: EntryId, max: EntryId) {
+    const query = { order: "ascending" as const, minEntryId: min, maxEntryId: max };
+    let entries: EntryRecord[] = [];
+    let cursor: Cursor | undefined;
+    do {
+      const page = await conversation.entries(query, 200, cursor, context);
+      for (const entry of page.items) {
+        // Keep every round and result of a grouped answer in the same projection.
+        if (entries.length && feedBoundary(entry)) {
+          yield entries;
+          entries = [];
+        }
+        entries.push(entry);
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
+    if (entries.length) yield entries;
+  }
+
+  private memoryTranscript(records: ReturnType<typeof projectRecords>, maxBytes: number): MemoryTranscript {
+    const messages = feedItems(records).flatMap((item) => item.role === "user" || item.role === "assistant"
+      ? [{ id: item.id, role: item.role, text: item.text.slice(0, 4_000) }]
+      : []);
+    const turn: MemoryTranscript = { messages, toolResults: [] };
+    // Preserve the grouped messages even when a single turn is large. Tool
+    // outputs use the remaining space and are supplementary to the messages.
+    while (transcriptBytes(turn) > maxBytes) {
+      const longest = messages.reduce((a, b) => a.text.length >= b.text.length ? a : b);
+      if (!longest.text.length) {
+        messages.pop();
+      } else {
+        longest.text = longest.text.slice(0, Math.floor(longest.text.length / 2));
+      }
+    }
+    let remaining = maxBytes - transcriptBytes(turn);
+    for (const record of records) {
+      if (record.kind !== "result") continue;
+      const result = { name: record.message.toolName, text: publicText(record.message.content).slice(0, 1_000) };
+      const bytes = Buffer.byteLength(JSON.stringify(result)) + 1;
+      if (bytes > remaining) break;
+      turn.toolResults.push(result);
+      remaining -= bytes;
+    }
+    return turn;
+  }
+
+  async *memoryBatches(conversation: Conversation, min: EntryId, max: EntryId, maxBytes: number) {
+    const { project } = await this.projectionRules(conversation);
+    let batch: MemoryTranscript = { messages: [], toolResults: [] };
+    let through: EntryId | undefined;
+    for await (const entries of this.memoryTurns(conversation, min, max)) {
+      // Leave room for a second group when this turn has only one public message.
+      const turn = this.memoryTranscript(project(entries), Math.floor(maxBytes / 2));
+      const combined = {
+        messages: [...batch.messages, ...turn.messages],
+        toolResults: [...batch.toolResults, ...turn.toolResults],
+      };
+      if (through !== undefined && transcriptBytes(combined) > maxBytes) {
+        yield { ...batch, through };
+        batch = turn;
+      } else {
+        batch = combined;
+      }
+      through = entries.at(-1)!.id;
+    }
+    if (through !== undefined) yield { ...batch, through };
+  }
+
   async read(conversation: Conversation, window?: { limit: number; id?: EntryId }, observation?: FeedObservation) {
     // Watch entries supply a high-water mark only. Page the transcript at that
     // revision so a stored answer and its earlier partial cannot coexist.
@@ -89,12 +177,7 @@ export class DurableFeed {
         if (entry.id !== window.id || entries.at(-1)?.id !== window.id) entries.push(entry);
       }
     }
-    const selected = observation?.selected ?? (await this.harness.snapshot(AgentDoc, conversation.id, context))?.extensions;
-    const hiddenNames = this.invisibleNames(Array.isArray(selected) ? selected : []);
-    const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
-    const records = projectRecords(entries, review?.byTask ?? {},
-      hiddenNames, this.agent.language ?? "en");
-    return { records, review, hiddenNames, contextUsage: activeDurableContextUsage(entries) };
+    return { ...await this.project(conversation, entries, observation?.selected), contextUsage: activeDurableContextUsage(entries) };
   }
 
   async window(conversation: Conversation, limit: number, selector?: FeedSelector, observation?: FeedObservation): Promise<FeedWindow | undefined> {

@@ -22,7 +22,7 @@ import { historyPage } from "../history/page.js";
 import { logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
-import { createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
+import { COMPACTION_MEMORY_CHARS, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
 import type { WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
@@ -33,6 +33,9 @@ import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
+import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
+import { createMemoryTools } from "./memory-tools.js";
+import { MemoryDoc, renderMemory } from "./memory.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 import { durableStorePath } from "./store-path.js";
@@ -47,6 +50,7 @@ export type DurableHostOptions = {
   fixture?: { extension: Extension; invisibleTools?: readonly string[] };
   wakeDelivery?: () => void;
   deliveryFixture?: DeliveryFixture;
+  keeper?: KeeperOptions;
 };
 
 type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string } | ChannelInput;
@@ -55,6 +59,7 @@ const CHANNEL_NO_LONGER_ELIGIBLE = Symbol("channel-no-longer-eligible");
 export class DurableHost {
   readonly deliveries: DeliveryQueue;
   private readonly feed: DurableFeed;
+  private readonly keeper: MemoryKeeper;
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
@@ -63,6 +68,7 @@ export class DurableHost {
 
   private constructor(
     private readonly harness: Harness,
+    models: Awaited<ReturnType<DurableModelsFactory>>,
     private readonly agent: AgentConfig,
     private readonly runtime: ExtensionRuntime,
     private readonly providerConversations: Map<string, ConversationId>,
@@ -72,6 +78,7 @@ export class DurableHost {
     private readonly codemode: ReturnType<typeof createCodemodeExtension>,
     private readonly sandbox: CodemodeSandbox,
     private readonly review: ReturnType<typeof createReplyReview>,
+    private readonly memoryTools: Extension,
     private readonly options: DurableHostOptions,
   ) {
     this.deliveries = new DeliveryQueue(harness, agent.id, async (conversation, submission) => {
@@ -98,6 +105,7 @@ export class DurableHost {
       if (owner === undefined) return;
       return getMcpAppView({ agentId: agent.id, sessionId: DURABLE_MAIN_SESSION_ID, userId: owner === "local" ? undefined : owner }, callId);
     }, this.deliveries);
+    this.keeper = new MemoryKeeper(harness, this.feed, models, agent.id, options.keeper);
   }
 
   static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions) {
@@ -115,6 +123,7 @@ export class DurableHost {
     const storage = await openNodeSqliteStorage(store);
     const registry = createRegistry();
     const owners = new Map<ConversationId, string>();
+    const memoryTools = createMemoryTools((id) => userMemoryKey(owners.get(id)));
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
       () => metrics.increment("interrupted_tool_calls", agent.id));
     const review = createReplyReview(agent, runtime, tools.authority, tools.invisibleNames, () => {
@@ -124,13 +133,14 @@ export class DurableHost {
     const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
     const codemode = createCodemodeExtension({ sandbox, models: false });
     registry.install(codemode);
-    let host: DurableHost;
+    let host: DurableHost | undefined;
     const boundary = defineExtension({
       name: "yoplai-run-boundary",
       hooks: [hook(GenerationTask, {
-        async afterRun(_run, api, context) {
+        async afterRun(run, api, context) {
+          host?.noteTurn(api.conversationId, run.first, run.last);
           const inbox = await api.snapshot(InboxDoc, api.conversationId, context);
-          if (inbox?.items.some(({ mode }) => mode !== "write")) await host.configureQueuedRun(api.conversationId);
+          if (inbox?.items.some(({ mode }) => mode !== "write")) await host?.configureQueuedRun(api.conversationId);
           return undefined;
         },
       }), hook(CompactionTask, {
@@ -140,12 +150,18 @@ export class DurableHost {
             const names = tools.invisibleNames(Array.isArray(selected) ? selected : []);
             for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
             return names;
+          }, async () => {
+            const key = userMemoryKey(owners.get(api.conversationId));
+            if (key === undefined) return;
+            const memory = await api.snapshot(MemoryDoc, key, context);
+            return memory && renderMemory(memory, COMPACTION_MEMORY_CHARS);
           });
         },
       })],
     });
     registry.install(boundary);
     registry.install(review.extension);
+    registry.install(memoryTools);
     registry.install(CodingTools);
     registry.install(toolSearch);
     registry.install(tools.gate);
@@ -170,15 +186,23 @@ export class DurableHost {
           };
         },
       }, context);
-      host = new DurableHost(harness, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, options);
+      host = new DurableHost(harness, models, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options);
       await host.resume();
       return host;
     } catch (error) {
-      if (harness) await harness.close(context);
-      else await storage.close(context);
-      await sandbox.close();
+      if (host) await host.close();
+      else {
+        if (harness) await harness.close(context);
+        else await storage.close(context);
+        await sandbox.close();
+      }
       throw error;
     }
+  }
+
+  private noteTurn(id: ConversationId, first: EntryId, last: EntryId) {
+    const key = userMemoryKey(this.owners.get(id));
+    if (key !== undefined) this.keeper.noteTurn(key, id, first, last);
   }
 
   private async mainId(user: string): Promise<ConversationId | undefined> {
@@ -352,7 +376,7 @@ export class DurableHost {
     const change: AgentChange = {
       model: { provider, modelId: agent.model.model },
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
-      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
+      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, this.memoryTools, ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
       instructions: await durableInstructions(agent, config, principal, this.runtime, summary),
     };
     const fallback = agent.fallback_model;
@@ -843,6 +867,7 @@ export class DurableHost {
   }
 
   async close(): Promise<void> {
+    this.keeper.close();
     try {
       await this.harness.close(context);
     } finally {
@@ -850,4 +875,8 @@ export class DurableHost {
       await this.sandbox.close();
     }
   }
+}
+
+function userMemoryKey(owner: string | undefined) {
+  return owner === undefined ? undefined : "user:" + owner;
 }
