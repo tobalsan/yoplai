@@ -36,6 +36,7 @@ import { durableInstructions } from "./prompt.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
 import { createMemoryTools } from "./memory-tools.js";
 import { MemoryDoc, renderMemory } from "./memory.js";
+import { durableSessionHistory } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
 import { durableStorePath } from "./store-path.js";
@@ -124,8 +125,12 @@ export class DurableHost {
     const registry = createRegistry();
     const owners = new Map<ConversationId, string>();
     const memoryTools = createMemoryTools((id) => userMemoryKey(owners.get(id)));
+    let host: DurableHost | undefined;
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
-      () => metrics.increment("interrupted_tool_calls", agent.id));
+      () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
+        if (!host) throw new Error("Durable host is not open.");
+        return host.sessionHistory(id, args);
+      });
     const review = createReplyReview(agent, runtime, tools.authority, tools.invisibleNames, () => {
       if (!harness) throw new Error("Durable host is not open.");
       return harness;
@@ -133,7 +138,6 @@ export class DurableHost {
     const sandbox = new CodemodeSandbox({ memoryLimitBytes: 256 * 1024 * 1024 });
     const codemode = createCodemodeExtension({ sandbox, models: false });
     registry.install(codemode);
-    let host: DurableHost | undefined;
     const boundary = defineExtension({
       name: "yoplai-run-boundary",
       hooks: [hook(GenerationTask, {
@@ -818,6 +822,21 @@ export class DurableHost {
     }
   }
 
+  private async historyAudience(caller: ConversationId) {
+    const owner = this.owners.get(caller);
+    if (owner === undefined || !await this.mayReadFeed(owner, owner)) return [];
+    const conversation = await this.mainFor(owner);
+    if (!conversation) return [];
+    return [{
+      ref: DURABLE_MAIN_SESSION_ID,
+      current: conversation.id === caller,
+      read: () => this.feed.read(conversation),
+    }];
+  }
+
+  private async sessionHistory(caller: ConversationId, args: unknown) {
+    return durableSessionHistory(args, await this.historyAudience(caller));
+  }
   async feedSearch(owner: string, principal: string, query: string, limit: number) {
     if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
     const conversation = await this.mainFor(owner);

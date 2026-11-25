@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { day, invalidInput, parseDate, SessionHistoryArgsSchema } from "./arguments.js";
 import type {
   Extension,
   ExtensionAgentToolContext,
@@ -26,38 +27,7 @@ const CURRENT_SESSION_NOTE =
 const DEFAULT_LIST_LIMIT = 10;
 const DEFAULT_SEARCH_LIMIT = 15;
 
-const ArgsSchema = z.object({
-  action: z.enum(["list", "search", "read"]),
-  query: z.string().min(1).optional(),
-  session: z.string().min(1).optional(),
-  role: z.enum(["user", "assistant", "system"]).optional(),
-  tool: z.string().min(1).optional(),
-  since: z.string().optional(),
-  until: z.string().optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-  cursor: z.string().optional(),
-  from: z.number().int().min(0).optional(),
-  to: z.number().int().min(0).optional(),
-  around: z.number().int().min(0).optional(),
-  n: z.number().int().min(0).max(50).optional(),
-  full: z.number().int().min(0).optional(),
-});
-type Args = z.infer<typeof ArgsSchema>;
-
-function invalidInput(message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code: "invalid_input" });
-}
-
-function parseDate(value: string | undefined, name: string): number | undefined {
-  if (!value) return undefined;
-  const time = Date.parse(value);
-  if (!Number.isFinite(time)) throw invalidInput(`Invalid ${name} date: ${value}`);
-  return time;
-}
-
-function day(timestamp: number): string {
-  return new Date(timestamp).toISOString().slice(0, 16).replace("T", " ");
-}
+type Args = z.infer<typeof SessionHistoryArgsSchema>;
 
 function oneLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -210,7 +180,7 @@ export async function runSessionHistory(
 ): Promise<string> {
   let args: Args;
   try {
-    args = ArgsSchema.parse(raw);
+    args = SessionHistoryArgsSchema.parse(raw);
   } catch (error) {
     if (error instanceof z.ZodError) throw invalidInput(error.message);
     throw error;
@@ -225,6 +195,8 @@ export async function runSessionHistory(
   if (args.action === "search") return searchSessions(args, scope);
   return readSession(args, scope);
 }
+
+const anchorParameter = { anyOf: [{ type: "number" }, { type: "string" }] };
 
 export const sessionHistoryExtension: Extension = {
   id: "sessionHistory",
@@ -245,24 +217,24 @@ export const sessionHistoryExtension: Extension = {
       {
         name: "session_history",
         description:
-          "Look up your own past conversations (read-only); in a chat project also every agent's sessions in that project, listed as `agent/session` (pass that id to read/search `session`). action=list: recent sessions. action=search: REQUIRED case-insensitive substring `query` across sessions (filters: role, tool, since, session, limit). action=read: REQUIRED `session` id for a condensed transcript (from/to or around+n; role; full=<idx> expands one message). Output is compact text with #idx anchors; follow `more:` lines to continue.",
+          "Look up conversation history (read-only). In Durable, list your own Main, search/read across context cuts, and use m_<n> message IDs. In legacy sessions, use numeric #idx anchors. A legacy chat project also includes its agents' sessions under agent/session. action=list: recent conversations. action=search: required case-insensitive substring query (filters: role, since, until, session, limit, and tool in legacy). action=read: required session in legacy. In Durable, session defaults to the current conversation. Condense with from/to or around+n and role. Use full to expand one message. Follow more: lines to continue.",
         parameters: {
           type: "object",
           properties: {
             action: { type: "string", enum: ["list", "search", "read"] },
             query: { type: "string", description: "search: REQUIRED substring to find" },
-            session: { type: "string", description: "read: REQUIRED session id; search: optional session id" },
+            session: { type: "string", description: "read: defaults to current in Durable, required in legacy. search: optional session id" },
             role: { type: "string", enum: ["user", "assistant", "system"] },
-            tool: { type: "string", description: "search: only messages calling this tool" },
+            tool: { type: "string", description: "search in legacy: only messages calling this tool" },
             since: { type: "string", description: "ISO date lower bound" },
             until: { type: "string", description: "list/search: ISO date upper bound" },
             limit: { type: "number", description: "list default 10, search default 15" },
             cursor: { type: "string", description: "list: continuation cursor" },
-            from: { type: "number", description: "read: first #idx" },
-            to: { type: "number", description: "read: last #idx" },
-            around: { type: "number", description: "read: centre #idx" },
+            from: { ...anchorParameter, description: "read: first m_<n> ID or numeric #idx, inclusive" },
+            to: { ...anchorParameter, description: "read: last m_<n> ID or numeric #idx, inclusive" },
+            around: { ...anchorParameter, description: "read: centre m_<n> ID or numeric #idx" },
             n: { type: "number", description: "read: messages each side of around (default 5)" },
-            full: { type: "number", description: "read: expand message #idx untruncated" },
+            full: { ...anchorParameter, description: "read: expand one m_<n> ID or numeric #idx" },
           },
           required: ["action"],
         },

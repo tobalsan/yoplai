@@ -98,7 +98,7 @@ it("returns only the frame when reading a summary input fails", async () => {
   api.entries.mockRejectedValue(new Error("fixture storage read failed"));
   expect(await summarizeCompaction({ entries: [], firstKept: 30 as EntryId }, api,
     BACKGROUND_CONTEXT, async () => new Set())).toEqual({
-    summary: "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests.",
+    summary: "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests. Open any bracketed request with session_history read, around: <id>.",
   });
 });
 
