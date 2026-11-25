@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Add an opt-in Durable Main compaction eval to compare recall, tool side effects, and cache usage against a no-cut baseline, with a free Faux projection.
 - Browse Durable Main in the web chat with Cmd+K message search, message links, two-way paging, Jump to latest, and context compaction markers.
 
 - Durable Main can search and reopen its own messages across context cuts with `session_history`. Compaction summaries point to the original request by message ID.

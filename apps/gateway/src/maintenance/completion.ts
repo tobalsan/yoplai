@@ -26,6 +26,7 @@ type MaintenanceCompletionDeps = {
   createRuntime?: (signal?: AbortSignal) => Promise<ModelRuntime>;
   completeSimple?: typeof defaultCompleteSimple;
   warn?: (message: string, fields?: Record<string, unknown>) => void;
+  onUsage?: (usage: Awaited<ReturnType<typeof defaultCompleteSimple>>["usage"]) => void;
 };
 
 const warned = new Set<string>();
@@ -161,6 +162,7 @@ export async function completeMaintenance(
           headers: sessionHeaders(model, params.sessionId),
         }
       );
+      activeDeps.onUsage?.(response.usage);
       if (response.stopReason === "error") {
         throw new Error(response.errorMessage ?? "Maintenance completion failed");
       }

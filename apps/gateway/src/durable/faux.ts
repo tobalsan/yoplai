@@ -22,6 +22,7 @@ export function createDurableFaux(
   tokensPerSecond?: number,
   fixture?: { provider: string; model: string; observeKey: (key?: string) => void },
   onRequest?: (request: TranscriptContext) => Promise<void>,
+  limits?: Partial<{ contextWindow: number; maxTokens: number }>,
 ) {
   const requests: TranscriptContext[] = [];
   const cacheRetentions: SimpleStreamOptions["cacheRetention"][] = [];
@@ -29,7 +30,7 @@ export function createDurableFaux(
   const faux = fauxProvider({
     provider: fixture?.provider,
     models: [
-      { id: fixture?.model ?? "fixture", contextWindow: 8000, maxTokens: 1000 },
+      { id: fixture?.model ?? "fixture", contextWindow: 8000, maxTokens: 1000, ...limits },
       { id: "fixture-alternate", contextWindow: 6000, maxTokens: 1000 },
     ],
     tokensPerSecond,

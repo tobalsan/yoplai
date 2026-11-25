@@ -907,6 +907,14 @@ Do not use `pnpm test -- <path>` for single files. Run `pnpm install` first if `
 
 Dev entrypoints use `NODE_OPTIONS=--conditions=development`, allowing shared/extension source imports without rebuilding `dist`. Production imports resolve built output.
 
+## Durable Main compaction eval (ALG-802)
+
+`pnpm exec vitest run apps/gateway/src/durable/eval/compaction.test.ts` runs both scenarios against Faux over the local HTTP gateway and prints projected tokens. `pnpm eval:durable-compaction --preflight-only` checks the model registry and effective ceiling/tail offline. Without `YOPLAI_EVAL_PAID=1`, the eval command prints the selected Faux projection and refuses real calls. Set the opt-in **only after the projection is approved**; provide the chosen provider key in the process environment (OpenCode Go uses `OPENCODE_API_KEY`). The paid run sends only invented data from a fresh temporary gateway home.
+
+The default is the `opencode-go/claude-haiku-5-5` cheap cut and its no-cut baseline; it uses long cache retention and a six-minute post-cut idle probe. Repeat `--model provider/model` to select models, `--cache-retention long|default` to override retention, or `--output-dir /path` to replace `~/Documents/artifacts/`. `--full` selects `opencode-go/deepseek-v4.1-flash` with the production ceiling/tail and no window/output overrides in its cut run; its cache counts are informational and its catalog output cap makes the projection conservative. Add `--model opencode-go/claude-haiku-5-5` to run both. The full-size cut compares to a cheap no-cut baseline on DeepSeek because Durable always compacts above 150k.
+
+Read the Markdown validity line first: missing/misplaced cuts or a mismatch between feed seams and request prefix changes invalidates the comparison. Recall uses the same probes in each run and marks available context sources, not causal attribution; `session_history` does not return tool output. The report compares recall (within 10 points), checks exactly one side effect per ledger step, and lists cold requests per cut, excluding the idle probe. Read the relevance answers manually; keeper usage is separate. The JSON companion contains request context for auditing. A cheap cut's ~5.2k tail and larger relative summary share do not validate the 20k production tail or the 16k-character summary budget at 150k.
+
 ## Change-placement rules
 
 - Cross-package invariants and ownership maps belong here.
