@@ -81,15 +81,25 @@ export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequest
   return issues;
 }
 
-function observe(requests: RequestRow[], current: () => string, redact: (value: string) => string, fauxRatio?: number) {
+const REQUEST_CAP = 8;
+type Turn = { id: string; firstRequest: number; capped: boolean };
+
+function observe(requests: RequestRow[], turn: Turn, issues: string[], redact: (value: string) => string, fauxRatio?: number) {
   let prefix = 0;
   return (factory: DurableModelsFactory): DurableModelsFactory => async (agent, policy) => {
     const models = await factory(agent, policy);
     const stream = models.streamSimple.bind(models);
     models.streamSimple = (model, transcript, options) => {
+      if (requests.length - turn.firstRequest >= REQUEST_CAP) {
+        const reason = `${turn.id}: model request cap (${REQUEST_CAP}) reached`;
+        if (!turn.capped) issues.push(reason);
+        turn.capped = true;
+        // Settle through Durable's normal model-error path without calling the provider.
+        return lazyStream(model, async () => { throw new Error(reason); }, undefined, options?.signal);
+      }
       const serialized = JSON.stringify(transcript.messages, (_name, value: unknown) => typeof value === "string" ? redact(value) : value);
       const row: RequestRow = {
-        at: new Date().toISOString(), turn: current(), messages: JSON.parse(serialized), estimate: tokens(serialized),
+        at: new Date().toISOString(), turn: turn.id, messages: JSON.parse(serialized), estimate: tokens(serialized),
         cacheRetention: options?.cacheRetention ?? "default",
       };
       requests.push(row);
@@ -210,7 +220,7 @@ export function keeperCompletions() {
 
 const feedUrl = "/api/agents/pilot/feed?limit=200";
 export async function run(ref: string, variant: "cheap" | "full" | "baseline", budget: Budget, options: {
-  faux?: boolean; fauxRatio?: number; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string; replay?: Drive;
+  faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string; replay?: Drive;
 }) {
   const baseline = variant === "baseline";
   const data = scenario();
@@ -222,7 +232,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
   const keeper: KeeperRow[] = [];
   const stepRequests: Run["stepRequests"] = [];
   let home = "";
-  let turn = "";
+  const turn: Turn = { id: "", firstRequest: 0, capped: false };
   const redact = (value: string) => options.apiKey ? value.replaceAll(options.apiKey, "[redacted]") : value;
   const gateway = await startDurableTestGateway({
     realModel: options.faux ? undefined : { ...reference(ref), apiKey: options.apiKey, limits: variant === "full" ? undefined : {
@@ -231,7 +241,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     fauxLimits: options.faux ? { contextWindow: budget.contextWindow, maxTokens: budget.maxTokens } : undefined,
     fixtureExtensions: async () => [(await import("../../session-history/index.js")).sessionHistoryExtension],
     fixture: { extension: fixture(() => home, data, step => {
-      stepRequests.push({ step, turn, request: requests.length - 1 });
+      stepRequests.push({ step, turn: turn.id, request: requests.length - 1 });
       let chars = options.replay?.steps[step - 1] ?? 0;
       if (!baseline && step < 3) {
         const remaining = budget.ceiling - size();
@@ -247,7 +257,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       drive.steps[step - 1] = chars;
       return chars ? filler(chars, 20 + step) : "Ledger sealed.";
     }) },
-    wrapModels: observe(requests, () => turn, redact, options.faux ? options.fauxRatio ?? 1 : undefined),
+    wrapModels: observe(requests, turn, issues, redact, options.faux ? options.fauxRatio ?? 1 : undefined),
     extraYaml: "toolDeferral: { enabled: false }\nretryMaxAttempts: 1" + (options.long ? "\nsandbox:\n  env: { PI_CACHE_RETENTION: long }" : ""),
   });
   home = gateway.home;
@@ -268,7 +278,8 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
   type Script = Parameters<typeof gateway.script>[number];
   let seams: Run["seams"] = [];
   async function send(id: string, text: string, ...script: Script[]) {
-    turn = id;
+    turn.id = id;
+    turn.firstRequest = requests.length;
     if (options.faux) gateway.script(...script);
     const response = await gateway.send("local", text, { clientSendId: id });
     const feedResponse = await gateway.request("local", feedUrl);
@@ -288,19 +299,25 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     await send(id, "File this invented clipping. Reply only 'Noted'.\n" + filler(chars, 100 + drive[phase].length), "Noted.");
   }
   async function fill(phase: "opening" | "ledger", ready: () => boolean) {
+    if (turn.capped) return false;
     if (baseline) {
-      for (const padding of options.replay?.[phase] ?? []) await pad(phase, padding);
+      for (const padding of options.replay?.[phase] ?? []) {
+        await pad(phase, padding);
+        if (turn.capped) return false;
+      }
       return true;
     }
     for (let i = 0; i < PADDING_CAP && !ready(); i++) {
       if (!size() || issues.length || seams.length > (phase === "opening" ? 0 : 1)) break;
       await pad(phase, { id: `${phase}-padding-${i}`, chars: payloadChars(chunk) });
     }
+    if (turn.capped) return false;
     if (ready()) return true;
     issues.push(`${phase}: padding did not reach target (cap ${PADDING_CAP}, used ${drive[phase].length}, context ${size()}, seams ${seams.length})`);
     return false;
   }
   function headroom(label: string, expectedSeams: number) {
+    if (turn.capped) return false;
     if (baseline) return true;
     if (seams.length === expectedSeams && size() > 0 && size() < budget.ceiling * 0.84) return true;
     issues.push(`${label}: expected ${expectedSeams} seams and probe headroom (got ${seams.length}, context ${size()}/${budget.ceiling})`);
@@ -318,6 +335,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       }
       const short = opening.id === "shipment" ? "FEN-742" : opening.id === "kiln" ? "Kiln checked" : "Noted.";
       await send(opening.id, opening.text, ...(opening.id === "kiln" ? [{ tool: "read_kiln", id: "initial-kiln" }] : []), short);
+      if (turn.capped) break;
     }
     const expectedReply = shipmentCode(answers.shipment ?? "");
     if (!expectedReply) issues.push("No valid reply-sourced shipment code");
@@ -325,7 +343,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
     for (const index of openingReady ? [0, 1] : []) {
       if (index === 1) {
         if (!await fill("ledger", () => seams.length === 1 && size() >= budget.ceiling * 0.54) || !headroom("Before ledger", 1)) break;
-        const script = STEPS.map(step => ({ tool: "record_eval_step", id: `step-${step}`, args: { step } }));
+        const script = (options.fauxLedgerSteps ?? STEPS).map((step, i) => ({ tool: "record_eval_step", id: `step-${i + 1}`, args: { step } }));
         await send("ledger", data.ledger, ...script, "The ledger is sealed.");
       }
       if (!headroom(`Before topic ${index}`, index + 1)) break;

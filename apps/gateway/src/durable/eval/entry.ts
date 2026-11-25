@@ -28,7 +28,7 @@ export async function prepare(model: string, full: boolean) {
   return { model, variant, cut, baseline } as const;
 }
 
-export async function pair(plan: Awaited<ReturnType<typeof prepare>>, options: { faux?: boolean; fauxRatio?: number; long?: boolean }) {
+export async function pair(plan: Awaited<ReturnType<typeof prepare>>, options: { faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean }) {
   const apiKey = options.faux ? undefined : getEnvApiKey(plan.model.split("/")[0]!);
   if (!options.faux && !apiKey) throw new Error(`No environment API key for ${plan.model}`);
   const cut = await run(plan.model, plan.variant, plan.cut, { ...options, apiKey, idle: options.faux ? async () => {} : undefined });

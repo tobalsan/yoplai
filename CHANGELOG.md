@@ -48,6 +48,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable compaction eval stops and marks the run invalid if a turn attempts to open more than eight model requests.
 - Durable compaction eval uses measured prompt usage to place cuts, skips baselines after invalid cut runs, matches complete source identifiers, and waits for in-flight keeper usage before reporting.
 - Durable compaction eval rejects pairs with missing or late fact plants before the first cut, requires exact recall identifiers, and credits cited Memory statuses.
 - Durable compaction eval rejects a second cut that does not split the ledger step executions, reports full-size and second-cut distances, no longer credits a quoted probe question or a negated status as a recall source, and labels `--full` from the prepared variant.

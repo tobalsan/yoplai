@@ -93,6 +93,19 @@ it("stops at the padding cap and skips the baseline for an invalid cut", async (
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }, 60_000);
 
+it("caps model requests in a ledger turn that keeps calling tools and skips its baseline", async () => {
+  const { cut, baseline } = await pair(await prepare(HAIKU, false), {
+    faux: true, fauxLedgerSteps: Array<number>(27).fill(1),
+  });
+  expect(cut.issues).toContain("ledger: model request cap (8) reached");
+  const ledger = cut.requests.filter(row => row.turn === "ledger");
+  expect(ledger).toHaveLength(8);
+  expect(ledger.every(row => row.stopped === "toolUse")).toBe(true);
+  expect(cut.steps).toEqual(Array<number>(8).fill(1));
+  expect(cut.requests.at(-1)?.turn).toBe("ledger");
+  expect(baseline).toBeUndefined();
+}, 60_000);
+
 it("drains already-started keeper calls after shutdown before exposing their rows", async () => {
   const completions = keeperCompletions();
   const usage = { input: 123, cacheRead: 5, cacheWrite: 6, output: 7 };
