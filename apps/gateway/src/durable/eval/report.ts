@@ -1,16 +1,26 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { facts, STEPS, score, tokens, type Fact } from "./scenario.js";
+import { facts, probe, STEPS, score, tokens, type Fact } from "./scenario.js";
 import type { RequestRow, Run } from "./runner.js";
 
 const text = (message: RequestRow["messages"][number]) => typeof message.content === "string" ? message.content
   : message.content.flatMap(block => block.type === "text" ? [block.text] : []).join("\n");
-const summary = (value: string) => value.startsWith("Older messages are stored outside this context.");
+const summary = (message: RequestRow["messages"][number]) => {
+  if (message.role !== "user") return undefined;
+  const prefix = "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+  const suffix = "\n</summary>";
+  const value = text(message);
+  if (value.startsWith(prefix + "Older messages are stored outside this context.") && value.endsWith(suffix)) {
+    return value.slice(prefix.length, -suffix.length);
+  }
+};
+const isProbe = (message: RequestRow["messages"][number]) =>
+  message.role === "user" && text(message).endsWith(probe);
 const matches = (fact: Fact, value: string, expected: string) => Boolean(expected) && (
   fact.id === "lantern" || fact.id === "mosaic" ? new RegExp(`${fact.id}[^.\\n]{0,30}\\b${expected}\\b`, "i").test(value) : value.includes(expected));
-const expected = (run: Run, fact: Fact) => fact.id === "shipment" ? run.expectedReply : fact.value;
+const expected = (run: Pick<Run, "expectedReply">, fact: Fact) => fact.id === "shipment" ? run.expectedReply : fact.value;
 
-export function sources(run: Run, turn: string, fact: Fact) {
+export function sources(run: Pick<Run, "requests" | "expectedReply">, turn: string, fact: Fact) {
   const value = expected(run, fact);
   const found = new Set<string>();
   const kilnReads = new Map<string, string>();
@@ -20,16 +30,15 @@ export function sources(run: Run, turn: string, fact: Fact) {
     }
   }
   for (const { messages } of run.requests.filter(row => row.turn === turn)) for (const message of messages) {
-    if (message.role === "system" || (message.role === "user" && text(message).includes("Use earlier turns or session_history"))) continue;
-    const content = text(message);
-    if (message.role === "user" && summary(content)) {
-      const index = content.split("\n\nOlder requests")[1] ?? "";
-      const memory = content.split("\n\nMemory\n")[1]?.split("\n\nOlder requests")[0] ?? "";
-      const running = content.split("\n\nRunning turn")[1]?.split(/\n\n(?:Memory|Older requests)/)[0] ?? "";
-      for (const [name, section] of [["summary index", index], ["Memory", memory], ["Running turn", running]] as const) {
-        if (matches(fact, section, value)) found.add(name);
+    if (message.role === "system") continue;
+    const body = summary(message);
+    if (body !== undefined) {
+      const sections = body.split(/\n\n(Running turn|Memory|Older requests)(?=\n|$)/);
+      for (let i = 1; i < sections.length; i += 2) {
+        const name = sections[i]!;
+        if (matches(fact, sections[i + 1]!, value)) found.add(name === "Older requests" ? "summary index" : name);
       }
-    } else if (matches(fact, content, value)) {
+    } else if (!isProbe(message) && matches(fact, text(message), value)) {
       found.add(message.role === "toolResult" && message.toolName === "session_history" ? "session_history"
         : message.role === "toolResult" && message.toolName === "read_kiln" && kilnReads.get(message.toolCallId) === turn ? "tool re-read" : "retained messages");
     }
@@ -40,9 +49,9 @@ export function sources(run: Run, turn: string, fact: Fact) {
 function originDistances(run: Run, fact: Fact) {
   return run.cuts.map(i => {
     const previous = run.requests[i - 1]!.messages;
-    const next = run.requests[i]!.messages.find(m => m.role !== "system" && !summary(text(m)));
+    const next = run.requests[i]!.messages.find(m => m.role !== "system" && summary(m) === undefined);
     const boundary = previous.findIndex(m => JSON.stringify(m) === JSON.stringify(next));
-    const origin = previous.findIndex(m => m.role !== "system" && !summary(text(m)) && !text(m).includes("Use earlier turns or session_history") && matches(fact, text(m), expected(run, fact)));
+    const origin = previous.findIndex(m => m.role !== "system" && summary(m) === undefined && !isProbe(m) && matches(fact, text(m), expected(run, fact)));
     if (origin < 0 || boundary < 0) return "unknown";
     const distance = tokens(JSON.stringify(previous.slice(Math.min(origin, boundary), Math.max(origin, boundary))));
     return origin < boundary ? `−${distance}` : `+${origin === boundary ? 0 : distance}`;
@@ -60,6 +69,7 @@ export function cold(run: Run) {
 }
 
 const cell = (value: string) => value.replaceAll("|", "\\|").replaceAll("<", "&lt;").replaceAll("\n", " · ");
+const retention = (run: Run) => [...new Set(run.requests.map(row => row.cacheRetention))].join(", ") || "no requests";
 const pct = (value: number) => (100 * value).toFixed(1);
 const verdict = (passed: boolean) => passed ? "PASS" : "FAIL";
 const usageCells = (usage?: RequestRow["usage"]) => usage ? `${usage.input} | ${usage.cacheRead} | ${usage.cacheWrite} | ${usage.output}` : "— | — | — | —";
@@ -79,6 +89,7 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
   const issues = [...cut.issues.map(s => `cut: ${s}`), ...baseline.issues.map(s => `baseline: ${s}`)];
   const lines = [
     `# Durable compaction eval — ${model}`, "", issues.length ? `**INVALID:** ${issues.join("; ")}` : "**Valid scenario.**", "",
+    `Stream cache retention (default = delegated to provider): cut ${retention(cut)}; baseline ${retention(baseline)}.`,
     full ? "Full-size cut vs cheap-scenario baseline on the same model (a full-size uncut baseline exceeds the 150k ceiling). Cache is informational only." :
       "Cheap cuts do not test the production 20k tail or 16k-character summary budget at scale. At 150k the tail is ~4× larger and the same summary takes ~7× less of the ceiling.",
     "OpenCode Go's Anthropic route does not use pi-ai Anthropic message threads; direct Anthropic may behave differently.",
@@ -109,7 +120,7 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
   for (const [i, label] of ["Moon phases", "Floating ice"].entries()) lines.push(`| ${label} | ${cell(cut.answers[`topic-${i}`] ?? "—")} | ${cell(baseline.answers[`topic-${i}`] ?? "—")} |`);
   lines.push("", "## Cache and request usage");
   for (const [label, run] of [["Cut", cut], ["Baseline", baseline]] as const) {
-    const sizes = run.cuts.map(i => run.requests[i]!.messages.map(text).find(summary)?.length ?? 0);
+    const sizes = run.cuts.map(i => run.requests[i]!.messages.map(summary).find(body => body !== undefined)?.length ?? 0);
     lines.push("", `### ${label}: ceiling ${run.budget.ceiling}, tail ${run.budget.tail}, summary characters per cut ${sizes.join(", ") || "none"}`,
       "", `Seams: ${run.seams.length}; prefix breaks: ${run.cuts.length}; idle gap: ${run.gapRequest < 0 ? "none" : `${run.gapMs} ms`}.`, "",
       "| # | Timestamp | Turn | Markers | Messages | Est. prompt | Input | Read | Write | Output |", "|---:|---|---|---|---:|---:|---:|---:|---:|---:|");

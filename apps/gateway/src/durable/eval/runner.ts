@@ -1,4 +1,4 @@
-import { lazyStream, type Message, type Usage } from "@earendil-works/pi-ai-durable";
+import { lazyStream, type Message, type SimpleStreamOptions, type Usage } from "@earendil-works/pi-ai-durable";
 import type { FeedWindow } from "@yoplai/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,7 +9,11 @@ import type { DurableModelsFactory } from "../models.js";
 import { CHEAP_CEILING, CHEAP_WINDOW, facts, fixture, FULL_CEILING, IDLE_MS, OUTPUT_CAP, probe, scenario, shipmentCode, STEPS, tokens } from "./scenario.js";
 
 export type Counts = Pick<Usage, "input" | "output" | "cacheRead" | "cacheWrite">;
-export type RequestRow = { at: string; turn: string; messages: Message[]; estimate: number; usage?: Counts; stopped?: string };
+export type RequestRow = {
+  at: string; turn: string; messages: Message[]; estimate: number;
+  cacheRetention: NonNullable<SimpleStreamOptions["cacheRetention"]> | "default";
+  usage?: Counts; stopped?: string;
+};
 type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; result?: "ok" | "failed" };
 export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number };
 export type Run = {
@@ -27,13 +31,42 @@ export const breaks = (requests: RequestRow[]) => requests.slice(1).flatMap(({ m
   return JSON.stringify(messages.slice(0, prev.length)) === JSON.stringify(prev) ? [] : [index + 1];
 });
 
+export function scenarioIssues({ requests, seams, cuts, beforeProbe }: Pick<Run, "requests" | "seams" | "cuts" | "beforeProbe">, baseline: boolean) {
+  const issues: string[] = [];
+  if (seams.length !== cuts.length) issues.push(`Seams (${seams.length}) differ from prefix breaks (${cuts.length})`);
+  if (baseline) {
+    if (seams.length || cuts.length) issues.push("Baseline must have no cuts");
+  } else {
+    const firstProbe = requests.findIndex(row => row.turn === "probe-0");
+    const secondProbe = requests.findIndex(row => row.turn === "probe-1");
+    const [first, second] = cuts;
+    if (cuts.length !== 2 || beforeProbe[0] !== 1 || beforeProbe[1] !== 2 ||
+      first === undefined || second === undefined || !(first < firstProbe && firstProbe < second && second < secondProbe)) {
+      issues.push("Expected exactly one prefix break before each probe batch");
+    }
+    if (second === undefined || requests[second - 1]?.turn !== "ledger" || requests[second]?.turn !== "ledger") {
+      issues.push("Second prefix break did not land mid ledger tool run");
+    }
+  }
+  const seal = `Kiln seal: ${facts[2].value}`;
+  if (!requests.some(row => row.turn === "kiln" && row.messages.some(message =>
+    message.role === "toolResult" && message.toolName === "read_kiln" && !message.isError &&
+    message.content.some(block => block.type === "text" && block.text.split("\n", 1)[0] === seal)))) {
+    issues.push("Opening kiln turn did not receive a successful read_kiln result with the seal");
+  }
+  return issues;
+}
+
 function observe(requests: RequestRow[], current: () => string, redact: (value: string) => string) {
   return (factory: DurableModelsFactory): DurableModelsFactory => async (agent, policy) => {
     const models = await factory(agent, policy);
     const stream = models.streamSimple.bind(models);
     models.streamSimple = (model, transcript, options) => {
       const serialized = JSON.stringify(transcript.messages, (_name, value: unknown) => typeof value === "string" ? redact(value) : value);
-      const row: RequestRow = { at: new Date().toISOString(), turn: current(), messages: JSON.parse(serialized), estimate: tokens(serialized) };
+      const row: RequestRow = {
+        at: new Date().toISOString(), turn: current(), messages: JSON.parse(serialized), estimate: tokens(serialized),
+        cacheRetention: options?.cacheRetention ?? "default",
+      };
       requests.push(row);
       async function* recorded() {
         for await (const event of stream(model, transcript, options)) {
@@ -182,9 +215,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
         { content: { tool: "read_kiln", id: `probe-kiln-${index}` }, usage: warm }, use(reply));
     }
     const cuts = breaks(requests);
-    if (seams.length !== cuts.length) issues.push(`Seams (${seams.length}) differ from prefix breaks (${cuts.length})`);
-    if (baseline ? seams.length !== 0 : seams.length < 2 || beforeProbe.some((n, i) => n < i + 1)) issues.push("Cuts did not land before the required probes");
-    if (!baseline && !cuts.some(i => requests[i]?.turn === "ledger" && requests[i - 1]?.turn === "ledger")) issues.push("No prefix break mid ledger tool run");
+    issues.push(...scenarioIssues({ requests, seams, cuts, beforeProbe }, baseline));
     if (requests.some(row => !row.stopped || row.stopped === "error" || row.stopped === "aborted")) issues.push("Incomplete or failed model request");
     if (!baseline && !options.faux && gapMs < IDLE_MS) issues.push("Idle gap was shorter than six minutes");
     const steps = (await fs.readFile(path.join(home, "steps.txt"), "utf8")).trim().split("\n").filter(Boolean).map(Number);

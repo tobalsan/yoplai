@@ -48,6 +48,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Fix Durable compaction eval summary attribution and reject comparisons with unprobed cuts, a misplaced ledger cut, or a missing opening kiln read. Record stream cache retention in the reports.
 - Durable Main shows nested Code Mode file and MCP views after reload, preserves streamed text across tool rounds, and keeps replies and tool steps from appearing twice when history reloads mid-turn.
 - Open files sent from linked gateways in a new window, including files sent from Code Mode.
 - Durable agents on single-user desktops can use pinned Pi, Codex, Claude Code, and OpenCode CLI logins. The desktop reads OpenCode Go keys from OpenCode v2's database as well as legacy JSON.
