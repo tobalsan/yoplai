@@ -45,7 +45,9 @@ export function sources(run: Pick<Run, "requests" | "expectedReply">, turn: stri
       const sections = body.split(/\n\n(Running turn|Memory|Older requests)(?=\n|$)/);
       for (let i = 1; i < sections.length; i += 2) {
         const name = sections[i]!;
-        if (matches(fact, sections[i + 1]!, value)) found.add(name === "Older requests" ? "summary index" : name);
+        const section = sections[i + 1]!;
+        const content = name === "Memory" ? section.replace(/ \(refs: m_\d+(?:, m_\d+)*\)$/gm, "") : section;
+        if (matches(fact, content, value)) found.add(name === "Older requests" ? "summary index" : name);
       }
     } else if (!isProbe(message) && matches(fact, text(message), value)) {
       found.add(message.role === "toolResult" && message.toolName === "session_history" ? "session_history"

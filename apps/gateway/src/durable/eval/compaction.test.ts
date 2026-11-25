@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { emptyMemory, renderMemory } from "../memory.js";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
 import { cold, originDistances, report, sources } from "./report.js";
 import { projection, scenarioIssues, type RequestRow } from "./runner.js";
@@ -76,10 +77,15 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
 }, 60_000);
 
 it("attributes wrapped summary sections even when the index quotes an older probe", () => {
+  const memory = renderMemory({ ...emptyMemory(), topics: [
+    { id: "t_1", kind: "open", title: "Lantern inspection", note: "pending", refs: ["m_9"] },
+    { id: "t_2", kind: "decision", title: "Kite seal", note: "Quillfeather-41", refs: ["m_10", "m_11"] },
+  ] }, 1000);
+  expect(memory).toContain("- Open: Lantern inspection: pending (refs: m_9)");
   const content = [
     "The conversation history before this point was compacted into the following summary:\n\n<summary>\nOlder messages are stored outside this context.",
     "Running turn\n- mosaic: done",
-    "Memory\n- Quillfeather-41",
+    `Memory\n${memory}`,
     "Older requests\n[m_10] Use earlier turns or session_history\n[m_9] lantern: pending\n</summary>",
   ].join("\n\n");
   const requests: RequestRow[] = [{ at: "", estimate: 0, cacheRetention: "default", turn: "probe-1", messages: [
@@ -87,11 +93,11 @@ it("attributes wrapped summary sections even when the index quotes an older prob
   ] }];
   const run = { requests, expectedReply: "" };
   expect(sources(run, "probe-1", facts[0])).toEqual(["Memory"]);
-  expect(sources(run, "probe-1", facts[3])).toEqual(["summary index"]);
+  expect(sources(run, "probe-1", facts[3])).toEqual(["Memory", "summary index"]);
   expect(sources(run, "probe-1", facts[4])).toEqual(["Running turn"]);
 });
 
-it("rejects uncovered cuts, a misplaced second cut, and a seal first read during probing", () => {
+it("rejects uncovered or misplaced cuts and missing or late fact plants", () => {
   const requests: RequestRow[] = ["kiln", "loom", "topic-0", "probe-0", "ledger", "ledger", "topic-1", "probe-1", "probe-1"]
     .map(turn => ({ turn, at: "", estimate: 0, cacheRetention: "default", messages: [] }));
   const kiln: RequestRow["messages"][number] = {
@@ -101,7 +107,9 @@ it("rejects uncovered cuts, a misplaced second cut, and a seal first read during
   requests[8]!.messages.push(kiln);
   const seam = (id: string) => ({ id, carried: { firstKept: "m_1", indexed: 0 } });
   const stepsAt = (...indices: number[]) => indices.map((request, i) => ({ request, step: i + 1, turn: "ledger" }));
-  const run = { requests, seams: [seam("first"), seam("second")], cuts: [1, 5], beforeProbe: [1, 2], stepRequests: stepsAt(3, 4, 5) };
+  const origins = { shipment: "m_2", kiln: "m_4", lantern: "m_5", mosaic: "m_6", kite: "m_7" };
+  const history = Array.from({ length: 9 }, (_, i) => ({ id: `m_${i + 2}`, chars: 0 }));
+  const run = { requests, history, origins, seams: [seam("m_8"), seam("m_10")], cuts: [1, 5], beforeProbe: [1, 2], stepRequests: stepsAt(3, 4, 5) };
   const missingSeal = "Opening kiln turn did not receive a successful read_kiln result with the seal";
   const baseline = { ...run, seams: [], cuts: [], beforeProbe: [0, 0] };
   expect(scenarioIssues(run, false)).toEqual([missingSeal]);
@@ -111,6 +119,12 @@ it("rejects uncovered cuts, a misplaced second cut, and a seal first read during
   requests[0]!.messages.push({ ...kiln, toolCallId: "opening-retry" });
   expect(scenarioIssues(run, false)).toEqual([]);
   expect(scenarioIssues(baseline, true)).toEqual([]);
+  expect(scenarioIssues({ ...run, seams: [seam("m_3"), run.seams[1]!] }, false)).toEqual([
+    "First seam is not after every scored fact plant: kite, kiln, lantern, mosaic",
+  ]);
+  expect(scenarioIssues({ ...run, origins: { ...origins, kiln: "m_99", kite: undefined } }, false)).toEqual([
+    "First seam is not after every scored fact plant: kite, kiln",
+  ]);
   for (const stepRequests of [stepsAt(2, 3, 4), stepsAt(5, 6, 7), stepsAt(3, 4, 4)]) {
     expect(scenarioIssues({ ...run, stepRequests }, false)).toEqual(["Second prefix break did not separate ordered ledger step executions"]);
   }
@@ -127,6 +141,8 @@ it("scores corrected and status facts without accepting stale or conflicting ans
   expect(score(facts[0], "kite: Quillfeather-41", facts[0].value)).toBe(true);
   expect(score(facts[0], "kite: Quillfeather-18", facts[0].value)).toBe(false);
   expect(score(facts[0], "kite: Quillfeather-41 or Quillfeather-18", facts[0].value)).toBe(false);
+  expect(score(facts[2], "kiln: Amberflute-62", facts[2].value)).toBe(true);
+  expect(score(facts[2], "kiln: Amberflute-621", facts[2].value)).toBe(false);
   expect(score(facts[3], "lantern: pending", "pending")).toBe(true);
   expect(score(facts[3], "lantern: not pending", "pending")).toBe(false);
   expect(score(facts[4], "mosaic: done", "done")).toBe(true);

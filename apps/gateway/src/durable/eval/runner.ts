@@ -39,7 +39,7 @@ export const breaks = (requests: RequestRow[]) => requests.slice(1).flatMap(({ m
   return JSON.stringify(messages.slice(0, prev.length)) === JSON.stringify(prev) ? [] : [index + 1];
 });
 
-export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequests }: Pick<Run, "requests" | "seams" | "cuts" | "beforeProbe" | "stepRequests">, baseline: boolean) {
+export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequests, history, origins }: Pick<Run, "requests" | "seams" | "cuts" | "beforeProbe" | "stepRequests" | "history" | "origins">, baseline: boolean) {
   const issues: string[] = [];
   if (seams.length !== cuts.length) issues.push(`Seams (${seams.length}) differ from prefix breaks (${cuts.length})`);
   if (baseline) {
@@ -52,6 +52,12 @@ export function scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequest
       first === undefined || second === undefined || !(first < firstProbe && firstProbe < second && second < secondProbe)) {
       issues.push("Expected exactly one prefix break before each probe batch");
     }
+    const firstSeam = history.findIndex(entry => entry.id === seams[0]?.id);
+    const unplanted = facts.filter(({ id }) => {
+      const plant = history.findIndex(entry => entry.id === origins[id]);
+      return plant < 0 || plant >= firstSeam;
+    });
+    if (unplanted.length) issues.push(`First seam is not after every scored fact plant: ${unplanted.map(({ id }) => id).join(", ")}`);
     if (second === undefined || requests[second - 1]?.turn !== "ledger" || requests[second]?.turn !== "ledger") {
       issues.push("Second prefix break did not land mid ledger tool run");
     } else {
@@ -263,12 +269,12 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
         { content: { tool: "read_kiln", id: `probe-kiln-${index}` }, usage: warm }, use(reply));
     }
     const cuts = breaks(requests);
-    issues.push(...scenarioIssues({ requests, seams, cuts, beforeProbe, stepRequests }, baseline));
     if (requests.some(row => !row.stopped || row.stopped === "error" || row.stopped === "aborted")) issues.push("Incomplete or failed model request");
     if (!baseline && !options.faux && gapMs < IDLE_MS) issues.push("Idle gap was shorter than six minutes");
     const steps = (await fs.readFile(path.join(home, "steps.txt"), "utf8")).trim().split("\n").filter(Boolean).map(Number);
     const conversationId = await gateway.mainConversationId("local") as ConversationId | undefined;
     const journal = conversationId ? await loggedHistory(home, conversationId, data, shipmentId, redact) : { history: [], origins: {} };
+    issues.push(...scenarioIssues({ ...journal, requests, seams, cuts, beforeProbe, stepRequests }, baseline));
     return { ...journal, budget, requests, keeper, answers, steps, stepRequests, seams, cuts, beforeProbe, gapRequest, gapMs, expectedReply, issues } satisfies Run;
   } finally {
     await gateway.close();

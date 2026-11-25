@@ -31,7 +31,7 @@ export function score(fact: Fact, answer: string, expected: string) {
   });
   if (!expected || values.length !== 1) return false;
   if (fact.id === "lantern" || fact.id === "mosaic") return values[0]!.toLowerCase().replace(/\.$/, "") === expected;
-  return values[0]!.includes(expected) && !("stale" in fact && answer.includes(fact.stale));
+  return values[0] === expected && !("stale" in fact && answer.includes(fact.stale));
 }
 
 // Varied invented prose rather than a single repeated token; still only a chars/4 estimate.
