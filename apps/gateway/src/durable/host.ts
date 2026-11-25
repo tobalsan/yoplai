@@ -68,6 +68,7 @@ export class DurableHost {
 
   private constructor(
     private readonly harness: Harness,
+    models: Awaited<ReturnType<DurableModelsFactory>>,
     private readonly agent: AgentConfig,
     private readonly runtime: ExtensionRuntime,
     private readonly providerConversations: Map<string, ConversationId>,
@@ -104,7 +105,7 @@ export class DurableHost {
       if (owner === undefined) return;
       return getMcpAppView({ agentId: agent.id, sessionId: DURABLE_MAIN_SESSION_ID, userId: owner === "local" ? undefined : owner }, callId);
     }, this.deliveries);
-    this.keeper = new MemoryKeeper(harness, this.feed, agent.id, options.keeper);
+    this.keeper = new MemoryKeeper(harness, this.feed, models, agent.id, options.keeper);
   }
 
   static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions) {
@@ -185,7 +186,7 @@ export class DurableHost {
           };
         },
       }, context);
-      host = new DurableHost(harness, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options);
+      host = new DurableHost(harness, models, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options);
       await host.resume();
       return host;
     } catch (error) {

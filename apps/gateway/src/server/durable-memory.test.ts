@@ -138,6 +138,65 @@ it("warns on null, invalid and thrown responses and retries the same public mess
   }
 }, 20_000);
 
+it("catches up in order when maintenance recovers with a limited input budget", async () => {
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  let offline = false;
+  const processed: string[] = [];
+  const previousNote = "Orchard season detail. ".repeat(24).trim();
+  const complete = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation(async ({ prompt, system, maxTokens }) => {
+    if (offline || Buffer.byteLength(prompt) + Buffer.byteLength(system) + maxTokens > 8_000) return null;
+    const { messages }: { messages: Array<{ id: string; role: string; text: string }> } = JSON.parse(prompt);
+    processed.push(...messages.filter(({ role }) => role === "user").map(({ text }) => text.split("\n")[0]!));
+    if (messages.some(({ text }) => text === "Start the orchard log.")) {
+      return JSON.stringify({ topics: Array.from({ length: 24 }, (_, index) => ({
+        kind: "open", title: "Existing topic " + index, note: previousNote,
+      })) });
+    }
+    const update = messages.find(({ text }) => text.startsWith("The pears ship Friday."));
+    return JSON.stringify({ topics: update ? [
+      { kind: "decision", title: "Pear delivery", note: "The pears ship Friday.", refs: [update.id] },
+    ] : [] });
+  });
+  try {
+    const send = async (id: string, text: string) => {
+      gateway.script("Orchard response. " + "Packing crate. ".repeat(260));
+      expect((await gateway.send("local", text, { clientSendId: id })).status).toBe(200);
+    };
+    await send("seed", "Start the orchard log.");
+    await vi.waitFor(() => expect(processed).toEqual(["Start the orchard log."]));
+
+    offline = true;
+    for (const [index, text] of [
+      "Check the inventory.", "Label the crates.", "Send the invoice.", "The pears ship Friday.",
+    ].entries()) {
+      await send("outage-" + index, text + "\n" + "Orchard detail. ".repeat(260));
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(index + 2));
+    }
+    offline = false;
+    await send("restore", "Publish the orchard log.");
+    await vi.waitFor(() => expect(processed).toEqual([
+      "Start the orchard log.", "Check the inventory.", "Label the crates.",
+      "Send the invoice.", "The pears ship Friday.", "Publish the orchard log.",
+    ]));
+
+    const history: FeedWindow = await (await gateway.request("local", feed)).json();
+    const ref = history.items.find(({ text }) => text.startsWith("The pears ship Friday."))?.id;
+    expect(ref).toMatch(/^m_\d+$/);
+    gateway.script({ tool: "topics_get", id: "after-outage" }, "The pears ship Friday.");
+    expect((await gateway.send("local", "When do the pears ship?", { clientSendId: "remember-shipment" })).status).toBe(200);
+    expect(toolValue(gateway, "after-outage")).toMatchObject({
+      topics: expect.arrayContaining([
+        expect.objectContaining({ kind: "decision", title: "Pear delivery", note: "The pears ship Friday.", refs: [ref] }),
+        expect.objectContaining({ title: "Existing topic 0", note: previousNote }),
+      ]),
+    });
+  } finally {
+    await gateway.close();
+    complete.mockRestore();
+  }
+}, 20_000);
+
 it("keeps Alice's plan and topics out of Bob's tools and post-cut summary", async () => {
   const gateway = await startDurableTestGateway({ multiUser: true, keeper: { idleMs: 60_000, turns: 2 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
