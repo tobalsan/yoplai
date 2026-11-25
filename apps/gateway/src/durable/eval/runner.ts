@@ -218,9 +218,21 @@ export function keeperCompletions() {
   };
 }
 
+// Timers count the raw hardware clock; Date.now() follows NTP and can run several ppm slower,
+// which is milliseconds over six minutes. Keep sleeping until the measured gap reaches the target.
+export async function idleGap(ms: number, wait: (ms: number) => Promise<unknown> = sleep, now = Date.now) {
+  const start = now();
+  let gap = 0;
+  while (gap < ms) {
+    await wait(ms - gap);
+    gap = now() - start;
+  }
+  return gap;
+}
+
 const feedUrl = "/api/agents/pilot/feed?limit=200";
 export async function run(ref: string, variant: "cheap" | "full" | "baseline", budget: Budget, options: {
-  faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean; idle?: (ms: number) => Promise<unknown>; apiKey?: string; replay?: Drive;
+  faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean; apiKey?: string; replay?: Drive;
 }) {
   const baseline = variant === "baseline";
   const data = scenario();
@@ -351,9 +363,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       await send(`topic-${index}`, data.relevance[index]!, index ? "Ice is less dense than liquid water." : "We see different fractions of the Moon's sunlit half.");
       if (!headroom(`Before probe ${index}`, index + 1)) break;
       if (index === 0 && !baseline) {
-        const start = Date.now();
-        await (options.idle ?? sleep)(IDLE_MS);
-        gapMs = Date.now() - start;
+        gapMs = options.faux ? 0 : await idleGap(IDLE_MS);
         gapRequest = requests.length;
       }
       beforeProbe.push(seams.length);

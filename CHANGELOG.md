@@ -48,6 +48,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable compaction eval keeps idling until its measured gap reaches six minutes, so a wall clock that runs slower than the timer no longer invalidates a paid run by a few milliseconds.
 - Durable compaction eval stops and marks the run invalid if a turn attempts to open more than eight model requests.
 - Durable compaction eval uses measured prompt usage to place cuts, skips baselines after invalid cut runs, matches complete source identifiers, and waits for in-flight keeper usage before reporting.
 - Durable compaction eval rejects pairs with missing or late fact plants before the first cut, requires exact recall identifiers, and credits cited Memory statuses.

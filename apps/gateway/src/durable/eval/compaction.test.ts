@@ -5,8 +5,8 @@ import { expect, it } from "vitest";
 import { emptyMemory, renderMemory } from "../memory.js";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
 import { cold, originDistances, report, sources } from "./report.js";
-import { keeperCompletions, projection, scenarioIssues, type RequestRow } from "./runner.js";
-import { facts, FULL, HAIKU, score } from "./scenario.js";
+import { idleGap, keeperCompletions, projection, scenarioIssues, type RequestRow } from "./runner.js";
+import { facts, FULL, HAIKU, IDLE_MS, score } from "./scenario.js";
 
 it("drives cheap and full compaction scenarios through the gateway with Faux", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "compaction-eval-report-"));
@@ -105,6 +105,16 @@ it("caps model requests in a ledger turn that keeps calling tools and skips its 
   expect(cut.requests.at(-1)?.turn).toBe("ledger");
   expect(baseline).toBeUndefined();
 }, 60_000);
+
+it("keeps idling until the measured gap reaches six minutes on a slow wall clock", async () => {
+  // Paid rerun: macOS ran the wall clock 13.208 ppm slower than the timer clock, and the timer fired 1.5 ms late.
+  let timer = 0;
+  const waits: number[] = [];
+  const gap = await idleGap(IDLE_MS, async ms => { waits.push(ms); timer += ms + 1.5; }, () => Math.floor(timer * (1 - 13.208e-6)));
+  expect(gap).toBeGreaterThanOrEqual(IDLE_MS);
+  expect(waits).toEqual([IDLE_MS, 4]);
+  expect(await idleGap(20)).toBeGreaterThanOrEqual(20);
+});
 
 it("drains already-started keeper calls after shutdown before exposing their rows", async () => {
   const completions = keeperCompletions();

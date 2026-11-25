@@ -31,7 +31,7 @@ export async function prepare(model: string, full: boolean) {
 export async function pair(plan: Awaited<ReturnType<typeof prepare>>, options: { faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean }) {
   const apiKey = options.faux ? undefined : getEnvApiKey(plan.model.split("/")[0]!);
   if (!options.faux && !apiKey) throw new Error(`No environment API key for ${plan.model}`);
-  const cut = await run(plan.model, plan.variant, plan.cut, { ...options, apiKey, idle: options.faux ? async () => {} : undefined });
+  const cut = await run(plan.model, plan.variant, plan.cut, { ...options, apiKey });
   let baseline;
   if (!cut.issues.length) {
     const scale = (chars: number) => Math.ceil(chars * CHEAP_CEILING / plan.cut.ceiling);
