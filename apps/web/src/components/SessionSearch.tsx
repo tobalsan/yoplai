@@ -1,4 +1,5 @@
 import {
+  batch,
   createEffect,
   createSignal,
   createUniqueId,
@@ -11,7 +12,10 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { stripBase } from "../lib/path";
 import { Modal } from "./ui/Modal";
 import { searchSessions } from "../api/chat";
-import type { SessionSearchResult } from "../api/types";
+import { API_BASE, apiFetch } from "../api/core";
+import { searchFeed } from "../api/feed";
+import type { FeedHit } from "@yoplai/shared/types";
+import type { Agent, SessionSearchResult } from "../api/types";
 import { AgentAvatarFill } from "./AgentAvatarFill";
 
 const [searchOpen, setSearchOpen] = createSignal(false);
@@ -56,14 +60,36 @@ export function SessionSearch() {
   );
 }
 
+type DurableHit = FeedHit & { agentId: string; agentName: string; avatar?: string };
+type SearchHit = SessionSearchResult | DurableHit;
+
+async function searchDurableChats(query: string, signal: AbortSignal, publish: (hits: DurableHit[]) => void) {
+  const readAgents = async <T,>(suffix = ""): Promise<T> => {
+    const response = await apiFetch(`${API_BASE}/agents${suffix}`, { signal });
+    if (!response.ok) throw new Error("Unable to read agents");
+    return response.json();
+  };
+  const agents = await readAgents<Agent[]>();
+  await Promise.allSettled(agents.filter(({ id, gateway }) => !gateway && !id.includes("@"))
+    .map(async ({ id }) => {
+      const agent = await readAgents<Agent>(`/${encodeURIComponent(id)}`);
+      if (!agent.durable || signal.aborted) return;
+      const hits = await searchFeed(id, query, signal);
+      publish(hits.map((hit) => ({
+        ...hit, agentId: id, agentName: agent.name, avatar: agent.avatar,
+      })));
+    }));
+}
+
 function SearchPalette(props: { onClose: () => void }) {
   const navigate = useNavigate();
   const listId = createUniqueId();
   const [query, setQuery] = createSignal("");
-  const [items, setItems] = createSignal<SessionSearchResult[]>([]);
+  const [items, setItems] = createSignal<SearchHit[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal(0);
+  let movedSelection = false;
   onMount(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -71,32 +97,53 @@ function SearchPalette(props: { onClose: () => void }) {
       document.body.style.overflow = previous;
     });
   });
-  const open = (item: SessionSearchResult) => {
+  const open = (item: SearchHit) => {
     props.onClose();
-    navigate(
-      `/chat/${encodeURIComponent(item.agentId)}?session=${encodeURIComponent(item.sessionId)}`
-    );
+    const chat = `/chat/${encodeURIComponent(item.agentId)}`;
+    if ("sessionId" in item) {
+      navigate(`${chat}?session=${encodeURIComponent(item.sessionId)}`);
+    } else {
+      navigate(`${chat}#m=${encodeURIComponent(item.id)}`, { state: { feedSearch: Date.now() } });
+    }
   };
   createEffect(() => {
     const value = query().trim();
     setItems([]);
     setSelected(0);
+    movedSelection = false;
     setError("");
     setLoading(Boolean(value));
     if (!value) return;
     let current = true;
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      void searchSessions(value, controller.signal)
-        .then((result) => {
-          if (current) setItems(result.items);
-        })
-        .catch(() => {
-          if (current) setError("Unable to search chats. Try again.");
-        })
-        .finally(() => {
-          if (current) setLoading(false);
+      let durableHits: DurableHit[] = [];
+      let sessionHits: SessionSearchResult[] = [];
+      const publish = () => {
+        if (!current) return;
+        const selectedHit = items()[selected()];
+        const next = [...durableHits, ...sessionHits];
+        batch(() => {
+          setItems(next);
+          setSelected(movedSelection ? Math.max(0, next.indexOf(selectedHit)) : 0);
         });
+      };
+      void Promise.allSettled([
+        searchSessions(value, controller.signal).then((result) => {
+          sessionHits = result.items;
+          publish();
+        }),
+        searchDurableChats(value, controller.signal, (result) => {
+          durableHits = [...durableHits, ...result].sort((a, b) => b.timestamp - a.timestamp);
+          publish();
+        }),
+      ]).then(([legacy, durable]) => {
+        if (!current) return;
+        setLoading(false);
+        if (!items().length && (legacy.status === "rejected" || durable.status === "rejected")) {
+          setError("Unable to search chats. Try again.");
+        }
+      });
     }, 200);
     onCleanup(() => {
       current = false;
@@ -125,6 +172,7 @@ function SearchPalette(props: { onClose: () => void }) {
               if (!items().length) return;
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
+                movedSelection = true;
                 setSelected(
                   (index) =>
                     (index +
@@ -177,21 +225,19 @@ function SearchPalette(props: { onClose: () => void }) {
                   <span class="session-search-copy">
                     <span class="session-search-title">
                       <Highlight
-                        text={
-                          item.title || item.firstUserMessage || item.sessionId
-                        }
+                        text={"sessionId" in item ? item.title || item.firstUserMessage || item.sessionId : item.snippet}
                         query={query()}
                       />
                     </span>
                     <span class="session-search-meta">
-                      {item.agentId} ·{" "}
+                      {"sessionId" in item ? item.agentId : `${item.agentName} · ${item.role === "user" ? "User" : "Assistant"}`} ·{" "}
                       <time
-                        title={new Date(item.lastActivity).toLocaleString()}
+                        title={new Date("sessionId" in item ? item.lastActivity : item.timestamp).toLocaleString()}
                       >
-                        {relativeTime(item.lastActivity)}
+                        {relativeTime("sessionId" in item ? item.lastActivity : item.timestamp)}
                       </time>
                     </span>
-                    <Show when={item.snippet}>
+                    <Show when={"sessionId" in item && item.snippet}>
                       {(snippet) => (
                         <span class="session-search-snippet">
                           <Highlight text={snippet()} query={query()} />

@@ -1,4 +1,4 @@
-import { createComputed, createMemo, createSignal, on, type Accessor } from "solid-js";
+import { createComputed, createMemo, createSignal, on, untrack, type Accessor } from "solid-js";
 import type { McpAppView, McpAppViewReference } from "@yoplai/shared/types";
 import type { HistoryViewMode, FullToolResultMessage } from "../../api/types";
 import type { ChatTranscriptSession } from "./ChatTranscript";
@@ -123,8 +123,10 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   const [activeKey, setActiveKey] = createSignal<string>();
   let selectedScope: string | undefined;
   let pendingSave = false;
+  let pendingRestore: SavedAppViews | undefined;
   function close() {
     pendingSave = false;
+    pendingRestore = undefined;
     setSelections([]);
     setActiveKey(undefined);
   }
@@ -172,9 +174,14 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     const session = sessionId();
     if (!session || !persistence.ready()) return;
     pendingSave = false;
+    const open = tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: savedFrame(tab.frame) } : {}) }));
+    const pending = pendingRestore?.tabs;
     save(persistence.agentId(), session, {
-      tabs: tabs().map((tab) => ({ key: tab.key, ...("frame" in tab ? { frame: savedFrame(tab.frame) } : {}) })),
-      active: activeKey(),
+      tabs: pending ? [
+        ...pending.map((entry) => open.find((tab) => tab.key === entry.key) ?? entry),
+        ...open.filter((tab) => !pending.some((entry) => entry.key === tab.key)),
+      ] : open,
+      active: pendingRestore?.active ?? activeKey(),
     });
   }
   if (persistence) createComputed(on(persistence.ready, () => {
@@ -191,10 +198,42 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
   function isTab(key: string) { return tabs().some((tab) => tab.key === key); }
   function activate(key: string) {
     if (isTab(key)) {
+      if (pendingRestore) pendingRestore = { ...pendingRestore, active: key };
       setActiveKey(key);
       persist();
     }
   }
+  function restore(saved: SavedAppViews | undefined, deferMissing = false) {
+    if (!saved) return;
+    selectedScope = chatScope?.();
+    const existing = selections();
+    const previousActive = activeKey();
+    const resolving = pendingRestore === saved;
+    const restored: ReturnType<typeof selections> = [];
+    for (const entry of saved.tabs) {
+      if (restored.some((selection) => selection.tab.key === entry.key)) continue;
+      const open = existing.find((selection) => selection.tab.key === entry.key);
+      const view = projection().get(entry.key);
+      if (open) restored.push(open);
+      else if (view) restored.push({ session: sessionId(), tab: view, order: [...view.calls] });
+      else if (entry.frame) restored.push({ session: sessionId(), tab: { key: entry.key, frame: { kind: "dashboard", ...entry.frame } }, order: [] });
+    }
+    pendingRestore = deferMissing && saved.tabs.some((entry) => !restored.some((tab) => tab.tab.key === entry.key))
+      ? saved
+      : undefined;
+    restored.push(...existing.filter((selection) => !restored.some((item) => item.tab.key === selection.tab.key)));
+    setSelections(restored);
+    const savedActive = restored.find((selection) => selection.tab.key === saved.active)?.tab.key;
+    setActiveKey(resolving && savedActive ? savedActive : existing.length ? previousActive : savedActive ?? restored[0]?.tab.key);
+    persist();
+  }
+  createComputed(() => {
+    const views = projection();
+    const pending = pendingRestore;
+    if (pending && pending.tabs.some((tab) => !untrack(() => isTab(tab.key)) && views.has(tab.key))) {
+      untrack(() => restore(pending, true));
+    }
+  });
   return {
     isLiveDuplicate(id: string) { return historyIds().has(id); },
     fileOf(id: string) {
@@ -224,25 +263,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     isTab,
     /** The query that the user chose for this remote dashboard tab, also once a captured result shows it. */
     queryOf(key: string) { return selections().find((selection) => selection.session === sessionId() && selection.tab.key === key)?.query; },
-    restore(saved: SavedAppViews | undefined) {
-      if (!saved) return;
-      selectedScope = chatScope?.();
-      const existing = selections();
-      const previousActive = activeKey();
-      const restored: ReturnType<typeof selections> = [];
-      for (const entry of saved.tabs) {
-        if (restored.some((selection) => selection.tab.key === entry.key)) continue;
-        const open = existing.find((selection) => selection.tab.key === entry.key);
-        const view = projection().get(entry.key);
-        if (open) restored.push(open);
-        else if (view) restored.push({ session: sessionId(), tab: view, order: [...view.calls] });
-        else if (entry.frame) restored.push({ session: sessionId(), tab: { key: entry.key, frame: { kind: "dashboard", ...entry.frame } }, order: [] });
-      }
-      restored.push(...existing.filter((selection) => !restored.some((item) => item.tab.key === selection.tab.key)));
-      setSelections(restored);
-      setActiveKey(existing.length ? previousActive : restored.find((selection) => selection.tab.key === saved.active)?.tab.key ?? restored[0]?.tab.key);
-      persist();
-    },
+    restore,
     move(key: string, index: number) {
       setSelections((current) => {
         const from = current.findIndex((selection) => selection.tab.key === key);
@@ -257,6 +278,12 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
     closeTab(key: string) {
       const index = tabs().findIndex((tab) => tab.key === key);
       if (index < 0) return;
+      if (pendingRestore) {
+        pendingRestore = {
+          tabs: pendingRestore.tabs.filter((tab) => tab.key !== key),
+          active: pendingRestore.active === key ? undefined : pendingRestore.active,
+        };
+      }
       const remaining = selections().filter((selection) => selection.tab.key !== key);
       setSelections(remaining);
       if (activeKey() === key) setActiveKey(remaining[index]?.tab.key ?? remaining[index - 1]?.tab.key);
@@ -273,8 +300,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
           : "frame" in selection.tab ? { ...selection, query: frame.query, tab: { key, frame: { ...selection.tab.frame, query: frame.query } } }
           : { ...selection, query: frame.query }));
       }
-      setActiveKey(key);
-      persist();
+      activate(key);
     },
     /** Whether `open` shows this view now: it is a tab already, or the conversation holds a result for it. */
     canOpen(key: string) { return isTab(key) || projection().has(key); },
@@ -288,8 +314,7 @@ export function createAppViews(sessionId: Accessor<string | null | undefined>, c
       if (view) {
         selectedScope = chatScope?.();
         setSelections((current) => [...current, { session: sessionId(), tab: view, order: [...view.calls] }]);
-        setActiveKey(key);
-        persist();
+        activate(key);
       }
     },
     close,

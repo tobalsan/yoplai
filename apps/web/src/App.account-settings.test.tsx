@@ -44,12 +44,18 @@ beforeEach(() => {
       chatReads.push(enabled);
       return Response.json({ id: "sage", name: "Sage", ...(enabled ? { durable: true } : {}) });
     }
+    if (path === "/api/agents/sage/feed") {
+      return Response.json({
+        items: [{ id: "m_2", role: "assistant", timestamp: 2, text: "Durable transcript", toolCallCount: 0 }],
+        hasBefore: false, hasAfter: false, live: null,
+      });
+    }
     if (path === "/api/agents/sage/history") {
       return Response.json({
-        sessionId: enabled ? "durable-main" : "old-chat",
+        sessionId: "old-chat",
         messages: [
           { role: "user", timestamp: 1, content: [{ type: "text", text: "Check the seedlings" }] },
-          { role: "assistant", timestamp: 2, content: [{ type: "text", text: enabled ? "Durable transcript" : "Legacy transcript" }] },
+          { role: "assistant", timestamp: 2, content: [{ type: "text", text: "Legacy transcript" }] },
         ],
       });
     }

@@ -1,8 +1,9 @@
-import type { SubagentRunStatus, WebCompletion } from "@yoplai/shared/types";
+import type { SubagentRunStatus, WebCompletion, WsFeedMessage } from "@yoplai/shared/types";
 import { getWsUrl, type WsStreamEvent } from "./ws";
 
 export type RealtimeInterest =
   | { type: "session"; agentId: string; sessionKey: string; sessionId?: string }
+  | { type: "feed"; agentId: string; limit: number }
   | { type: "status" }
   | { type: "project"; projectId?: string }
   | { type: "subagents" }
@@ -26,7 +27,8 @@ export type RealtimeEvent =
       status: SubagentRunStatus;
     }
   | { type: `orchestrator.${string}`; [key: string]: unknown }
-  | WsStreamEvent;
+  | WsStreamEvent
+  | WsFeedMessage;
 
 export type SubscribeToRealtimeOptions = {
   interests: RealtimeInterest[];
@@ -64,6 +66,9 @@ function shouldDeliver(
   interests: RealtimeInterest[],
   event: RealtimeEvent
 ): boolean {
+  if (event.type === "feed_snapshot" || event.type === "feed_delta" || event.type === "feed_end") {
+    return interests.some((interest) => interest.type === "feed" && interest.agentId === event.agentId);
+  }
   if (event.type === "status") return hasInterest(interests, "status");
   if (event.type === "file_changed" || event.type === "agent_changed") {
     return matchesProject(interests, event);
@@ -122,6 +127,8 @@ export function subscribeToRealtime({
             ...(interest.sessionId ? { sessionId: interest.sessionId } : {}),
           })
         );
+      } else if (interest.type === "feed") {
+        socket.send(JSON.stringify({ type: "subscribeFeed", agentId: interest.agentId, limit: interest.limit }));
       } else if (interest.type === "status") {
         socket.send(JSON.stringify({ type: "subscribeStatus" }));
       }
@@ -171,6 +178,9 @@ export function subscribeToRealtime({
     ws = null;
     if (!socket) return;
     if (socket.readyState === WebSocket.OPEN) {
+      if (hasInterest(interests, "feed")) {
+        socket.send(JSON.stringify({ type: "unsubscribeFeed" }));
+      }
       if (hasInterest(interests, "session")) {
         socket.send(JSON.stringify({ type: "unsubscribe" }));
       }

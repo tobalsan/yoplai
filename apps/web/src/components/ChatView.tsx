@@ -1,4 +1,4 @@
-import { targetsDurableMain } from "@yoplai/shared/types";
+import { DURABLE_MAIN_SESSION_ID, targetsDurableMain } from "@yoplai/shared/types";
 import { AgentSettingsSidebar } from "./agent-management/AgentSettingsSidebar";
 import { createDiscardPrompt } from "./agent-management/discard";
 import { stripBase } from "../lib/path";
@@ -11,6 +11,11 @@ import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatToolbarOverflow } from "./chat/ChatToolbarOverflow";
 import { ContextUsageRing } from "./chat/ContextUsageRing";
+import { fetchFeedWindow, subscribeToFeed } from "../api/feed";
+import { createFeedWindow, FEED_PAGE_SIZE } from "./chat/feed-window";
+import { FeedTranscript, createFeedDetails, feedAppViewCalls } from "./chat/FeedTranscript";
+import { isExtensionFrameView } from "./chat/chat-history";
+import { captureFeedScroll, centerFeedMessage, clearFeedCentering } from "./chat/feed-scroll";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
 import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
@@ -59,6 +64,7 @@ import {
 } from "../lib/capabilities";
 import {
   attachmentToFileBlock,
+  classifyFile,
   FILE_INPUT_ACCEPT,
 } from "../lib/attachments";
 import { createChatAttachmentRuntime } from "../lib/chat-runtime";
@@ -150,7 +156,7 @@ export function ChatView() {
     get view() { return routeParams.view; },
   };
   const navigate = useNavigate();
-  const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string }>();
+  const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string; feedSearch?: number }>();
   const [agent, { mutate: setAgent }] = createResource(() => params.agentId, fetchAgent);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [settingsDirty, setSettingsDirty] = createSignal(false);
@@ -213,6 +219,7 @@ export function ChatView() {
   const uploadError = attachmentRuntime.uploadError;
   const setUploadingFiles = attachmentRuntime.setUploadingFiles;
   const setUploadError = attachmentRuntime.setUploadError;
+  const [durableSendError, setDurableSendError] = createSignal("");
   const [isFileDragActive, setIsFileDragActive] = createSignal(false);
   const [activeDropZone, setActiveDropZone] = createSignal<DropZone | null>(
     null
@@ -278,11 +285,16 @@ export function ChatView() {
   );
 
   const currentSession = () => `${params.agentId}:${sessionKey()}:${explicitSessionId() ?? ""}`;
+  createEffect(on(currentSession, () => setDurableSendError(""), { defer: true }));
   // Live views to open, in arrival order and one per view. They wait for the agent (it fixes the tab key)
   // and the history (it restores saved tabs first). Each stays queued until the conversation holds its result.
   // `after` is the number of history requests started when the view arrived.
   const [openRequests, setOpenRequests] = createSignal<{ session: string; views: Map<string, { view: McpAppViewReference; after: number }>; last: McpAppViewReference }>();
   function requestOpen(view: McpAppViewReference) {
+    if (view.server !== "yoplai" || (
+      view.resourceUri !== "ui://yoplai/dashboard" && !isExtensionFrameView(view) &&
+      !(view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file)))
+    )) return;
     const scope = currentSession();
     setOpenRequests((current) => {
       const views = current?.session === scope ? new Map(current.views) : new Map<string, { view: McpAppViewReference; after: number }>();
@@ -290,7 +302,27 @@ export function ChatView() {
       return { session: scope, views, last: view };
     });
   }
+  const durableMain = () => !params.agentId.includes("@") && agent()?.id === params.agentId &&
+    targetsDurableMain(agent()?.durable === true, explicitSessionId());
+  const feedScope = () => durableMain() ? params.agentId : undefined;
+  const feedChat = createMemo(on(feedScope, (agentId) => {
+    if (!agentId) return;
+    const requests = new AbortController();
+    const feed = createFeedWindow((selector) => fetchFeedWindow(agentId, selector, FEED_PAGE_SIZE, requests.signal), preserveFeedScroll);
+    const details = createFeedDetails(agentId, preserveFeedScroll);
+    const stop = subscribeToFeed(agentId, FEED_PAGE_SIZE, feed.onFrame, feed.disconnected);
+    onCleanup(() => {
+      feed.dispose();
+      requests.abort();
+      stop();
+    });
+    return { feed, details };
+  }));
+  const feed = () => feedChat()?.feed;
+
   const session = createChatSession({
+    durableLive: () => feed()?.live(),
+    onDurableError: setDurableSendError,
     agentId: () => params.agentId,
     agent,
     sessionKey,
@@ -354,14 +386,24 @@ export function ChatView() {
   });
   const {
     simpleMessages, fullMessages, streamingBlocks, streamingText, streamingFiles,
-    activeTools, isStreaming, loading, stopping, pendingQueuedMessages,
+    activeTools, isStreaming: sessionStreaming, loading: sessionLoading, stopping, pendingQueuedMessages,
     contextUsage, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
+  const isStreaming = () => !!feed()?.live() || sessionStreaming();
+  const loading = () => feed() ? feed()?.status() === "loading" : sessionLoading();
+  const historyLoaded = () => {
+    const window = feed();
+    if (!window) return session.historyLoaded();
+    const status = window.status();
+    if (status === "ready" || status === "not-found") {
+      return { scope: currentSession(), sessionId: explicitSessionId(), empty: window.items().length === 0 };
+    }
+  };
   const setup = useOptionalSetup();
   const firstChat = createFirstChat({
     agentId: () => params.agentId, sessionId: explicitSessionId, chat: session,
-    ready: () => !!agent() && session.historyLoaded()?.scope === currentSession() && !loading(),
+    ready: () => !!agent() && historyLoaded()?.scope === currentSession() && !loading(),
   });
   const missingModel = () => {
     const current = agent();
@@ -373,7 +415,10 @@ export function ChatView() {
   const repairModel = () => setupRepairHref("model", stripBase(location.pathname) + location.search);
   const [panelStorageReady, setPanelStorageReady] = createSignal(false);
   const initialPanelScope = currentSession();
-  const appViews = createAppViews(session.appSessionId, () => chatAppViewCalls(session, viewMode()), currentSession, {
+  const appViews = createAppViews(session.appSessionId, () => {
+    const chat = feedChat();
+    return chat ? feedAppViewCalls(chat.feed, chat.details) : chatAppViewCalls(session, viewMode());
+  }, currentSession, {
     agentId: () => params.agentId,
     ready: panelStorageReady,
   }, chatGateway);
@@ -386,13 +431,13 @@ export function ChatView() {
     }
     // Captured dashboards take their gateway from the resolved agent, so restore waits for it.
     if (agent.loading) return;
-    const loaded = session.historyLoaded();
+    const loaded = historyLoaded();
     const sessionId = session.appSessionId();
     if (!loaded || loaded.scope !== currentSession() || !sessionId) return;
     const row = chatViewRef?.querySelector(".chat-main")?.parentElement;
     if (row && canSplitPanel(row.getBoundingClientRect().width)) {
       const saved = loadPanelTabs(params.agentId, sessionId);
-      if (saved) appViews.restore(saved);
+      if (saved) appViews.restore(saved, !!feed());
     }
     setPanelStorageReady(true);
   });
@@ -422,6 +467,21 @@ export function ChatView() {
     untrack(() => appViews.activate(appViewKey(requests.last, chatGateway())));
     setOpenRequests(waiting.size ? { ...requests, views: waiting } : undefined);
   });
+  createEffect(on(feed, (current) => {
+    if (!current) return;
+    const seen = new Set<string>();
+    createEffect(() => {
+      const live = current.live();
+      if (!live) seen.clear();
+      if (!live || current.detached()) return;
+      for (const call of live.toolCalls) {
+        const view = call.result?.view ?? call.view;
+        if (!view || call.status === "running" || seen.has(view.recordId)) continue;
+        seen.add(view.recordId);
+        requestOpen(view);
+      }
+    });
+  }));
   onCleanup(appViews.close);
   // Staged dashboard notes belong to this conversation only.
   const annotations = createDashboardAnnotations(() => params.agentId);
@@ -439,10 +499,14 @@ export function ChatView() {
     if (times.length >= 10) throw new Error("Limit of 10 messages per 10 minutes");
     times.push(now);
     viewMessageTimes.set(viewKey, times);
+    if (feed()) {
+      setDurableSendError("");
+      jumpToLatest();
+    }
     await session.sendFromView(trimmed);
   };
   let focusedHomeSession: string | null = null;
-  createEffect(on(session.historyLoaded, (loaded) => {
+  createEffect(on(historyLoaded, (loaded) => {
     if (!loaded || !location.state?.mainAgentHome || loaded.sessionId || !loaded.empty || focusedHomeSession === loaded.scope) return;
     focusedHomeSession = loaded.scope;
     requestAnimationFrame(() => {
@@ -458,8 +522,7 @@ export function ChatView() {
     () =>
       !loading() &&
       !isStreaming() &&
-      simpleMessages().length === 0 &&
-      fullMessages().length === 0 &&
+      (feed() ? historyLoaded()?.empty === true : simpleMessages().length === 0 && fullMessages().length === 0) &&
       pendingQueuedMessages().length === 0
   );
   const [heroPhase, setHeroPhase] = createSignal<"hero" | "exiting" | "off">(
@@ -514,6 +577,11 @@ export function ChatView() {
   const SCROLL_THRESHOLD = 40;
   let autoScrollFrame: number | undefined;
   let programmaticScrollUntil = 0;
+  let programmaticTop = 0;
+  const recordProgrammaticScroll = () => {
+    programmaticTop = messagesContainerRef?.scrollTop ?? 0;
+    programmaticScrollUntil = performance.now() + 100;
+  };
 
   const checkIsAtBottom = () => {
     if (!messagesContainerRef) return true;
@@ -522,8 +590,17 @@ export function ChatView() {
   };
 
   const handleScroll = () => {
-    if (performance.now() < programmaticScrollUntil) return;
-    setAutoScrollPinned(checkIsAtBottom());
+    const window = feed();
+    if (performance.now() < programmaticScrollUntil &&
+      (!window || Math.abs((messagesContainerRef?.scrollTop ?? 0) - programmaticTop) < 1)) return;
+    const atBottom = checkIsAtBottom();
+    setAutoScrollPinned(atBottom && !window?.detached());
+    if (!window || !messagesContainerRef) return;
+    if (messagesContainerRef.scrollTop <= SCROLL_THRESHOLD && window.hasBefore()) {
+      void window.loadBefore();
+    } else if (atBottom && window.hasAfter()) {
+      void window.loadAfter();
+    }
   };
 
   const handleUserScrollIntent = () => {
@@ -540,10 +617,83 @@ export function ChatView() {
       autoScrollFrame = undefined;
       if (!messagesContainerRef) return;
       if (!(force || autoScrollPinned())) return;
-      programmaticScrollUntil = performance.now() + 100;
       messagesContainerRef.scrollTop = messagesContainerRef.scrollHeight;
+      recordProgrammaticScroll();
     });
   };
+
+  let feedScrollFrame: number | undefined;
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  const [flashing, setFlashing] = createSignal<string>();
+  function preserveFeedScroll() {
+    const container = messagesContainerRef;
+    const current = feed();
+    if (!container || feedScrollFrame !== undefined) return;
+    if (autoScrollPinned() && !current?.detached()) {
+      scrollToBottom();
+      return;
+    }
+    const restore = captureFeedScroll(container);
+    if (!restore) return;
+    feedScrollFrame = requestAnimationFrame(() => {
+      feedScrollFrame = undefined;
+      if (current !== feed() || container !== messagesContainerRef) return;
+      restore();
+      recordProgrammaticScroll();
+    });
+  }
+  function cancelFeedScroll() {
+    if (feedScrollFrame !== undefined) cancelAnimationFrame(feedScrollFrame);
+    feedScrollFrame = undefined;
+  }
+  function jumpToLatest() {
+    const current = feed();
+    if (!current) return;
+    cancelFeedScroll();
+    clearFeedCentering(messagesContainerRef);
+    setAutoScrollPinned(true);
+    const jump = current.jumpToLatest();
+    scrollToBottom(true);
+    void jump.then(() => {
+      if (current === feed() && autoScrollPinned() && !current.detached()) scrollToBottom();
+    });
+  }
+  const [messageHash, setMessageHash] = createSignal(location.hash);
+  createEffect(() => setMessageHash(location.hash));
+  const onHashChange = () => setMessageHash(window.location.hash);
+  window.addEventListener("hashchange", onHashChange);
+  onCleanup(() => window.removeEventListener("hashchange", onHashChange));
+  const anchorId = () => new URLSearchParams(messageHash()?.slice(1)).get("m");
+  createEffect(on([feed, anchorId, () => location.state?.feedSearch], ([window, id]) => {
+    cancelFeedScroll();
+    clearFeedCentering(messagesContainerRef);
+    clearTimeout(flashTimer);
+    setFlashing(undefined);
+    if (!window) return;
+    setAutoScrollPinned(!id);
+    if (id) void window.openAround(id);
+    else void window.openTail();
+  }));
+  createEffect(on(() => feed()?.flash(), (anchor) => {
+    if (!anchor) return;
+    cancelFeedScroll();
+    const frame = requestAnimationFrame(() => {
+      if (!messagesContainerRef || !centerFeedMessage(messagesContainerRef, anchor.id)) return;
+      recordProgrammaticScroll();
+      setFlashing(anchor.id);
+      flashTimer = setTimeout(() => setFlashing(undefined), 1200);
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
+  }));
+  createEffect(on(() => feed()?.status(), (status) => {
+    if (status !== "not-found") return;
+    cancelFeedScroll();
+    scrollToBottom(true);
+  }));
+  onCleanup(() => {
+    cancelFeedScroll();
+    clearTimeout(flashTimer);
+  });
 
   const canAttachFiles = () =>
     !loading() &&
@@ -611,6 +761,15 @@ export function ChatView() {
   onCleanup(clearPendingFiles);
 
   createEffect(() => {
+    const window = feed();
+    if (window) {
+      window.items();
+      if (!window.detached()) {
+        window.live();
+        scrollToBottom();
+      }
+      return;
+    }
     simpleMessages();
     fullMessages();
     streamingText();
@@ -698,13 +857,13 @@ export function ChatView() {
       if (session) query.set("session", session);
       if (searchParams.project) query.set("project", String(searchParams.project));
       const path = query.size ? `${basePath}?${query}` : basePath;
-      navigate(path, { replace: true });
+      navigate(durableMain() ? path + messageHash() : path, { replace: true });
     }
   };
 
   let submittingDurableDraft = false;
   const handleSend = async () => {
-    const main = targetsDurableMain(agent()?.durable === true, explicitSessionId());
+    const main = durableMain();
     session.flushFinished();
 
     if (impersonationStatus()?.active) return;
@@ -736,14 +895,18 @@ export function ChatView() {
     }
 
     const message = annotations.compose(text);
-    if (main) submittingDurableDraft = true;
+    if (main) {
+      submittingDurableDraft = true;
+      setDurableSendError("");
+      jumpToLatest();
+    }
     try {
       const result = await session.send({ text: message.text, pendingFiles: currentPendingFiles });
       if (result.kind === "sent") {
         message.sent();
         setInput("");
         if (textareaRef) textareaRef.style.height = "auto";
-        scrollToBottom(true);
+        if (!main) scrollToBottom(true);
       }
     } finally {
       if (main) submittingDurableDraft = false;
@@ -1043,7 +1206,13 @@ export function ChatView() {
           class="messages"
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          onWheel={handleUserScrollIntent}
+          onWheel={(event) => {
+            handleUserScrollIntent();
+            const current = feed();
+            if (!current) return;
+            if (event.deltaY < 0 && event.currentTarget.scrollTop <= SCROLL_THRESHOLD) void current.loadBefore();
+            if (event.deltaY > 0 && checkIsAtBottom()) void current.loadAfter();
+          }}
           onTouchMove={handleUserScrollIntent}
           onKeyDown={(e) => {
             if (
@@ -1059,9 +1228,15 @@ export function ChatView() {
           }}
           classList={{
             "drop-target": isFileDragActive() && activeDropZone() === "history",
+            "feed-messages": !!feed(),
           }}
         >
-          <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          <Show when={feedChat()} keyed fallback={
+            <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
+          }>
+            {(chat) => <FeedTranscript agentId={params.agentId} sessionId={DURABLE_MAIN_SESSION_ID} mode={viewMode()}
+              feed={chat.feed} details={chat.details} appViews={appViews} flashing={flashing()} onUserMessage={handleViewMessage} />}
+          </Show>
           <Show when={agent()?.gateway}>
             <DeviceApprovalCards
               agentName={agent()?.name ?? "The agent"}
@@ -1073,10 +1248,18 @@ export function ChatView() {
         </div>
 
         <div class="composer-zone">
+        <Show when={feed()?.detached()}>
+          <Button class="ui-button feed-jump" onClick={jumpToLatest}>
+            Jump to latest
+            <Show when={feed()?.newCount()}>
+              {(count) => <span> · {count()} new message{count() === 1 ? "" : "s"}</span>}
+            </Show>
+          </Button>
+        </Show>
         <Show when={isFileDragActive()}>
         <div class="drop-banner">{fileDropHint()}</div>
       </Show>
-      <Show when={uploadError()}>
+      <Show when={uploadError() || durableSendError()}>
         {(error) => <div class="upload-error">{error()}</div>}
       </Show>
       <Show when={pendingFiles().length > 0}>

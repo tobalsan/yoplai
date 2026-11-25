@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.stubGlobal("scrollTo", vi.fn());
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockReset();
-  fetchMock.mockResolvedValue(Response.json({ items: [] }));
+  fetchMock.mockImplementation(async (url) => Response.json(String(url) === "/api/agents" ? [] : { items: [] }));
 });
 
 afterEach(() => {
@@ -120,6 +120,35 @@ describe("session search", () => {
     ).toEqual(["PgBouncer", "pgbouncer", "pools"]);
   });
 
+  it("shows caller-scoped Durable hits newest first and navigates with the message hash", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async (input) => {
+      switch (String(input)) {
+        case "/api/agents/sessions/search?q=pears": return Response.json({ items: [] });
+        case "/api/agents": return Response.json([{ id: "orchard" }, { id: "market" }, { id: "other@remote" }]);
+        case "/api/agents/orchard": return Response.json({ id: "orchard", name: "Orchard", durable: true });
+        case "/api/agents/market": return Response.json({ id: "market", name: "Market", durable: true });
+        case "/api/agents/orchard/feed/search?q=pears&limit=20":
+          return Response.json({ hits: [{ id: "m_3", role: "user", snippet: "Count pears", timestamp: 100 }] });
+        case "/api/agents/market/feed/search?q=pears&limit=20":
+          return Response.json({ hits: [{ id: "m_7", role: "assistant", snippet: "Four pears", timestamp: 200 }] });
+        default: throw new Error("Unexpected request");
+      }
+    });
+    mount();
+    key("k");
+    typeQuery("pears");
+    await vi.advanceTimersByTimeAsync(200);
+    const options = container.querySelectorAll<HTMLButtonElement>('[role="option"]');
+    expect(options).toHaveLength(2);
+    expect(options[0].textContent).toContain("Market · Assistant");
+    expect(options[0].textContent).toContain("Four pears");
+    expect(options[1].textContent).toContain("Orchard · User");
+    options[0].click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(window.location.pathname + window.location.hash).toBe("/chat/market#m=m_7");
+  });
+
   it("shows the default avatar for a result whose agent has no avatar", async () => {
     vi.useFakeTimers();
     fetchMock.mockResolvedValue(
@@ -141,8 +170,8 @@ describe("session search", () => {
       signal: AbortSignal;
     }> = [];
     fetchMock.mockImplementation(
-      (_url, init) =>
-        new Promise((resolve) => {
+      (url, init) =>
+        String(url) === "/api/agents" ? Promise.resolve(Response.json([])) : new Promise((resolve) => {
           pending.push({ resolve, signal: init!.signal as AbortSignal });
         })
     );

@@ -1,4 +1,4 @@
-import { targetsDurableMain } from "@yoplai/shared/types";
+import { DURABLE_MAIN_SESSION_ID, targetsDurableMain } from "@yoplai/shared/types";
 // Flicker: keep immutable streamingBlocks() reads, batch completion/reset, and
 // history/block identity for transcript Index/non-keyed branches and reply copy.
 // Run under the page owner; pagination fetch/guard precedes the synchronous
@@ -45,7 +45,7 @@ import type {
 } from "../../api/types";
 import { refreshToolLabels } from "../../lib/tool-labels";
 import { registerViewedChat } from "../../lib/chat-notifications";
-import { classifyFile, type PendingFile } from "../../lib/attachments";
+import type { PendingFile } from "../../lib/attachments";
 import { fullMessagesToSimpleView, isExtensionFrameView, type SimpleViewMessage, type ChatContentBlock } from "./chat-history";
 
 export type StreamingBlock =
@@ -105,6 +105,8 @@ type ChatSessionInput = {
   onSessionReset: (newSessionId: string) => void;
   onRemoteReset: () => Promise<void>;
   preservePrependScroll: (prepend: () => void) => void;
+  durableLive?: Accessor<{ runId?: string } | null | undefined>;
+  onDurableError?: (error: string) => void;
   onLiveView?: (view: McpAppViewReference) => void;
 };
 
@@ -121,7 +123,7 @@ function isRemoteAgent(agentId: string): boolean {
 
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, viewMode, explicitSessionId } = input;
-  const durableMain = () => targetsDurableMain(agent()?.durable === true, explicitSessionId());
+  const durableMain = () => !isRemoteAgent(input.agentId()) && targetsDurableMain(agent()?.durable === true, explicitSessionId());
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -197,9 +199,6 @@ export function createChatSession(input: ChatSessionInput) {
   let loadedHistorySession: string | null = null;
   let loadedHistoryOffset = 0;
   let latestDurableTurn: ActiveTurn | null = null;
-  let directDurableSnapshotSeen = false;
-  let refreshingDurableProgress = false;
-  let pendingDurableProgress = false;
 
 
   let cleanup: (() => void) | null = null;
@@ -325,14 +324,15 @@ export function createChatSession(input: ChatSessionInput) {
   let latestHistoryRequest = 0;
   const loadHistory = async (mode: HistoryViewMode, refresh = false) => {
     const agentId = input.agentId();
-    if (!agentId) return;
+    if (!agentId || durableMain()) return;
+    if (!agent() && !isRemoteAgent(agentId) && targetsDurableMain(true, explicitSessionId())) return;
     const request = ++latestHistoryRequest;
     const requestedSession = currentSession();
     const key = sessionKey();
     const sessionId = explicitSessionId();
     setLoading(true);
     const res = await fetchFullHistory(agentId, key, sessionId, { limit: 100 });
-    if (requestedSession !== currentSession() || request !== latestHistoryRequest) return;
+    if (requestedSession !== currentSession() || request !== latestHistoryRequest || durableMain()) return;
     const offset = res.historyOffset ?? 0;
     const prefixLength = loadedHistorySession === requestedSession
       ? offset - loadedHistoryOffset
@@ -347,8 +347,7 @@ export function createChatSession(input: ChatSessionInput) {
       setHistoryCursor(res.nextCursor);
     }
     const turn = res.activeTurn ?? null;
-    const displayHistory = durableMain() && turn
-      ? historyWithLiveTools(loadedHistory, turn) : loadedHistory;
+    const displayHistory = loadedHistory;
     setHistoryError("");
     setActiveContextUsage(res.activeContextUsage);
     if (mode === "full") {
@@ -378,7 +377,7 @@ export function createChatSession(input: ChatSessionInput) {
       setContextFullMessages(res.messages);
       if (res.thinkingLevel) setThinkingLevel(res.thinkingLevel);
       if (res.sessionId) setResolvedSessionId(res.sessionId);
-      applyActiveTurn(durableMain() ? turn !== null : res.isStreaming ?? false, turn);
+      applyActiveTurn(res.isStreaming ?? false, turn);
     } else {
       setContextFullMessages(res.messages);
       const base = fullMessagesToSimpleView(displayHistory);
@@ -407,7 +406,7 @@ export function createChatSession(input: ChatSessionInput) {
       setSimpleMessages(merged);
       if (res.thinkingLevel) setThinkingLevel(res.thinkingLevel);
       if (res.sessionId) setResolvedSessionId(res.sessionId);
-      applyActiveTurn(durableMain() ? turn !== null : res.isStreaming ?? false, turn);
+      applyActiveTurn(res.isStreaming ?? false, turn);
     }
     setLoading(false);
     setHistoryLoaded({ scope: requestedSession, sessionId, empty: res.messages.length === 0, request, refresh });
@@ -438,6 +437,7 @@ export function createChatSession(input: ChatSessionInput) {
 
   let contextRefreshSession: string | null = null;
   const refreshContextUsage = async () => {
+    if (durableMain()) return;
     const requestedSession = currentSession();
     if (contextRefreshSession === requestedSession) return;
     contextRefreshSession = requestedSession;
@@ -505,66 +505,6 @@ export function createChatSession(input: ChatSessionInput) {
     })();
     compactRequests.set(key, request);
     return request;
-  };
-
-  const storedToolResults = (messages: readonly FullHistoryMessage[]) => new Set(
-    messages.flatMap((message) => message.role === "toolResult" ? [message.toolCallId] : [])
-  );
-
-  // A pending invocation is already in Durable history as a call block.
-  // Keep it in the live bubble until history includes its result.
-  const historyWithLiveTools = (messages: FullHistoryMessage[], turn: ActiveTurn) => {
-    const finished = storedToolResults(messages);
-    const pending = new Set(turn.toolCalls.filter(({ id }) => !finished.has(id)).map(({ id }) => id));
-    if (!pending.size) return messages;
-    return messages.flatMap<FullHistoryMessage>((message) => {
-      if (message.role !== "assistant") return [message];
-      const content = message.content.filter((block) => block.type !== "toolCall" || !pending.has(block.id));
-      return content.length === message.content.length ? [message] : content.length ? [{ ...message, content }] : [];
-    });
-  };
-
-  const showDurableTurn = (turn: ActiveTurn) => {
-    latestDurableTurn = turn;
-    if (ownsDisplayedDirectStream()) directDurableSnapshotSeen = true;
-    const finished = storedToolResults(loadedHistory);
-    batch(() => applyActiveTurnSnapshot({
-      ...turn,
-      toolCalls: turn.toolCalls.filter(({ id }) => !finished.has(id)),
-      toolResults: turn.toolResults?.filter(({ id }) => !finished.has(id)),
-    }));
-  };
-
-  const durableToolsKey = (turn: ActiveTurn | null) => JSON.stringify(
-    turn?.toolCalls.filter(({ parentToolCallId }) => parentToolCallId === undefined)
-      .map(({ id, status }) => [id, status === "running"]) ?? []
-  );
-
-  // HTTP and WebSocket are separate transports. When a socket partial
-  // overlaps history, confirm against a fresh, coherent history/live read.
-  // A repeated phrase can belong to a new round and still be in flight.
-  const durableTurnMayBeStored = (turn: ActiveTurn) => {
-    if (!turn.text && !turn.thinking) return false;
-    return loadedHistory.some((message) => {
-      if (message.role !== "assistant" || message.timestamp < turn.userTimestamp) return false;
-      const text = message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
-      const thinking = message.content.flatMap((block) => block.type === "thinking" ? [block.thinking] : []).join("");
-      return text.startsWith(turn.text) && thinking.startsWith(turn.thinking);
-    });
-  };
-
-  const refreshDurableProgress = (toolsChanged = false) => {
-    if (refreshingDurableProgress) {
-      pendingDurableProgress ||= toolsChanged;
-      return;
-    }
-    refreshingDurableProgress = true;
-    void loadHistory(viewMode(), true).finally(() => {
-      refreshingDurableProgress = false;
-      const pending = pendingDurableProgress;
-      pendingDurableProgress = false;
-      if (pending && durableMain()) refreshDurableProgress();
-    });
   };
 
   const applyActiveTurnSnapshot = (turn: import("../../api").ActiveTurn) => {
@@ -671,13 +611,11 @@ export function createChatSession(input: ChatSessionInput) {
     if (!streaming) {
       // Backend says not streaming: clear stale isStreaming if we don't own a
       // direct stream ourselves (cleanup null means no active streamMessage).
-      if ((durableMain() && latestDurableTurn) || (!ownsDisplayedDirectStream() && isStreaming())) resetStreamingState();
+      if (!ownsDisplayedDirectStream() && isStreaming()) resetStreamingState();
       return;
     }
     if (!turn) return;
-    if (durableMain()) {
-      showDurableTurn(turn);
-    } else if (!ownsDisplayedDirectStream()) {
+    if (!ownsDisplayedDirectStream()) {
       applyActiveTurnSnapshot(turn);
     }
   };
@@ -876,9 +814,6 @@ export function createChatSession(input: ChatSessionInput) {
     );
   };
 
-  function notifyLiveView(view?: McpAppViewReference) {
-    if (view?.server === "yoplai" && (view.resourceUri === "ui://yoplai/dashboard" || isExtensionFrameView(view) || (view.file && ["html", "markdown", "pdf"].includes(classifyFile(view.file))))) input.onLiveView?.(view);
-  }
 
   const appendStreamingFileBlock = (
     file: FileBlock,
@@ -907,9 +842,26 @@ export function createChatSession(input: ChatSessionInput) {
       }
       if (followsReset) pendingResetSession = null;
       displayedSession = nextSession;
-      void loadHistory(mode);
+      if (durableMain()) {
+        setLoading(false);
+        adoptSessionId(DURABLE_MAIN_SESSION_ID);
+      } else {
+        void loadHistory(mode);
+      }
     })
   );
+
+  createEffect(on(() => input.durableLive?.(), (live, previous) => {
+    if (!durableMain()) return;
+    if (live) {
+      setIsStreaming(true);
+    } else if (previous) {
+      // The feed and the send finish on separate sockets. Keep a newer kept run.
+      if (latestDurableTurn?.runId && previous.runId && latestDurableTurn.runId !== previous.runId) return;
+      latestDurableTurn = null;
+      if (!ownsDisplayedDirectStream()) resetStreamingState();
+    }
+  }));
 
   // Subscribe to live updates for background runs
   createEffect(() => {
@@ -948,7 +900,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onText: (chunk) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingTextBlock(chunk);
           setStreamingText((prev) => prev + chunk);
@@ -958,7 +910,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onThinking: (chunk) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingThinkingBlock(chunk);
           setStreamingThinking((prev) => prev + chunk);
@@ -968,12 +920,12 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onProgress: () => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setIsStreaming(true);
         },
         onToolCall: (id, name, args, parentToolCallId, view) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           appendStreamingToolCallBlock(id, name, args, parentToolCallId, Date.now(), view);
           setStreamingToolCalls((prev) => {
@@ -995,7 +947,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onToolStart: (toolName) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setActiveTools((prev) =>
             prev.some((t) => t.toolName === toolName && t.status === "running")
               ? prev
@@ -1007,7 +959,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onToolEnd: (toolName, isError) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setActiveTools((prev) =>
             prev.map((t) =>
               t.toolName === toolName && t.status === "running"
@@ -1026,13 +978,13 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
-          notifyLiveView(view);
+          if (view) input.onLiveView?.(view);
         },
         onFileOutput: (file) => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           setStreamingFinished(false);
           const fileBlock: FileBlock = {
             type: "file",
@@ -1047,13 +999,13 @@ export function createChatSession(input: ChatSessionInput) {
         onDone: () => {
           void refreshToolLabels();
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           if (streamingFinished()) return;
           resetStreamingState();
         },
         onError: () => {
           if (!isCurrentSubscription()) return;
-          if (ownsDisplayedDirectStream()) return;
+          if (durableMain() || ownsDisplayedDirectStream()) return;
           resetStreamingState();
         },
         onActiveTurn: (turn, sessionId) => {
@@ -1061,24 +1013,19 @@ export function createChatSession(input: ChatSessionInput) {
           // The gateway sends this event for the session of the subscribed key.
           if (sessionId) adoptSessionId(sessionId);
           if (durableMain()) {
-            if (durableTurnMayBeStored(turn)) {
-              refreshDurableProgress();
-              return;
-            }
-            const toolsChanged = durableToolsKey(latestDurableTurn) !== durableToolsKey(turn);
-            const finished = storedToolResults(loadedHistory);
-            if (turn.toolCalls.length && turn.toolCalls.every(({ id }) => finished.has(id))) {
-              if (toolsChanged) refreshDurableProgress(true);
-              return;
-            }
-            showDurableTurn(turn);
-            if (toolsChanged) refreshDurableProgress(true);
+            latestDurableTurn = turn;
+            setIsStreaming(true);
           } else if (!ownsDisplayedDirectStream()) {
             applyActiveTurnSnapshot(turn);
           }
         },
         onHistoryUpdated: () => {
           if (!isCurrentSubscription()) return;
+          if (durableMain()) {
+            if (!ownsDisplayedDirectStream() && !input.durableLive?.()) resetStreamingState();
+            if (pendingQueuedMessages().length > 0) setPendingQueuedMessages((prev) => prev.slice(1));
+            return;
+          }
           if (skipNextHistoryRefresh) {
             skipNextHistoryRefresh = false;
             void refreshContextUsage();
@@ -1088,8 +1035,7 @@ export function createChatSession(input: ChatSessionInput) {
           // isStreaming is stale-true but we don't own the direct stream — the
           // history_updated signal means the backend finished and history is ready.
           if (!isStreaming() || !ownsDisplayedDirectStream()) {
-            if (isStreaming() && !durableMain())
-              resetStreamingState();
+            if (isStreaming()) resetStreamingState();
             if (pendingQueuedMessages().length > 0) {
               setPendingQueuedMessages((prev) => prev.slice(1));
             }
@@ -1435,18 +1381,18 @@ export function createChatSession(input: ChatSessionInput) {
       timestamp: Date.now(),
     };
     setShowInterrupted(false);
-    if (isStreaming() && queueMode === "queue") {
-      flushStreamingBeforeQueuedMessage();
+    if (!isDurableSend) {
+      if (isStreaming() && queueMode === "queue") flushStreamingBeforeQueuedMessage();
+      setSimpleMessages((prev) => [...prev, userMsg]);
+      setFullMessages((prev) => [
+        ...prev,
+        {
+          role: "user",
+          content: [{ type: "text", text: messageText }, ...inboundFiles],
+          timestamp: userMsg.timestamp,
+        },
+      ]);
     }
-    setSimpleMessages((prev) => [...prev, userMsg]);
-    setFullMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        content: [{ type: "text", text: messageText }, ...inboundFiles],
-        timestamp: userMsg.timestamp,
-      },
-    ]);
 
     resolve({ kind: "sent" });
 
@@ -1478,7 +1424,7 @@ export function createChatSession(input: ChatSessionInput) {
         messageText,
         sessionKey(),
         (chunk) => {
-          if (!isCurrentQueuedStream()) return;
+          if (!isCurrentQueuedStream() || isDurableSend) return;
           queuedText += chunk;
           const last = queuedBlocks.at(-1);
           if (last?.type === "text") {
@@ -1498,7 +1444,6 @@ export function createChatSession(input: ChatSessionInput) {
           }
           if (isDurableSend) {
             queueCleanup?.();
-            void loadHistory(viewMode(), true);
             return;
           }
 
@@ -1610,6 +1555,11 @@ export function createChatSession(input: ChatSessionInput) {
             if (queueCleanup) queueCleanup();
             return;
           }
+          if (isDurableSend) {
+            input.onDurableError?.(error);
+            queueCleanup?.();
+            return;
+          }
           const content = error;
           const notice: Message = {
             id: crypto.randomUUID(),
@@ -1625,7 +1575,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         {
           onThinking: (chunk) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             queuedThinking += chunk;
             const last = queuedBlocks.at(-1);
             if (last?.type === "thinking") {
@@ -1635,7 +1585,7 @@ export function createChatSession(input: ChatSessionInput) {
             }
           },
           onToolCall: (id, name, args, parentToolCallId, view) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             queuedToolCalls.push({
               id,
               parentToolCallId,
@@ -1655,7 +1605,7 @@ export function createChatSession(input: ChatSessionInput) {
             });
           },
           onToolEnd: (toolName, isError) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             for (const tc of queuedToolCalls) {
               if (tc.name === toolName && tc.status === "running") {
                 tc.status = isError ? "error" : "done";
@@ -1663,7 +1613,7 @@ export function createChatSession(input: ChatSessionInput) {
             }
           },
           onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             queuedToolResults.push({
               role: "toolResult",
               toolCallId: id,
@@ -1677,7 +1627,7 @@ export function createChatSession(input: ChatSessionInput) {
             });
           },
           onFileOutput: (file) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             const fileBlock: FileBlock = {
               type: "file",
               direction: "outbound",
@@ -1688,7 +1638,7 @@ export function createChatSession(input: ChatSessionInput) {
           },
           ...messageApprovalCallbacks(input.agentId()),
           onSessionReset: (sessionId) => {
-            if (!isCurrentQueuedStream()) return;
+            if (!isCurrentQueuedStream() || isDurableSend) return;
             queuedResetFrom = queuedSession;
             queuedSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
             pendingResetSession = queuedSession;
@@ -1729,7 +1679,6 @@ export function createChatSession(input: ChatSessionInput) {
     let streamSession = currentSession();
     let resetFromSession: string | null = null;
     directStreamSession = streamSession;
-    directDurableSnapshotSeen = false;
     const isCurrentDirectStream = () =>
       directStreamSession === streamSession &&
       (currentSession() === streamSession ||
@@ -1740,7 +1689,7 @@ export function createChatSession(input: ChatSessionInput) {
       messageText,
       sessionKey(),
       (chunk) => {
-        if (!isCurrentDirectStream() || (durableMain() && directDurableSnapshotSeen)) return;
+        if (!isCurrentDirectStream() || isDurableSend) return;
         setStreamingFinished(false);
         appendStreamingTextBlock(chunk);
         setStreamingText((prev) => prev + chunk);
@@ -1764,11 +1713,9 @@ export function createChatSession(input: ChatSessionInput) {
               setPendingThinkLevel(null);
             }
             if (meta?.aborted) setShowInterrupted(true);
-            if (!latestDurableTurn) resetStreamingState();
+            if (!latestDurableTurn && !input.durableLive?.()) resetStreamingState();
             cleanup = null;
           });
-          // The subscription may already show a kept run when this send ends.
-          void loadHistory(viewMode(), true);
           return;
         }
 
@@ -1839,6 +1786,12 @@ export function createChatSession(input: ChatSessionInput) {
           void loadHistory(viewMode());
           return;
         }
+        if (isDurableSend) {
+          input.onDurableError?.(error);
+          resetStreamingState();
+          cleanup = null;
+          return;
+        }
         const content = error;
         const notice: Message = {
           id: crypto.randomUUID(),
@@ -1868,18 +1821,18 @@ export function createChatSession(input: ChatSessionInput) {
           void loadHistory(viewMode());
         },
         onThinking: (chunk) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           setStreamingFinished(false);
           appendStreamingThinkingBlock(chunk);
           setStreamingThinking((prev) => prev + chunk);
           if (!streamingThinkingAt()) setStreamingThinkingAt(Date.now());
         },
         onProgress: () => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           setIsStreaming(true);
         },
         onToolCall: (id, name, args, parentToolCallId, view) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           setStreamingFinished(false);
           appendStreamingToolCallBlock(id, name, args, parentToolCallId, Date.now(), view);
           setStreamingToolCalls((prev) => [
@@ -1895,14 +1848,14 @@ export function createChatSession(input: ChatSessionInput) {
           ]);
         },
         onToolStart: (toolName) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           setActiveTools((prev) => [
             ...prev,
             { id: crypto.randomUUID(), toolName, status: "running" },
           ]);
         },
         onToolEnd: (toolName, isError) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           // Update activeTools for the pill display
           setActiveTools((prev) =>
             prev.map((t) =>
@@ -1922,12 +1875,12 @@ export function createChatSession(input: ChatSessionInput) {
           updateStreamingToolBlockStatus(toolName, isError ? "error" : "done");
         },
         onToolResult: (id, name, content, isError, details, parentToolCallId, view) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           attachStreamingToolResult(id, name, content, isError, details, parentToolCallId, view);
-          notifyLiveView(view);
+          if (view) input.onLiveView?.(view);
         },
         onFileOutput: (file) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           setStreamingFinished(false);
           const fileBlock: FileBlock = {
             type: "file",
@@ -1973,11 +1926,12 @@ export function createChatSession(input: ChatSessionInput) {
   const send = (request: SendRequest) => startSend(request);
   const stop = async (unbound = false): Promise<{ error?: string; status?: DurableStopResult["status"] }> => {
     const main = durableMain();
-    if (stopping() || (!isStreaming() && !(main && unbound)) || !input.agentId()) return {};
+    const live = input.durableLive?.();
+    if (stopping() || (!isStreaming() && !live && !(main && unbound)) || !input.agentId()) return {};
     setStopping(true);
 
     try {
-      if (main) return await postDurableStop(input.agentId(), unbound ? undefined : latestDurableTurn?.runId);
+      if (main) return await postDurableStop(input.agentId(), unbound ? undefined : live?.runId ?? latestDurableTurn?.runId);
       aborted = true;
       const sessionId = explicitSessionId();
       if (sessionId) await postAbort(input.agentId(), sessionKey(), sessionId);

@@ -21,10 +21,10 @@ Projects. All whitespace-separated words must occur, in any order, ignoring
 case. Archived chats and other users' chats are excluded.
 
 The palette opens with a focused input and no recent-session list. Results show
-the chat label, agent, relative date and a highlighted content snippet. Title
-matches come first, newest first within each group, with at most 50 results.
-Use Up/Down and Enter, or click a result, to open the chat. Escape or clicking
-outside closes search.
+the chat label, agent, relative date and a highlighted content snippet. Durable
+Main results show a message snippet, agent, role and relative date, newest first.
+Session results retain title matches first. Use Up/Down and Enter, or click a result, to open the
+chat. Escape or clicking outside closes search.
 
 ## Chat
 
@@ -44,6 +44,21 @@ Core chat supports:
 - context usage warning and automatic compaction near limit
 
 Full tool/thinking/model view is restricted in multi-user mode. Canonical transcript lives in gateway history store; Pi runtime session files are not UI source of truth.
+
+### Durable Main
+
+Main opens at the latest messages. Scroll up to read earlier pages. A Cmd+K
+message result opens its surrounding messages and briefly highlights the match.
+Share or bookmark the same position with `/chat/<agent>#m=<id>`. A missing
+message link shows a notice and opens the latest messages.
+
+Scroll in either direction from an older window. **Jump to latest** returns to
+the live end and counts new user and assistant messages seen while you read
+earlier pages. Sending a message also takes you to the live end.
+
+A dashed **Context compacted** row marks where the model's context was
+compacted. Hover or focus the row for the reason and the number of older
+requests carried forward. Earlier messages remain readable.
 
 The chat header's settings menu holds **Agent settings**, **Set as default agent**,
 and, for saved multi-user chats, **Share link**, in that order, with icons and the

@@ -10,7 +10,7 @@ import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
-import type { McpAppFile } from "@yoplai/shared/types";
+import type { FeedItem, FeedWindow, McpAppFile, WsFeedMessage } from "@yoplai/shared/types";
 import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
 import { defaultAvatarUrl } from "../lib/default-avatar";
@@ -98,7 +98,7 @@ vi.mock("@solidjs/router", () => ({
       }
       return query.size ? `?${query}` : "";
     },
-    hash: "",
+    get hash() { return window.location.hash; },
   }),
   useParams: () => ({ get agentId() { routeAgentVersion(); return routeState.agentId; }, get view() { routeVersion(); return routeState.view; } }),
   useSearchParams: () => [
@@ -210,6 +210,51 @@ function createFileDragEvent(
   return event;
 }
 
+function installFeedSocket() {
+  const sockets: FeedSocket[] = [];
+  class FeedSocket {
+    static OPEN = 1;
+    readyState = 1;
+    onmessage?: (event: { data: string }) => void;
+    onopen?: () => void;
+    constructor() {
+      sockets.push(this);
+      queueMicrotask(() => this.onopen?.());
+    }
+    send() {}
+    close() { this.readyState = 3; }
+    frame(frame: WsFeedMessage) {
+      this.onmessage?.({ data: JSON.stringify(frame) });
+    }
+  }
+  vi.stubGlobal("WebSocket", FeedSocket);
+  return () => sockets.at(-1)!;
+}
+
+function observeFeedRows() {
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(private readonly callback: IntersectionObserverCallback) {}
+    observe(target: Element) {
+      queueMicrotask(() => this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver));
+    }
+    unobserve() {}
+    disconnect() {}
+  });
+}
+
+function feedMessage(number: number): FeedItem {
+  return { id: `m_${number}`, role: "user", text: `Orchard request ${number}`, sender: "Avery", timestamp: number };
+}
+
+function feedWindow(items: FeedItem[], hasBefore = false, hasAfter = false): FeedWindow {
+  return { items, hasBefore, hasAfter, live: null };
+}
+
+function moveToMessage(id: string) {
+  history.replaceState({}, "", `#m=${id}`);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
+}
+
 const mountedViews = new Set<() => void>();
 
 function renderView() {
@@ -309,6 +354,7 @@ describe("ChatView abort handling", () => {
     mountedViews.forEach((dispose) => dispose());
     setImpersonationStatus(null);
     document.body.innerHTML = "";
+    history.replaceState({}, "", "/");
     resetCapabilitiesForTests();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
@@ -2610,12 +2656,235 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("opens Durable Main on feed rows and excludes the legacy compaction summary", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Pear agent", durable: true });
+    fetchFullHistoryMock.mockResolvedValue({
+      messages: [{ role: "system", content: [{ type: "text", text: "[COMPACTED CONTEXT SUMMARY] Private notes" }], timestamp: 1 }],
+      sessionId: "durable-main",
+    });
+    const tail: FeedWindow = {
+      items: [
+        { id: "m_1", role: "user", sender: "Avery", surface: "slack", text: "Count the pears", timestamp: 10 },
+        { id: "m_8", role: "seam", text: "Context compacted", timestamp: 19, reason: "threshold", carried: { firstKept: "m_1", indexed: 2 } },
+        { id: "m_3", role: "assistant", text: "Four pears", timestamp: 20, toolCallCount: 0 },
+      ],
+      hasBefore: false, hasAfter: false, live: null,
+    };
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => Response.json(String(url).includes("/feed?") ? tail : {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Four pears")).not.toBeNull());
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/feed?limit=50", expect.anything());
+    expect(fetchFullHistoryMock).not.toHaveBeenCalled();
+    expect(queryByText(container, "Private notes")).toBeNull();
+    const seam = queryByText(container, "Context compacted")!;
+    expect(seam.getAttribute("aria-description")).toBe("Threshold · 2 older requests carried");
+    expect(seam.compareDocumentPosition(queryByText(container, "Four pears")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("opens a linked Durable message, pages in both directions, and falls back on a missing hash", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const selector = new URL(String(input), "http://localhost").searchParams;
+      if (selector.has("around")) {
+        return selector.get("around") === "m_3"
+          ? Response.json(feedWindow([feedMessage(3), feedMessage(4)], true, true))
+          : new Response(null, { status: 404 });
+      }
+      if (selector.has("before")) return Response.json(feedWindow([feedMessage(2)], false, true));
+      if (selector.has("after")) return Response.json(feedWindow([feedMessage(5)]));
+      return Response.json(feedWindow([feedMessage(5)]));
+    });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", fetchMock);
+    moveToMessage("m_3");
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Orchard request 3")).not.toBeNull());
+    const messages = container.querySelector<HTMLDivElement>(".messages")!;
+    await waitFor(() => expect(queryByText(container, "Orchard request 3")?.closest(".feed-flash")).not.toBeNull());
+    expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull();
+    fireEvent.wheel(messages, { deltaY: -100 });
+    await waitFor(() => expect(queryByText(container, "Orchard request 2")).not.toBeNull());
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("before=m_3"))).toBe(true);
+    fireEvent.wheel(messages, { deltaY: 100 });
+    await waitFor(() => expect(queryByText(container, "Orchard request 5")).not.toBeNull());
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("after=m_4"))).toBe(true);
+    expect(queryByRole(container, "button", { name: "Jump to latest" })).toBeNull();
+
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null, items: [feedMessage(5)],
+    });
+    moveToMessage("m_404");
+    await waitFor(() => expect(queryByText(container, "Message not found.")).not.toBeNull());
+    expect(queryByText(container, "Orchard request 5")).not.toBeNull();
+    expect(queryByText(container, "Orchard request 3")).toBeNull();
+  });
+
+  it("counts 51 observed arrivals while detached and jumps to the live tail without refetching", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    const read = vi.fn(async () => Response.json(feedWindow([feedMessage(3)], true, true)));
+    vi.stubGlobal("fetch", read);
+    moveToMessage("m_3");
+    const { container } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull());
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null, items: [feedMessage(50)],
+    });
+    expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull();
+    for (let index = 51; index <= 101; index++) {
+      socket().frame({
+        type: "feed_delta", agentId: "agent-1", seq: index - 49, hasBefore: true, live: null,
+        upsert: [feedMessage(index)], dropBefore: `m_${Math.max(50, index - 49)}`,
+      });
+    }
+    expect(queryByText(container, "Orchard request 101")).toBeNull();
+    const beforeJump = read.mock.calls.length;
+    getByRole(container, "button", { name: /Jump to latest.*51 new messages/ }).click();
+    await waitFor(() => expect(queryByText(container, "Orchard request 101")).not.toBeNull());
+    expect(read.mock.calls).toHaveLength(beforeJump);
+    expect(queryByRole(container, "button", { name: /Jump to latest/ })).toBeNull();
+  });
+
+  it("sends once from an older window and follows only the feed for the live reply", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(3)], true, true))));
+    moveToMessage("m_3");
+    const { container } = renderView();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull());
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null, items: [feedMessage(50)],
+    });
+    const composer = getByRole(container, "textbox");
+    fireEvent.input(composer, { target: { value: "Weigh the pears" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+    expect(streamMessageMock.mock.calls[0][1]).toBe("Weigh the pears");
+    expect(queryByText(container, "Orchard request 3")).toBeNull();
+    expect(queryByText(container, "Orchard request 50")).not.toBeNull();
+    expect(queryByRole(container, "button", { name: /Jump to latest/ })).toBeNull();
+
+    streamMessageMock.mock.calls[0][3]("Private compatibility bubble");
+    socket().frame({
+      type: "feed_delta", agentId: "agent-1", seq: 2, hasBefore: true, upsert: [],
+      live: { runId: "pear-run", text: "Weighing pears", reasoning: [], toolCalls: [] },
+    });
+    expect(queryByText(container, "Private compatibility bubble")).toBeNull();
+    expect(queryAllByText(container, "Weighing pears")).toHaveLength(1);
+  });
+
+  it("shows a tool once live and loads its settled result even when the reply text is unchanged", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    routeState.view = "full";
+    const socket = installFeedSocket();
+    const tool = { id: "pear-tool", name: "weigh_pears", status: "running" as const, isError: false };
+    const answer: FeedItem = { id: "m_2", role: "assistant", text: "Weighing pears", timestamp: 2, toolCallCount: 1 };
+    const live = { runId: "pear-run", text: "", reasoning: [], toolCalls: [tool] };
+    let settled = false;
+    let detailsRead = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/messages/m_2")) {
+        return Response.json({ ...feedWindow([feedMessage(1), answer]), live });
+      }
+      detailsRead++;
+      return Response.json({
+        id: "m_2", timestamp: 2, text: "Weighing pears", reasoning: [],
+        toolCalls: [settled ? { ...tool, status: "done", result: { text: "Pears weigh six kilograms" } } : tool],
+      });
+    }));
+    observeFeedRows();
+    const { container } = renderView();
+    await waitFor(() => expect(detailsRead).toBe(1));
+    await tick();
+    expect(queryAllByRole(container, "button", { name: /tool call/ })).toHaveLength(1);
+    settled = true;
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, items: [feedMessage(1), answer], hasBefore: false, live: null,
+    });
+    await waitFor(() => expect(detailsRead).toBe(2));
+    getByRole(container, "button", { name: "Worked · 1 tool call" }).click();
+    getByRole(container, "button", { name: "Called tools" }).click();
+    getByRole(container, "button", { name: /weigh[ _]pears/i }).click();
+    await waitFor(() => expect(queryByText(container, "Pears weigh six kilograms")).not.toBeNull());
+  });
+
+  it("restores the saved Durable app tab when its visible reply detail arrives", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    installFeedSocket();
+    observeFeedRows();
+    const measure = measureChatSpace();
+    const key = "orchard\nui://orchard/inventory";
+    const storage = "yoplai.chat-panel-tabs.v1:agent-1:durable-main";
+    sessionStorage.setItem(storage, JSON.stringify({ tabs: [{ key }], active: key }));
+    const answer: FeedItem = { id: "m_2", role: "assistant", text: "Inventory chart", timestamp: 2, toolCallCount: 1 };
+    let releaseDetail!: (value: Response) => void;
+    const detail = new Promise<Response>((resolve) => { releaseDetail = resolve; });
+    const read = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/messages/m_2")
+      ? detail : Response.json(feedWindow([answer])));
+    vi.stubGlobal("fetch", read);
+    const { container } = renderView();
+    try {
+      await waitFor(() => expect(read.mock.calls.some(([url]) => String(url).endsWith("/messages/m_2"))).toBe(true));
+      expect(sessionStorage.getItem(storage)).toContain("inventory");
+      releaseDetail(Response.json({
+        id: "m_2", timestamp: 2, text: "Inventory chart", reasoning: [],
+        toolCalls: [{
+          id: "orchard-chart", name: "inventory_report", status: "done", isError: false,
+          result: { text: "Chart ready", view: { server: "orchard", tool: "inventory_report", resourceUri: "ui://orchard/inventory", recordId: "chart-record", title: "Inventory chart" } },
+        }],
+      }));
+      await waitFor(() => expect(queryByRole(container, "tabpanel", { name: "Inventory chart" })).not.toBeNull());
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
+  it("preserves the visible answer offset when a snapshot inserts a seam ahead of it", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    const answer: FeedItem = { id: "m_2", role: "assistant", text: "Four pears", timestamp: 2, toolCallCount: 0 };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1), answer, feedMessage(3)]))));
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Four pears")).not.toBeNull());
+    await new Promise(requestAnimationFrame);
+    const messages = container.querySelector<HTMLDivElement>(".messages")!;
+    Object.defineProperties(messages, {
+      clientHeight: { value: 100 },
+      scrollHeight: { get: () => messages.querySelectorAll("[data-feed-message]").length * 100 },
+    });
+    const measure = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === messages) return new DOMRect(0, 0, 500, 100);
+      const index = Array.from(messages.querySelectorAll("[data-feed-message]")).indexOf(this);
+      return new DOMRect(0, index * 100 - messages.scrollTop, 500, 100);
+    });
+    try {
+      messages.scrollTop = 120;
+      fireEvent.scroll(messages);
+      const seam: FeedItem = {
+        id: "m_9", role: "seam", timestamp: 3, text: "Context compacted",
+        reason: "overflow", carried: { firstKept: "m_1", indexed: 1 },
+      };
+      socket().frame({
+        type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null,
+        items: [seam, answer, feedMessage(3)],
+      });
+      await waitFor(() => expect(messages.scrollTop).toBe(220));
+      expect(queryByText(container, "Orchard request 1")).not.toBeNull();
+      const row = queryByText(container, "Context compacted")!;
+      expect(row.getAttribute("title")).toBe("Overflow · 1 older request carried");
+      expect(row.compareDocumentPosition(queryByText(container, "Four pears")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    } finally {
+      measure.mockRestore();
+    }
+  });
+
   it.each(["observed", "early", "typed", "failed"] as const)("sends a %s Durable Main stop to the stop route", async (kind) => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", durable: true, model: { provider: "openai", model: "gpt-5" } });
     fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main", isStreaming: false, activeTurn: null });
     let completeStop!: (response: Response) => void;
     const stopRequest = new Promise<Response>((resolve) => { completeStop = resolve; });
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith("/stop") ? stopRequest : new Response("{}"));
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith("/stop") ? stopRequest : Response.json({ items: [], hasBefore: false, hasAfter: false, live: null }));
     vi.stubGlobal("fetch", fetchMock);
     const { container, dispose } = renderView();
     const toasts = document.createElement("div");
@@ -2673,6 +2942,8 @@ describe("ChatView abort handling", () => {
       id: "agent-1", name: "Agent", durable: true, queueMode: "queue", model: { provider: "openai", model: "gpt-5" },
     });
     fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ items: [], hasBefore: false, hasAfter: false, live: null })));
     const { container, dispose } = renderView();
     try {
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
@@ -2684,9 +2955,9 @@ describe("ChatView abort handling", () => {
         await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(index + 1));
       }
       const reply = "Basil and mint are ready.";
-      fetchFullHistoryMock.mockResolvedValue({
-        sessionId: "durable-main", isStreaming: false, activeTurn: null,
-        messages: [{ role: "assistant", content: [{ type: "text", text: reply }], timestamp: 4 }],
+      socket().frame({
+        type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false, live: null,
+        items: [{ id: "m_4", role: "assistant", text: reply, timestamp: 4, toolCallCount: 0 }],
       });
       for (const call of streamMessageMock.mock.calls.slice(1)) {
         call[3](reply);
@@ -2699,12 +2970,42 @@ describe("ChatView abort handling", () => {
     }
   });
 
+  it("clears Stop when the feed settles before the send socket reports done", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([]))));
+    const { container } = renderView();
+    const composer = getByRole(container, "textbox");
+    fireEvent.input(composer, { target: { value: "Weigh the pears" } });
+    await waitFor(() => expect((getByRole(container, "button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+
+    const callbacks = subscribeToSessionMock.mock.calls.at(-1)?.[2] as SubscriptionCallbacks;
+    callbacks.onActiveTurn?.({
+      runId: "pear-run", userText: null, userTimestamp: 10, startedAt: 10,
+      text: "Weighing", thinking: "", toolCalls: [],
+    }, "durable-main");
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, items: [], hasBefore: false,
+      live: { runId: "pear-run", text: "Weighing", reasoning: [], toolCalls: [] },
+    });
+    socket().frame({
+      type: "feed_delta", agentId: "agent-1", seq: 2, upsert: [], hasBefore: false, live: null,
+    });
+    callbacks.onHistoryUpdated?.();
+    streamMessageMock.mock.calls[0][4]();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Stop agent" })).toBeNull());
+  });
+
   it("keeps Stop bound to a kept run shown before the aborted send settles", async () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", durable: true, model: { provider: "openai", model: "gpt-5" } });
     fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
     const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
-      new Response(String(url).endsWith("/stop") ? '{"status":"stopped"}' : "{}"));
+      String(url).endsWith("/stop") ? Response.json({ status: "stopped" }) :
+        Response.json({ items: [], hasBefore: false, hasAfter: false, live: null }));
     vi.stubGlobal("fetch", fetchMock);
+    const socket = installFeedSocket();
     const { container, dispose } = renderView();
     try {
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
@@ -2719,16 +3020,16 @@ describe("ChatView abort handling", () => {
         runId: "kept-run", userText: null, userTimestamp: 10, startedAt: 10,
         text: "Checking the follow-up", thinking: "", toolCalls: [],
       };
-      callbacks.onActiveTurn?.(keptTurn, "durable-main");
-      let finishRead!: (history: { messages: []; sessionId: string; activeTurn: typeof keptTurn }) => void;
-      fetchFullHistoryMock.mockReturnValue(new Promise((resolve) => { finishRead = resolve; }));
+      socket().frame({
+        type: "feed_snapshot", agentId: "agent-1", seq: 1, items: [], hasBefore: false,
+        live: { runId: keptTurn.runId, text: keptTurn.text, reasoning: [], toolCalls: [] },
+      });
       streamMessageMock.mock.calls[0][4]({ aborted: true });
       callbacks.onHistoryUpdated?.();
       getByRole(container, "button", { name: "Stop agent" }).click();
       await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/stop", expect.objectContaining({
         body: '{"runId":"kept-run"}',
       })));
-      finishRead({ messages: [], sessionId: "durable-main", activeTurn: keptTurn });
     } finally {
       dispose();
     }

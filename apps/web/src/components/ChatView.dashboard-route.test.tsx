@@ -99,19 +99,15 @@ it("keeps the restored Main when New Chat is clicked and admits one rapid compos
   fetchStub.mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/agents/sage") return Response.json({ id: "sage", name: "Sage", durable: true });
-    if (path.startsWith("/api/agents/sage/history?")) {
+    if (path === "/api/agents/sage/feed?limit=50") {
       requests.push(path);
-      const selector = new URL(path, location.origin).searchParams;
-      if (selector.get("sessionKey") === "web-greenhouse" && !selector.has("sessionId")) {
-        return Response.json({
-          sessionId: "durable-main", isStreaming: false, activeTurn: null,
-          messages: [
-            { role: "user", timestamp: 1, content: [{ type: "text", text: "Check the greenhouse" }] },
-            { role: "assistant", timestamp: 2, content: [{ type: "text", text: "The seedlings are ready." }] },
-          ],
-        });
-      }
-      return Response.json({ messages: [] });
+      return Response.json({
+        items: [
+          { id: "m_1", role: "user", timestamp: 1, text: "Check the greenhouse", sender: "Avery" },
+          { id: "m_2", role: "assistant", timestamp: 2, text: "The seedlings are ready.", toolCallCount: 0 },
+        ],
+        hasBefore: false, hasAfter: false, live: null,
+      });
     }
     return fallback(input, init);
   });
@@ -120,7 +116,8 @@ it("keeps the restored Main when New Chat is clicked and admits one rapid compos
   </Router>, root);
   await vi.waitFor(() => expect(root.textContent).toContain("The seedlings are ready."));
   expect(root.textContent).toContain("Check the greenhouse");
-  expect(requests.some((path) => path.includes("sessionKey=web-greenhouse"))).toBe(true);
+  expect(requests).toContain("/api/agents/sage/feed?limit=50");
+  expect(requests.some((path) => path.includes("/history?"))).toBe(false);
   getByRole(root, "button", { name: "Start a new chat" }).click();
   expect(root.textContent).toContain("The seedlings are ready.");
 

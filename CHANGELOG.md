@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Browse Durable Main in the web chat with Cmd+K message search, message links, two-way paging, Jump to latest, and context compaction markers.
+
 - Durable Main can search and reopen its own messages across context cuts with `session_history`. Compaction summaries point to the original request by message ID.
 - Durable Main remembers open questions, decisions, and the agent's plan across context cuts.
 - Durable Main compacts model context automatically, keeps long tool runs going through cuts, and preserves full history with seams in the feed API.
