@@ -24,6 +24,7 @@ export function createDurableTools(
   registry: Registry,
   ownerOf: (id: ConversationId) => string | undefined,
   onInterrupted: () => void,
+  sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
 ) {
   async function authority(id: ConversationId) {
     const owner = ownerOf(id);
@@ -84,6 +85,11 @@ export function createDurableTools(
           }
           if (!runtime.isEnabled(extensionId, config) || agent.extensions?.[extensionId]?.enabled === false) {
             return { isError: true, error: "Tool is no longer available." };
+          }
+          if (extensionId === "sessionHistory" && canonicalName === "session_history"
+            && principal.sessionId === DURABLE_MAIN_SESSION_ID) {
+            context.abortSignal?.throwIfAborted();
+            return sessionHistory(api.conversationId, args);
           }
           const { found, result } = await executeExtensionAgentTool(
             agent, canonicalName, args, config, runtime, principal.sessionId, principal.userId,

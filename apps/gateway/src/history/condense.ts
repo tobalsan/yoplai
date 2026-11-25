@@ -44,7 +44,7 @@ export function messageToolCalls(
   );
 }
 
-function formatTime(timestamp: number): string {
+export function formatTime(timestamp: number): string {
   return Number.isFinite(timestamp) && timestamp > 0
     ? new Date(timestamp).toISOString().slice(11, 16)
     : "";
@@ -79,6 +79,11 @@ export function toolLine(
   return `    → ${label} (ok, ${formatSize(text.length)})`;
 }
 
+export function truncateMessageText(text: string, limit: number, anchor: string | number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}… [+${text.length - limit} chars · read full=${anchor}]`;
+}
+
 /** One message as text lines: header line with text, then merged tool-call lines. */
 function formatMessage(
   index: number,
@@ -89,11 +94,7 @@ function formatMessage(
 ): string {
   const role =
     message.role === "assistant" ? "asst" : message.role === "user" ? "user" : "sys";
-  let text = messageText(message);
-  if (text.length > textLimit) {
-    const rest = text.length - textLimit;
-    text = `${text.slice(0, textLimit)}… [+${rest} chars · read full=${index}]`;
-  }
+  const text = truncateMessageText(messageText(message), textLimit, index);
   const lines: string[] = [];
   const calls = messageToolCalls(message);
   if (text || calls.length === 0) {

@@ -370,12 +370,22 @@ export function feedDetail(records: readonly PublicRecord[], id: string): FeedDe
   return { id, timestamp, text, reasoning, toolCalls };
 }
 
+type FeedMessageItem = Extract<FeedItem, { role: "user" | "assistant" }>;
+
+export function isFeedMessage(item: FeedItem): item is FeedMessageItem {
+  return item.role === "user" || item.role === "assistant";
+}
+
 export function feedSearch(records: readonly PublicRecord[], query: string, limit: number): FeedHit[] {
+  return searchFeedMessages(feedItems(records).filter(isFeedMessage), query, limit);
+}
+
+export function searchFeedMessages(items: readonly FeedMessageItem[], query: string, limit: number): FeedHit[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   const hits: FeedHit[] = [];
-  for (const item of feedItems(records).reverse()) {
-    if (item.role === "failure" || item.role === "seam") continue;
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!;
     const offset = item.text.toLowerCase().indexOf(needle);
     if (offset < 0) continue;
     const start = Math.max(0, offset - 50);

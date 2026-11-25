@@ -10,7 +10,7 @@ const KEEP_RECENT_TOKENS = 20_000;
 const SUMMARY_CHARS = 16_000;
 const MEMORY_HEADING = "\n\nMemory\n";
 export const COMPACTION_MEMORY_CHARS = SUMMARY_CHARS / 4 - MEMORY_HEADING.length;
-const FRAME = "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests.";
+const FRAME = "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests. Open any bracketed request with session_history read, around: <id>.";
 const OMITTED_TOOLS = "Earlier tool calls in this run are not listed.";
 
 export function createMainCompactionSettings(models: Models) {
