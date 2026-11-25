@@ -1,4 +1,4 @@
-import { AssistantEntry, ToolResultEntry, type EntryId, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
+import { AssistantEntry, CompactionEntry, ToolResultEntry, type EntryId, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
 import {
   McpAppViewReferenceSchema, runFailureMessage, type ContentBlock, type FeedDelivery, type FeedDetail, type FeedHit, type FeedItem, type FeedLive, type FeedToolCall, type FullHistoryMessage,
   type McpAppViewReference, type ModelMeta, type RunFailureKind, type ToolCallBlock,
@@ -33,6 +33,7 @@ type PublicRecord =
   | { kind: "user"; id: string; sender: string; surface: NonNullable<Extract<FeedItem, { role: "user" }>["surface"]>; message: Extract<FullHistoryMessage, { role: "user" }> }
   | { kind: "failure"; id: string; message: PublicAssistant & { meta: { failure: NonNullable<ModelMeta["failure"]>; stopReason: "error" } } }
   | { kind: "assistant"; id: string; entryId: EntryId; message: PublicAssistant }
+  | { kind: "seam"; item: Extract<FeedItem, { role: "seam" }> }
   | { kind: "result"; message: PublicResult };
 type FailureRecord = Extract<PublicRecord, { kind: "failure" }>;
 
@@ -44,7 +45,32 @@ function failureRecord(id: EntryRecord["id"], timestamp: number, kind: RunFailur
 }
 
 export function feedBoundary(entry: EntryRecord) {
+  // Only boundaries that close the adjacent answer can end a window scan.
   return InputEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
+}
+
+export function activeDurableContextUsage(entries: readonly EntryRecord[]): { inputTokens: number; model?: string } {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!;
+    if (CompactionEntry.is(entry)) break;
+    if (!AssistantEntry.is(entry)) continue;
+    const messages = entry.model ?? [];
+    for (let offset = messages.length - 1; offset >= 0; offset--) {
+      const message = messages[offset]!;
+      if (message.role !== "assistant" || !message.usage
+        || message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "deferred") continue;
+      const { input, cacheRead, cacheWrite } = message.usage;
+      return { inputTokens: input + (cacheRead ?? 0) + (cacheWrite ?? 0), model: message.model };
+    }
+  }
+  return { inputTokens: 0 };
+}
+
+export function compactionIndexLines(entry: EntryRecord) {
+  const summary = entry.model?.[0];
+  if (summary?.role !== "user") return [];
+  const text = typeof summary.content === "string" ? summary.content : publicText(textBlocks(summary.content));
+  return text.match(/^\[m_\d+\] .+$/gm) ?? [];
 }
 
 function toolView(value: unknown) {
@@ -200,6 +226,15 @@ export function projectRecords(
       const { kind, accessError } = entry.data;
       records.push(failureRecord(entry.id, note.timestamp, kind,
         isSafeModelAccessError(accessError) ? accessError : runFailureMessage(kind, language)));
+    } else if (CompactionEntry.is(entry) && entry.head !== undefined) {
+      const summary = entry.model?.[0];
+      if (summary?.role !== "user") continue;
+      flush();
+      records.push({ kind: "seam", item: {
+        id: "m_" + entry.id, role: "seam", timestamp: summary.timestamp, text: "Context compacted",
+        reason: entry.data.reason,
+        carried: { firstKept: "m_" + entry.head, indexed: compactionIndexLines(entry).length },
+      } });
     } else if (AssistantEntry.is(entry) && entry.byTaskId !== undefined) {
       flush();
       anchor ??= "m_" + entry.id;
@@ -262,9 +297,13 @@ export function feedItems(records: readonly PublicRecord[], deliveries?: Readonl
   const items: FeedItem[] = [];
   let answer: Extract<FeedItem, { role: "assistant" }> | undefined;
   for (const record of records) {
-    const { message } = record;
+    if (record.kind === "seam") {
+      // Place the seam ahead of the whole answer and keep its existing anchor.
+      items.splice(items.length - (answer ? 1 : 0), 0, record.item);
+      continue;
+    }
     if (record.kind === "result") continue;
-    const { id } = record;
+    const { id, message } = record;
     if (record.kind === "assistant") {
       const text = publicText(message.content);
       const count = message.content.filter((block) => block.type === "toolCall").length;
@@ -324,7 +363,7 @@ export function feedDetail(records: readonly PublicRecord[], id: string): FeedDe
         ...(result.details?.diff !== undefined ? { diff: result.details.diff } : {}),
         ...(result.view ? { view: result.view } : {}),
       };
-    } else {
+    } else if (record.kind !== "seam") {
       round.clear();
     }
   }
@@ -336,7 +375,7 @@ export function feedSearch(records: readonly PublicRecord[], query: string, limi
   if (!needle) return [];
   const hits: FeedHit[] = [];
   for (const item of feedItems(records).reverse()) {
-    if (item.role === "failure") continue;
+    if (item.role === "failure" || item.role === "seam") continue;
     const offset = item.text.toLowerCase().indexOf(needle);
     if (offset < 0) continue;
     const start = Math.max(0, offset - 50);
@@ -362,6 +401,7 @@ export function projectLive(
     const results = new Map<string, PublicResult>();
     for (let index = records.length - 1; index >= 0; index--) {
       const record = records[index];
+      if (record.kind === "seam") continue;
       if (record.kind === "result") {
         results.set(record.message.toolCallId, record.message);
         continue;

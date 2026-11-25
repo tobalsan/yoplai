@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
-import { feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
+import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds } from "./feed-projection.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
 import type { DeliveryQueue } from "./outbox.js";
 
@@ -94,7 +94,7 @@ export class DurableFeed {
     const review = await this.harness.snapshot(ReviewDoc, conversation.id, context);
     const records = projectRecords(entries, review?.byTask ?? {},
       hiddenNames, this.agent.language ?? "en");
-    return { records, review, hiddenNames };
+    return { records, review, hiddenNames, contextUsage: activeDurableContextUsage(entries) };
   }
 
   async window(conversation: Conversation, limit: number, selector?: FeedSelector, observation?: FeedObservation): Promise<FeedWindow | undefined> {

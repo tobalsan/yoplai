@@ -226,6 +226,7 @@ export async function startDurableTestGateway({
     script: faux.script,
     callCount: faux.callCount,
     requests: faux.requests,
+    cacheRetentions: faux.cacheRetentions,
     offeredTools: faux.offeredTools,
     prompt: faux.prompt,
     request: (user: TestUser, pathname: string, init?: RequestInit) => fetch(base + pathname, {
