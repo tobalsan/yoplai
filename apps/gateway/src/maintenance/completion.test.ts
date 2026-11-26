@@ -224,7 +224,7 @@ describe("completeMaintenance", () => {
 
     expect(warn).toHaveBeenCalledWith(
       "[maintenance] completion failed",
-      expect.objectContaining({ error: expect.stringContaining("timed out") })
+      expect.objectContaining({ failureKind: "timeout", phase: "create-runtime" })
     );
   });
 });

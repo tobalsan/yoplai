@@ -49,7 +49,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
-- Durable memory keeper warnings report the failure kind and, for rejected replies, structural details instead of raw values or parser and schema error text.
+- Durable memory keeper warnings report the failure kind and, for rejected replies, structural details instead of raw values or parser and schema error text. The separate maintenance completion warning reports the failure kind without the provider’s error text.
 - Durable compaction eval uses a fixed Faux API identifier so projected token totals are repeatable.
 - Durable compaction eval confirms each ledger step before its padding and asks the model to finish all three without pausing for confirmation.
 - Durable compaction eval keeps idling until its measured gap reaches six minutes, so a wall clock that runs slower than the timer no longer invalidates a paid run by a few milliseconds.

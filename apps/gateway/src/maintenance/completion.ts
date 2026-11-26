@@ -23,7 +23,7 @@ export type MaintenanceCompletionParams = {
 };
 
 export type MaintenanceOutcome = {
-  /** Set on failure: the same message the maintenance warning carries. */
+  /** Raw failure detail for the caller; do not log it. */
   error?: string;
   failureKind?: "timeout" | "empty" | "provider_error";
   /** The model's stop reason, when a response arrived. */
@@ -201,7 +201,7 @@ export async function completeMaintenance(
       {
         agentId: params.agentId,
         model: ref,
-        error: message,
+        failureKind,
         phase,
         elapsedMs: Date.now() - startedAt,
       },

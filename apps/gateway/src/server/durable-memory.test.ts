@@ -1,3 +1,4 @@
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
 import type { FeedWindow } from "@yoplai/shared";
 import { expect, it, vi } from "vitest";
@@ -240,6 +241,41 @@ it("logs keeper failure kinds without exposing rejected reply values in console 
     await gateway.close();
     warn.mockRestore();
     complete.mockRestore();
+  }
+}, 20_000);
+
+it("omits provider error text from both serialized keeper batch warnings", async () => {
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
+  const { setMaintenanceCompletionDepsForTests, resetMaintenanceCompletionDepsForTests } = await import("../maintenance/completion.js");
+  const credential = "invented-provider-credential";
+  const model = fauxProvider({ models: [{ id: "fixture" }] }).getModel();
+  const completeSimple = vi.fn(async () => fauxAssistantMessage([], {
+    stopReason: "error", errorMessage: `Provider refused a request quoting ${credential}`,
+  }));
+  setMaintenanceCompletionDepsForTests({
+    createRuntime: async () => ({ getModel: () => model }) as never,
+    completeSimple,
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const linesFor = (msg: string) => warn.mock.calls.map(([line]) => String(line)).filter((line) => line.includes(JSON.stringify(msg)));
+  try {
+    gateway.script("Report checked.");
+    expect((await gateway.send("local", "Check the orchard report.", { clientSendId: "provider-error" })).status).toBe(200);
+    await vi.waitFor(() => expect(linesFor("Durable memory keeper failed")).toHaveLength(1));
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+    for (const msg of ["[maintenance] completion failed", "Durable memory keeper failed"]) {
+      const lines = linesFor(msg);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]?.includes(credential), msg).toBe(false);
+      expect(JSON.parse(lines[0]!)).toMatchObject({
+        msg, agentId: "pilot", failureKind: "provider_error", elapsedMs: expect.any(Number),
+        ...(msg === "[maintenance] completion failed" ? { model: "faux/fixture", phase: "complete" } : { phase: "completion", stopReason: "error" }),
+      });
+    }
+  } finally {
+    await gateway.close();
+    warn.mockRestore();
+    resetMaintenanceCompletionDepsForTests();
   }
 }, 20_000);
 
