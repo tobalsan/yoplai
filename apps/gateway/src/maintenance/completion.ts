@@ -25,7 +25,7 @@ export type MaintenanceCompletionParams = {
 export type MaintenanceOutcome = {
   /** Raw failure detail for the caller; do not log it. */
   error?: string;
-  failureKind?: "timeout" | "empty" | "provider_error";
+  failureKind?: "timeout" | "empty" | "provider_error" | "refusal";
   /** The model's stop reason, when a response arrived. */
   stopReason?: Awaited<ReturnType<typeof defaultCompleteSimple>>["stopReason"];
   elapsedMs: number;
@@ -179,6 +179,8 @@ export async function completeMaintenance(
       activeDeps.onUsage?.(response.usage);
       stopReason = response.stopReason;
       if (response.stopReason === "error") {
+        // pi-ai keeps the provider's own stop reason; Anthropic reports a refusal there.
+        if (response.rawStopReason === "refusal") failureKind = "refusal";
         throw new Error(response.errorMessage ?? "Maintenance completion failed");
       }
       const text = responseText(response);
