@@ -20,7 +20,7 @@ export type RequestRow = {
   cacheRetention: NonNullable<SimpleStreamOptions["cacheRetention"]> | "default";
   usage?: Counts; stopped?: string;
 };
-type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; result?: "ok" | "failed" };
+type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; result: "pending" | "ok" | "failed" };
 type Padding = { id: string; chars: number };
 export type Drive = { opening: Padding[]; ledger: Padding[]; steps: number[] };
 export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number; keeperMaxTokens: number };
@@ -233,7 +233,7 @@ export async function idleGap(ms: number, wait: (ms: number) => Promise<unknown>
 
 const feedUrl = "/api/agents/pilot/feed?limit=200";
 export async function run(ref: string, variant: "cheap" | "full" | "baseline", budget: Budget, options: {
-  faux?: boolean; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean; apiKey?: string; replay?: Drive;
+  faux?: boolean; fauxKeeper?: string; fauxRatio?: number; fauxLedgerSteps?: readonly number[]; long?: boolean; apiKey?: string; replay?: Drive;
 }) {
   const baseline = variant === "baseline";
   const data = scenario();
@@ -252,6 +252,11 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       maxTokens: OUTPUT_CAP, ...(variant === "cheap" && { contextWindow: CHEAP_WINDOW }),
     } },
     fauxLimits: options.faux ? { contextWindow: budget.contextWindow, maxTokens: budget.maxTokens } : undefined,
+    keeper: { onBatch(outcome) {
+      // The eval has one audience and at most one keeper batch in flight.
+      const row = keeper.at(-1);
+      if (row) row.result = outcome === "committed" ? "ok" : "failed";
+    } },
     fixtureExtensions: async () => [(await import("../../session-history/index.js")).sessionHistoryExtension],
     fixture: { extension: fixture(() => home, data, step => {
       stepRequests.push({ step, turn: turn.id, request: requests.length - 1 });
@@ -277,11 +282,9 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
   const { MaintenanceCompletion, completeMaintenance } = await import("../../maintenance/completion.js");
   const completions = keeperCompletions();
   const maintenance = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation((params) => completions.track((async () => {
-    const row: KeeperRow = { at: new Date().toISOString(), estimate: tokens(params.system + params.prompt), cap: params.maxTokens };
+    const row: KeeperRow = { at: new Date().toISOString(), estimate: tokens(params.system + params.prompt), cap: params.maxTokens, result: "pending" };
     keeper.push(row);
-    const result = options.faux ? '{"topics":[]}' : await completeMaintenance(params, { onUsage: usage => { row.usage = counts(usage); } });
-    row.result = result === null ? "failed" : "ok";
-    return result;
+    return options.faux ? (options.fauxKeeper ?? '{"topics":[]}') : completeMaintenance(params, { onUsage: usage => { row.usage = counts(usage); } });
   })()));
   const answers: Record<string, string> = {};
   let shipmentId = "";

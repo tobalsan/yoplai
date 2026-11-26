@@ -31,7 +31,7 @@ export function keeperLimits(model: Pick<Model<string>, "reasoning"> | undefined
     : { maxTokens: 2_000, timeoutMs: 20_000 };
 }
 
-export type KeeperOptions = { idleMs?: number; turns?: number };
+export type KeeperOptions = { idleMs?: number; turns?: number; onBatch?: (outcome: "committed" | "failed") => void };
 
 function promptMemory({ topics, plan }: ReturnType<typeof emptyMemory>, maxBytes: number) {
   let view = { topics, plan };
@@ -155,10 +155,12 @@ export class MemoryKeeper {
           doc.through = through;
         }, this.context);
         phase = "read";
+        this.options.onBatch?.("committed");
         memory = await this.harness.snapshot(MemoryDoc, key, this.context) ?? emptyMemory();
       }
     } catch (error) {
       if (this.stop.signal.aborted) return;
+      if (phase !== "read") this.options.onBatch?.("failed");
       const { outcome, reply } = seen;
       // The reply excerpt is bounded and logWarn redacts secrets; the transcript is never logged.
       logWarn("Durable memory keeper failed", {

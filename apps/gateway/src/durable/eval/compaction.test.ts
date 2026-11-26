@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { emptyMemory, renderMemory } from "../memory.js";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
 import { cold, originDistances, report, sources } from "./report.js";
-import { idleGap, keeperCompletions, projection, scenarioIssues, type RequestRow } from "./runner.js";
+import { idleGap, keeperCompletions, projection, run, scenarioIssues, type RequestRow } from "./runner.js";
 import { facts, filler, FULL, HAIKU, IDLE_MS, score } from "./scenario.js";
 
 it("generates seeded, exact-length filler from complete sentences", () => {
@@ -58,7 +58,8 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
         }
       }
       expect(cut.answers["topic-1"]).toContain("Ice");
-      expect(cut.keeper.length).toBeGreaterThan(0);
+      expect(cut.keeper).toEqual(expect.arrayContaining([expect.objectContaining({ result: "ok" })]));
+      expect(cut.keeper.some(row => row.result === "failed")).toBe(false);
       expect(sources(cut, "probe-0", facts[1]), JSON.stringify(cut.requests.filter(row => row.turn === "probe-0").at(-1)?.messages.filter(m => m.role === "toolResult" && m.toolName.includes("history")))).toContain("session_history");
       expect(sources(cut, "probe-0", facts[2])).toContain("tool re-read");
       expect(cut.requests[cut.gapRequest]?.usage?.cacheRead).toBe(0);
@@ -108,6 +109,20 @@ it.each([0.7, 1.4])("keeps both cut placements at %s× chars/4", async fauxRatio
   }
 }, 60_000);
 
+it("counts a keeper reply as failed when it cannot be committed", async () => {
+  const plan = await prepare(HAIKU, false);
+  const cut = await run(plan.model, plan.variant, plan.cut, { faux: true, fauxKeeper: "not json" });
+  expect(cut.issues).toEqual([]);
+  expect(cut.keeper.length).toBeGreaterThan(0);
+  expect(cut.keeper.map(row => row.result)).toEqual(cut.keeper.map(() => "failed"));
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "compaction-eval-keeper-"));
+  try {
+    const file = await report(dir, HAIKU, cut, undefined, false);
+    expect(await fs.readFile(file, "utf8")).toContain(`Memory updates committed: 0 of ${cut.keeper.length}`);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+}, 60_000);
+
 it("stops at the padding cap and skips the baseline for an invalid cut", async () => {
   const { cut, baseline } = await pair(await prepare(HAIKU, false), { faux: true, fauxRatio: 0.1 });
   expect(cut.issues).toContainEqual(expect.stringContaining("opening: padding did not reach target (cap 24, used 24"));
@@ -149,7 +164,7 @@ it("drains already-started keeper calls after shutdown before exposing their row
   let finish!: (counts: typeof usage) => void;
   const provider = new Promise<typeof usage>(resolve => { finish = resolve; });
   const row: { result: string; usage?: typeof usage } = { result: "pending" };
-  void completions.track(provider.then(counts => { Object.assign(row, { result: "ok", usage: counts }); }));
+  void completions.track(provider.then(counts => { row.usage = counts; }));
   let closed = false;
   let serialized: string | undefined;
   const teardown = completions.close(async () => { closed = true; }).then(() => { serialized = JSON.stringify(row); });
@@ -158,7 +173,7 @@ it("drains already-started keeper calls after shutdown before exposing their row
   expect(serialized).toBeUndefined();
   finish(usage);
   await teardown;
-  expect(serialized).toBe(JSON.stringify({ result: "ok", usage }));
+  expect(serialized).toBe(JSON.stringify({ result: "pending", usage }));
 });
 
 it("attributes wrapped summary sections even when the index quotes an older probe", () => {

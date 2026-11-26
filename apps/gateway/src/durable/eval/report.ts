@@ -145,9 +145,11 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
       lines.push(`| ${i + 1} | ${row.at} | ${row.turn} | ${marker} | ${row.messages.length} | ${row.estimate} | ${usageCells(row.usage)} |`);
     });
   }
-  lines.push("", "## Keeper completions", "", "| Run | Timestamp | Est. prompt | Output cap | Result | Input | Read | Write | Output |", "|---|---|---:|---:|---|---:|---:|---:|---:|");
+  const keeper = runs.flatMap(([, run]) => run.keeper);
+  lines.push("", "## Keeper completions", "", `Memory updates committed: ${keeper.filter(row => row.result === "ok").length} of ${keeper.length}`, "",
+    "| Run | Timestamp | Est. prompt | Output cap | Result | Input | Read | Write | Output |", "|---|---|---:|---:|---|---:|---:|---:|---:|");
   for (const [label, run] of runs) for (const row of run.keeper) {
-    lines.push(`| ${label} | ${row.at} | ${row.estimate} | ${row.cap} | ${row.result ?? "pending"} | ${usageCells(row.usage)} |`);
+    lines.push(`| ${label} | ${row.at} | ${row.estimate} | ${row.cap} | ${row.result} | ${usageCells(row.usage)} |`);
   }
   lines.push("", "## Recommendations", "",
     `- Summary kind: no change; data insufficient (${baseline ? `${pct(a - b)} point recall gap` : "no baseline"}; no alternate summary tested).`,
