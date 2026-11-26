@@ -190,38 +190,52 @@ it("warns on null, invalid and thrown responses and retries the same public mess
   }
 }, 20_000);
 
-it("logs why the keeper failed, with a bounded reply excerpt and no transcript", async () => {
+it("logs keeper failure kinds without exposing rejected reply values in console output", async () => {
   const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
-  const fenced = "Here is the result:\n```json\n" + JSON.stringify({ topics: [{ kind: "open", title: "Orchard", note: "apiKey=fixture-secret " + "pear ".repeat(100) }] }) + "\n```";
+  const credential = "invented-keeper-credential";
+  const prefixed = "Here is the result:\n```json\n{}\n```";
+  const rejected = "```json\n" + JSON.stringify({ topics: [{ title: credential }], apiKey: credential, [credential]: 42 }) + "\n```";
+  const malformed = JSON.stringify(credential).slice(1);
   const complete = vi.spyOn(MaintenanceCompletion, "complete")
-    .mockResolvedValueOnce(fenced)
-    .mockResolvedValueOnce('{"topics":[{"title":"Orchard"}]}')
+    .mockResolvedValueOnce(rejected)
+    .mockResolvedValueOnce(malformed)
+    .mockResolvedValueOnce(prefixed)
     .mockImplementationOnce(async ({ onOutcome }) => {
-      onOutcome?.({ error: "Maintenance completion timed out after 20000ms", elapsedMs: 20_003 });
+      onOutcome?.({ error: "Maintenance completion timed out after 20000ms", failureKind: "timeout", elapsedMs: 20_003 });
       return null;
     })
     .mockImplementationOnce(async ({ onOutcome }) => {
-      onOutcome?.({ error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: 9 });
+      onOutcome?.({ error: "Maintenance completion returned no text", failureKind: "empty", stopReason: "length", elapsedMs: 9 });
       return null;
     })
-    .mockResolvedValue('{"topics":[]}');
-  const warn = vi.spyOn(await import("../logging.js"), "logWarn");
-  const failures = () => warn.mock.calls.filter(([message]) => message === "Durable memory keeper failed").map(([, fields]) => fields);
+    .mockRejectedValueOnce(new Error(credential));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const failures = () => warn.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('"msg":"Durable memory keeper failed"'));
   try {
-    for (let index = 0; index < 4; index++) {
+    for (let index = 0; index < 6; index++) {
       gateway.script("Report checked.");
       expect((await gateway.send("local", "Unlogged orchard transcript " + index, { clientSendId: "reason-" + index })).status).toBe(200);
       await vi.waitFor(() => expect(failures()).toHaveLength(index + 1));
     }
-    expect(failures()).toEqual([
-      expect.objectContaining({ phase: "result", error: expect.stringContaining("is not valid JSON"), replyChars: fenced.length, reply: fenced.slice(0, 200) }),
-      expect.objectContaining({ phase: "result", error: expect.stringContaining("topics"), reply: '{"topics":[{"title":"Orchard"}]}' }),
-      { agentId: "pilot", conversationId: expect.any(Number), phase: "completion", error: "Maintenance completion timed out after 20000ms", stopReason: undefined, elapsedMs: 20_003 },
-      { agentId: "pilot", conversationId: expect.any(Number), phase: "completion", error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: 9 },
+    const lines = failures();
+    expect(lines[0]?.includes(credential)).toBe(false);
+    expect(lines.slice(1).some((line) => line.includes(credential))).toBe(false);
+    expect(lines.some((line) => line.includes("Unlogged orchard transcript"))).toBe(false);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ failureKind: "schema", replyChars: rejected.length, fenced: true, prosePrefixed: false,
+        replyShape: `{topics:[{title:<str:${credential.length}>}],<key>:<str:${credential.length}>,<key>:<num>}`,
+        issues: expect.arrayContaining([
+          { code: "invalid_union", path: ["topics", 0] },
+          { code: "invalid_type", path: ["topics", 0, "note"] },
+        ]),
+      }),
+      expect.objectContaining({ failureKind: "parse", replyChars: malformed.length, fenced: false, prosePrefixed: true }),
+      expect.objectContaining({ failureKind: "parse", replyChars: prefixed.length, fenced: true, prosePrefixed: true }),
+      expect.objectContaining({ failureKind: "timeout", elapsedMs: 20_003 }),
+      expect.objectContaining({ failureKind: "empty", stopReason: "length", elapsedMs: 9 }),
+      expect.objectContaining({ failureKind: "provider_error" }),
     ]);
-    for (const fields of failures()) expect((fields?.error as string).length).toBeLessThanOrEqual(300);
-    expect(JSON.stringify(failures())).not.toContain("Unlogged orchard transcript");
   } finally {
     await gateway.close();
     warn.mockRestore();

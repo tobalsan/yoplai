@@ -172,11 +172,11 @@ describe("completeMaintenance", () => {
 
     expect(deps.warn).toHaveBeenCalledTimes(3);
     expect(onOutcome.mock.calls.map(([outcome]) => outcome)).toEqual([
-      { error: "The model refused", stopReason: "error", elapsedMs: expect.any(Number) },
-      { error: "The model refused", stopReason: "error", elapsedMs: expect.any(Number) },
-      { error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: expect.any(Number) },
+      { error: "The model refused", failureKind: "provider_error", stopReason: "error", elapsedMs: expect.any(Number) },
+      { error: "The model refused", failureKind: "provider_error", stopReason: "error", elapsedMs: expect.any(Number) },
+      { error: "Maintenance completion returned no text", failureKind: "empty", stopReason: "length", elapsedMs: expect.any(Number) },
       { stopReason: "length", elapsedMs: expect.any(Number) },
-      { error: "Maintenance completion timed out after 1ms", stopReason: undefined, elapsedMs: expect.any(Number) },
+      { error: "Maintenance completion timed out after 1ms", failureKind: "timeout", stopReason: undefined, elapsedMs: expect.any(Number) },
     ]);
   });
 
