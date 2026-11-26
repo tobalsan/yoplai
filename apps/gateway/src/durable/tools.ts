@@ -13,6 +13,7 @@ import { durableCoreTools, executeDurableCoreTool } from "./core-tools.js";
 import { durableExtensionEnv } from "./env.js";
 import { mainPrincipal } from "./principal.js";
 import { claimToolDescriptor, defineGatewayTool } from "./tool-definition.js";
+import { TURN_PLAN } from "./turn-plan.js";
 
 export class DurableAccessDenied extends Error {
   constructor() { super("Agent access denied"); }
@@ -45,7 +46,7 @@ export function createDurableTools(
   async function describe(id: ConversationId) {
     const { agent, config, principal } = await authority(id);
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
-    const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update"]);
+    const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update", TURN_PLAN]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
       ...descriptors.filter(({ extensionId }) => runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
         .map((tool) => ({ ...tool, kind: "extension" as const })),
@@ -179,9 +180,9 @@ export function createDurableTools(
   return {
     authority, extensions, gate,
     invisibleNames(selected: readonly string[]) {
-      return new Set(selected.flatMap((name) => registered.get(name) ?? [])
+      return new Set([TURN_PLAN, ...selected.flatMap((name) => registered.get(name) ?? [])
         .filter(({ extensionId }) => extensionId === "taskLifecycle")
-        .map(({ name }) => name));
+        .map(({ name }) => name)]);
     },
   };
 }

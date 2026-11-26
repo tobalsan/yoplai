@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show } from "solid-js";
-import type { FeedDetail, FeedItem, FeedToolCall } from "@yoplai/shared/types";
+import type { FeedDetail, FeedItem, FeedToolCall, TurnPlan } from "@yoplai/shared/types";
 import type { FullToolResultMessage, HistoryViewMode } from "../../api/types";
 import { fetchFeedDetail } from "../../api/feed";
 import { formatTimestamp } from "../../lib/format";
@@ -145,6 +145,22 @@ function seamDescription(item: Extract<FeedItem, { role: "seam" }>) {
   return `${reasons[item.reason]} · ${count === 0 ? "No older requests" : `${count} older request${count === 1 ? "" : "s"}`} carried`;
 }
 
+const stepLabels = { pending: "Pending", in_progress: "In progress", completed: "Completed" };
+
+function TurnChecklist(props: { plan: TurnPlan }) {
+  return <div class="feed-plan">
+    <Show when={props.plan.explanation}>
+      {(caption) => <div class="feed-plan-caption" title={caption()}>{caption()}</div>}
+    </Show>
+    <ul role="list" aria-label="Turn plan">
+      <Index each={props.plan.steps}>{(step) => <li>
+        <span class="feed-plan-box" role="img" aria-label={stepLabels[step().status]} data-status={step().status} />
+        <span>{step().text}</span>
+      </li>}</Index>
+    </ul>
+  </div>;
+}
+
 export function FeedTranscript(props: TranscriptProps & {
   feed: ReturnType<typeof createFeedWindow>;
   details: ReturnType<typeof createFeedDetails>;
@@ -197,6 +213,7 @@ export function FeedTranscript(props: TranscriptProps & {
         const current = item();
         return current.role === "assistant" ? current : undefined;
       };
+      const storedPlan = () => runningAnswer() === id && live()?.plan ? undefined : assistant()?.plan;
       const user = () => {
         const current = item();
         return current.role === "user" ? current : undefined;
@@ -226,9 +243,12 @@ export function FeedTranscript(props: TranscriptProps & {
                 calls={loaded().toolCalls.filter((call) => call.view || call.result?.view || !liveCalls().has(call.id))}
                 timestamp={message().timestamp} />}
             </Show>
-            <Show when={message().text || message().deliveries?.length}>
+            <Show when={message().text || message().deliveries?.length || storedPlan()}>
               <div class="message assistant no-anim" classList={{ "full-message": props.mode === "full" }}>
-                <AssistantText class="content markdown-content" text={message().text} options={{ copyCode: true }} />
+                <Show when={message().text}>
+                  <AssistantText class="content markdown-content" text={message().text} options={{ copyCode: true }} />
+                </Show>
+                <Show when={storedPlan()}>{(plan) => <TurnChecklist plan={plan()} />}</Show>
                 <div class="message-time">
                   {formatTimestamp(message().timestamp)}
                   <For each={message().deliveries}>{(delivery) => <span>{delivery.surface} · {delivery.state}</span>}</For>
@@ -257,9 +277,12 @@ export function FeedTranscript(props: TranscriptProps & {
             onUserMessage={props.onUserMessage} mode={props.mode} reasoning={answer().reasoning}
             calls={answer().toolCalls} timestamp={Date.now()} live />
         </Show>
-        <Show when={answer().text}>
+        <Show when={answer().text || answer().plan}>
           <div class="message assistant streaming no-anim" classList={{ "full-message": props.mode === "full" }}>
-            <AssistantText class="content markdown-content" text={answer().text} options={{ copyCode: true }} />
+            <Show when={answer().text}>
+              <AssistantText class="content markdown-content" text={answer().text} options={{ copyCode: true }} />
+            </Show>
+            <Show when={answer().plan}>{(plan) => <TurnChecklist plan={plan()} />}</Show>
           </div>
         </Show>
       </>}

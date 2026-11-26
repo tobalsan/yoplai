@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Durable Main shows live turn checklists that stay with finished answers and appear in eligible Slack and Mattermost DM replies.
+
 - Eligible webhooks and scheduled jobs run in private Durable child conversations seeded from the owner's Main. Main shows one digest per delivery or tick, including after retries and restarts. Webhook requests receive an immediate acknowledgement with a fresh UUID.
 
 - Create private Durable threads through the gateway API, either empty or forked from Main. Each thread has its own transcript and context budget. Closing archives it and records a digest. Reopen it or look it up with `session_history`.

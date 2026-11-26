@@ -1,4 +1,4 @@
-import { PI_SYSTEM_PROMPT, codemodeGuidance, type AgentConfig, type GatewayConfig } from "@yoplai/shared";
+import { DURABLE_MAIN_SESSION_ID, PI_SYSTEM_PROMPT, codemodeGuidance, type AgentConfig, type GatewayConfig } from "@yoplai/shared";
 import { resolveSystemFiles } from "@yoplai/shared/node/system-files";
 import { selfImprovementPrompt } from "../agents/self-improvement.js";
 import { ensureWorkspaceFiles, FIRST_RUN_BOOTSTRAP_PROMPT } from "../agents/workspace.js";
@@ -6,6 +6,13 @@ import { resolveWorkspaceDir } from "../config/index.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { durableExtensionEnv } from "./env.js";
 import type { mainPrincipal } from "./principal.js";
+
+const turnPlanInstructions = [
+  "## Turn plan",
+  "Call `turn_plan` directly before the first action of a multi-step task (edits plus commands, or three or more steps). Use a top-level call outside Code Mode.",
+  "Send the full checklist on each update. Keep exactly one step `in_progress` while working and leave none `in_progress` at the end.",
+  "Single-command answers and plain conversation need no plan. Use `plan_update` for long-lived goals and `turn_plan` for this turn's steps.",
+].join("\n");
 
 export async function durableInstructions(
   agent: AgentConfig,
@@ -29,6 +36,7 @@ export async function durableInstructions(
     `Conversation files: ${principal.conversationFiles.runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
     agent.codemode && codemodeGuidance(),
     deferralSummary,
+    principal.sessionId === DURABLE_MAIN_SESSION_ID && turnPlanInstructions,
     "User messages carry a [from <name> via web] header.",
   ].filter(Boolean).join("\n\n");
 }

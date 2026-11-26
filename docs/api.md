@@ -278,6 +278,14 @@ Assistant items with channel delivery include `deliveries`, an array of
 `sent` after a channel receipt, or `uncertain` when the post could not be
 confirmed. Delivery changes appear in live feed frames.
 
+Assistant items and the current `live` state can include a `plan` object
+with `steps` (1–20 entries with `id`, `text` and `status`) and an optional
+one-line `explanation`. Step status is `pending`, `in_progress`, or
+`completed`. The latest checklist replaces the previous one in the answer
+group. It can arrive before any live text and stays on the assistant item
+after the turn ends and across reloads and restarts. Its tool calls are
+hidden from the activity trace and tool count.
+
 An interrupted top-level tool produces one localized `role: "failure"` item
 with `kind: "tool_interrupted"` after its round's tool results. It appears in
 feed windows, watch updates, and compatibility history. The notice persists

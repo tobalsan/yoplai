@@ -2756,9 +2756,14 @@ type FeedMessage = { id: string; text: string; timestamp: number };
 
 export type FeedDelivery = { surface: ChannelSurface; state: "pending" | "sent" | "uncertain" };
 
+export type TurnPlan = {
+  steps: { id: string; text: string; status: "pending" | "in_progress" | "completed" }[];
+  explanation?: string;
+};
+
 export type FeedItem = FeedMessage & (
   | { role: "user"; sender: string; surface?: "web" | ChannelSurface | "job" | "webhook" }
-  | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[] }
+  | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[]; plan?: TurnPlan }
   | { role: "failure"; kind: RunFailureKind }
   | { role: "seam"; reason: "manual" | "threshold" | "overflow"; carried: { firstKept: string; indexed: number } }
 );
@@ -2776,7 +2781,7 @@ export type FeedToolCall = {
 
 export type FeedDetail = FeedMessage & { reasoning: string[]; toolCalls: FeedToolCall[] };
 export type FeedHit = Pick<FeedMessage, "id" | "timestamp"> & { role: "user" | "assistant"; snippet: string };
-export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls"> & { runId?: string };
+export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls"> & { runId?: string; plan?: TurnPlan };
 
 export type FeedWindow = {
   items: FeedItem[];

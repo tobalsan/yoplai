@@ -129,3 +129,31 @@ it("places one localized notice per interrupted result between the tool round an
   ]);
   expect(JSON.stringify(records)).not.toMatch(/Private|private probe/);
 });
+
+it("projects successful turn plans and drops a plan-only group at the next input", () => {
+  const round = (id: number, name: string) => entry(id, AssistantEntry.kind, {
+    model: [fauxAssistantMessage(fauxToolCall(name, {}, { id: "call-" + id }), { stopReason: "toolUse" })],
+  });
+  const plan = { steps: [{ id: "check", text: "Check the seeds", status: "pending" }] };
+  const result = (id: number, toolName: string, isError: boolean, status = "pending") => entry(id, ToolResultEntry.kind, {
+    model: [{
+      role: "toolResult", toolCallId: "call-" + (id - 1), toolName, timestamp: id, isError, content: [],
+      details: { hidden: true, plan: { steps: [{ id: "check", text: "Check the seeds", status }] } },
+    }],
+  });
+  const input = entry(48, InputEntry.kind, { data: { text: "What time is it?", timestamp: 48, sender: { name: "Casey" } } });
+  const answer = entry(49, AssistantEntry.kind, { model: [fauxAssistantMessage("It is noon.", { timestamp: 49 })] });
+  const records = projectRecords([
+    round(40, "other_tool"), result(41, "other_tool", false),
+    round(42, "turn_plan"), result(43, "turn_plan", true),
+    round(44, "turn_plan"), result(45, "turn_plan", false, "unknown"),
+    round(46, "turn_plan"), result(47, "turn_plan", false),
+    input, answer,
+  ], { [task]: { state: "stream" } }, new Set(["turn_plan", "other_tool"]), "en");
+
+  expect(records).toMatchObject([{ kind: "plan", plan }, { kind: "user" }, { kind: "assistant" }]);
+  expect(feedItems(records)).toEqual([
+    { id: "m_48", role: "user", sender: "Casey", surface: "web", text: "What time is it?", timestamp: 48 },
+    { id: "m_49", role: "assistant", text: "It is noon.", timestamp: 49, toolCallCount: 0 },
+  ]);
+});

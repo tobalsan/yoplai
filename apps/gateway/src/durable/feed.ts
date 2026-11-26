@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
-import type { AgentConfig, FeedWindow } from "@yoplai/shared";
+import type { AgentConfig, FeedLive, FeedWindow, TurnPlan } from "@yoplai/shared";
 import { activeDurableContextUsage, feedBoundary, feedItems, isFeedMessage, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
 import { ThreadError } from "./contract.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
@@ -181,6 +181,15 @@ export class DurableFeed {
     return { ...await this.project(conversation, entries, observation?.selected), entries, contextUsage: activeDurableContextUsage(entries) };
   }
 
+  async answerPlan(conversation: Conversation, answerId: EntryId) {
+    const entries = await this.scan(conversation, { order: "descending", maxEntryId: answerId }, 1);
+    const { records } = await this.project(conversation, entries.reverse());
+    const round = records.find((record) => record.kind === "assistant" && record.entryId === answerId);
+    if (round?.kind !== "assistant") return;
+    const answer = feedItems(records).find((item) => item.id === round.id);
+    if (answer?.role === "assistant") return answer.plan;
+  }
+
   async forkPoint(conversation: Conversation, messageId: string) {
     const id = entryId(messageId);
     if (id === undefined) return;
@@ -213,12 +222,19 @@ export class DurableFeed {
     return last;
   }
 
-  async window(conversation: Conversation, limit: number, selector?: FeedSelector, observation?: FeedObservation): Promise<FeedWindow | undefined> {
+  async window(
+    conversation: Conversation,
+    limit: number,
+    { selector, observation, includePlan = true }: {
+      selector?: FeedSelector; observation?: FeedObservation; includePlan?: boolean;
+    } = {},
+  ): Promise<FeedWindow | undefined> {
     const id = selector && entryId(selector.id);
     if (selector && id === undefined) return;
     const observed = observation ?? await this.observe(conversation);
     const projection = await this.read(conversation, { limit, id }, observed);
-    const { records } = projection;
+    // Forked threads inherit Main entries, but their feed has no turn checklist.
+    const records = includePlan ? projection.records : projection.records.filter(({ kind }) => kind !== "plan");
     const items = feedItems(records, await this.deliveries.forFeed(conversation.id));
     let start = Math.max(0, items.length - limit);
     let end = items.length;
@@ -242,19 +258,38 @@ export class DurableFeed {
     }
     return {
       items: items.slice(start, end), hasBefore: start > 0, hasAfter: end < items.length,
-      live: await this.live(conversation, observed, selector ? undefined : projection),
+      live: await this.live(conversation, observed, selector ? undefined : projection, includePlan),
     };
   }
 
-  async live(conversation: Conversation, observed: FeedObservation, projection?: Awaited<ReturnType<DurableFeed["read"]>>) {
+  async live(
+    conversation: Conversation,
+    observed: FeedObservation,
+    projection?: Awaited<ReturnType<DurableFeed["read"]>>,
+    includePlan = true,
+  ): Promise<FeedLive | null> {
     const { live } = observed;
     if (!live?.run) return null;
-    const source = projection ?? (live.tools?.length ? await this.read(conversation, { limit: 1 }, observed) : undefined);
+    const source = projection ?? (live.tools?.length || (includePlan && live.run.turns > 0)
+      ? await this.read(conversation, { limit: 1 }, observed) : undefined);
+    const first = live.run.first;
+    let plan: TurnPlan | undefined;
+    if (includePlan && first !== undefined && source) {
+      for (let index = source.records.length - 1; index >= 0; index--) {
+        const record = source.records[index]!;
+        if (record.kind === "user" || record.kind === "failure") break;
+        if (record.kind === "plan" && record.entryId >= first) {
+          plan = record.plan;
+          break;
+        }
+      }
+    }
     const review = source ? source.review : await this.harness.snapshot(ReviewDoc, conversation.id, context);
     return {
       ...projectLive(live, source?.records ?? [], review?.byTask ?? {}, source?.hiddenNames ?? new Set(),
         (id) => this.viewFor(conversation, id)),
       runId: await runIdFor(this.harness, conversation, live.run),
+      ...(plan ? { plan } : {}),
     };
   }
 }
