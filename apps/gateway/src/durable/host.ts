@@ -142,7 +142,7 @@ export class DurableHost {
       name: "yoplai-run-boundary",
       hooks: [hook(GenerationTask, {
         async afterRun(run, api, context) {
-          host?.noteTurn(api.conversationId, run.first, run.last);
+          host?.noteTurn(api.conversationId, run.last);
           const inbox = await api.snapshot(InboxDoc, api.conversationId, context);
           if (inbox?.items.some(({ mode }) => mode !== "write")) await host?.configureQueuedRun(api.conversationId);
           return undefined;
@@ -204,9 +204,9 @@ export class DurableHost {
     }
   }
 
-  private noteTurn(id: ConversationId, first: EntryId, last: EntryId) {
+  private noteTurn(id: ConversationId, last: EntryId) {
     const key = userMemoryKey(this.owners.get(id));
-    if (key !== undefined) this.keeper.noteTurn(key, id, first, last);
+    if (key !== undefined) this.keeper.noteTurn(key, id, last);
   }
 
   private async mainId(user: string): Promise<ConversationId | undefined> {

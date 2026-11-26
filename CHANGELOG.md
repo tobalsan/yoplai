@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Add an opt-in Durable Main compaction eval to compare recall, tool side effects, and cache usage against a no-cut baseline, with a free Faux projection.
 - Browse Durable Main in the web chat with Cmd+K message search, message links, two-way paging, Jump to latest, and context compaction markers.
 
 - Durable Main can search and reopen its own messages across context cuts with `session_history`. Compaction summaries point to the original request by message ID.
@@ -47,6 +48,18 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
+- Durable memory keeper includes earlier stored turns on the next scheduled tick after a gateway restart, even if no memory batch has yet advanced the cursor.
+- Durable memory keeper warnings report the failure kind and, for rejected replies, structural details instead of raw values or parser and schema error text. The separate maintenance completion warning reports the failure kind without the provider’s error text.
+- Durable compaction eval uses a fixed Faux API identifier so projected token totals are repeatable.
+- Durable memory keeper accepts a single fenced JSON payload or top-level JSON object surrounded by prose, including prose with balanced non-JSON braces. It retries competing JSON payloads, fences with bodies that do not parse as JSON, unclosed fences, and unbalanced bare containers without advancing the memory cursor. Its prompt describes the input and asks for JSON only. When the provider refuses a batch, the keeper skips that batch with a warning and continues with the next one instead of resending it forever.
+- Durable compaction eval confirms each ledger step before its padding and asks the model to finish all three without pausing for confirmation.
+- Durable compaction eval keeps idling until its measured gap reaches six minutes, so a wall clock that runs slower than the timer no longer invalidates a paid run by a few milliseconds.
+- Durable compaction eval stops and marks the run invalid if a turn attempts to open more than eight model requests.
+- Durable compaction eval uses measured prompt usage to place cuts, skips baselines after invalid cut runs, matches complete source identifiers, and waits for in-flight keeper usage before reporting.
+- Durable compaction eval rejects pairs with missing or late fact plants before the first cut, requires exact recall identifiers, and credits cited Memory statuses.
+- Durable compaction eval rejects a second cut that does not split the ledger step executions, reports full-size and second-cut distances, no longer credits a quoted probe question or a negated status as a recall source, and labels `--full` from the prepared variant.
+- Fix Durable compaction eval summary attribution and reject comparisons with unprobed cuts, a misplaced ledger cut, or a missing opening kiln read. Record stream cache retention in the reports.
 - Durable Main shows nested Code Mode file and MCP views after reload, preserves streamed text across tool rounds, and keeps replies and tool steps from appearing twice when history reloads mid-turn.
 - Open files sent from linked gateways in a new window, including files sent from Code Mode.
 - Durable agents on single-user desktops can use pinned Pi, Codex, Claude Code, and OpenCode CLI logins. The desktop reads OpenCode Go keys from OpenCode v2's database as well as legacy JSON.

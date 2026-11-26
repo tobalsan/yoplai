@@ -18,6 +18,17 @@ export type MaintenanceCompletionParams = {
   maxTokens: number;
   timeoutMs: number;
   onLength?: (text: string) => string;
+  /** Called once per completion, so callers can log why `null` came back. */
+  onOutcome?: (outcome: MaintenanceOutcome) => void;
+};
+
+export type MaintenanceOutcome = {
+  /** Raw failure detail for the caller; do not log it. */
+  error?: string;
+  failureKind?: "timeout" | "empty" | "provider_error" | "refusal";
+  /** The model's stop reason, when a response arrived. */
+  stopReason?: Awaited<ReturnType<typeof defaultCompleteSimple>>["stopReason"];
+  elapsedMs: number;
 };
 
 type MaintenanceCompletionDeps = {
@@ -26,6 +37,7 @@ type MaintenanceCompletionDeps = {
   createRuntime?: (signal?: AbortSignal) => Promise<ModelRuntime>;
   completeSimple?: typeof defaultCompleteSimple;
   warn?: (message: string, fields?: Record<string, unknown>) => void;
+  onUsage?: (usage: Awaited<ReturnType<typeof defaultCompleteSimple>>["usage"]) => void;
 };
 
 const warned = new Set<string>();
@@ -108,6 +120,8 @@ export async function completeMaintenance(
   const activeDeps = { ...testDeps, ...deps };
   let ref = "agent-model";
   let phase = "start";
+  let stopReason: MaintenanceOutcome["stopReason"];
+  let failureKind: NonNullable<MaintenanceOutcome["failureKind"]> = "provider_error";
   const startedAt = Date.now();
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -118,6 +132,7 @@ export async function completeMaintenance(
     );
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
+        failureKind = "timeout";
         controller.abort(timeoutError);
         reject(timeoutError);
       }, params.timeoutMs);
@@ -161,24 +176,34 @@ export async function completeMaintenance(
           headers: sessionHeaders(model, params.sessionId),
         }
       );
+      activeDeps.onUsage?.(response.usage);
+      stopReason = response.stopReason;
       if (response.stopReason === "error") {
+        // pi-ai keeps the provider's own stop reason; Anthropic reports a refusal there.
+        if (response.rawStopReason === "refusal") failureKind = "refusal";
         throw new Error(response.errorMessage ?? "Maintenance completion failed");
       }
       const text = responseText(response);
-      if (!text) throw new Error("Maintenance completion returned no text");
+      if (!text) {
+        failureKind = "empty";
+        throw new Error("Maintenance completion returned no text");
+      }
       phase = "done";
       return response.stopReason === "length" && params.onLength ? params.onLength(text) : text;
     })();
-    return await Promise.race([run, timedOut]);
+    const text = await Promise.race([run, timedOut]);
+    params.onOutcome?.({ stopReason, elapsedMs: Date.now() - startedAt });
+    return text;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    params.onOutcome?.({ error: message, failureKind, stopReason, elapsedMs: Date.now() - startedAt });
     warnOnce(
       `${ref}:${message}`,
       "[maintenance] completion failed",
       {
         agentId: params.agentId,
         model: ref,
-        error: message,
+        failureKind,
         phase,
         elapsedMs: Date.now() - startedAt,
       },

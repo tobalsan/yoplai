@@ -22,6 +22,53 @@ it("updates a known topic, resolves it in place, and adds a new topic with publi
   expect(merged.plan).toEqual({ goals: ["Collect the report"], nextSteps: ["Ask Casey"], updatedAt: 100 });
 });
 
+it("accepts but does not store resolved flags on new topics", () => {
+  // JSON from Haiku reply r1-p2-cut-01 (invented eval data).
+  const reply = {
+    topics: [
+      {
+        kind: "digest",
+        title: "Kite seal reference",
+        note: "The current kite seal is Quillfeather-41, correcting the earlier Quillfeather-18. Seal values are not repeated here.",
+        refs: ["m_10", "m_45", "m_48"],
+        resolved: true,
+      },
+      {
+        kind: "digest",
+        title: "Kiln fixture check",
+        note: "The kiln fixture was read and reported as checked. Its seal and contents are not recorded here.",
+        refs: ["m_21", "m_24"],
+        resolved: true,
+      },
+      {
+        kind: "open",
+        title: "Lantern inspection",
+        note: "Lantern inspection is pending.",
+        refs: ["m_35", "m_38"],
+      },
+      {
+        kind: "digest",
+        title: "Mosaic inventory",
+        note: "Mosaic inventory is recorded as done.",
+        refs: ["m_39", "m_42"],
+        resolved: true,
+      },
+      {
+        kind: "open",
+        title: "Filing requests",
+        note: "Pending filings: clock dial sketch, orchard weather clipping, ferry timetable clipping, planetarium exhibit clipping.",
+        refs: ["m_31", "m_34", "m_49", "m_52", "m_53", "m_56", "m_59", "m_62"],
+      },
+    ],
+    drift: [],
+  };
+  const merged = applyKeeperResult(emptyMemory(), reply, new Set(reply.topics.flatMap(({ refs }) => refs)), 200);
+  expect(merged.topics).toEqual([2, 4, 0, 1, 3].map((index) => {
+    const { kind, title, note, refs } = reply.topics[index]!;
+    return { id: `t_${index + 1}`, kind, title, note, refs };
+  }));
+});
+
 it("bounds stored memory while keeping open loops ahead of digests", () => {
   const refs = Array.from({ length: 12 }, (_, i) => "m_" + (i + 1));
   const merged = applyKeeperResult(emptyMemory(), {

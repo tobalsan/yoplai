@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:web": "vitest run --dir apps/web/src",
     "test:gateway": "vitest run --dir apps/gateway/src",
+    "eval:durable-compaction": "node scripts/eval-durable-compaction.mjs",
     "test:shared": "vitest run --dir packages/shared/src",
     "test:cli": "vitest run --dir packages/extensions/projects/src/cli",
     "test:e2e:scheduler": "node scripts/e2e-scheduler-once.mjs",

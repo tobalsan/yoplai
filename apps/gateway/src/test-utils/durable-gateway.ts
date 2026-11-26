@@ -1,5 +1,6 @@
 import type { EntryDraft } from "@earendil-works/pi-durable";
 import type { DurableHostOptions } from "../durable/host.js";
+import type { DurableModelsFactory } from "../durable/models.js";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
@@ -15,9 +16,12 @@ type TestUser = "local" | "alice" | "bob";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
 type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
+type ModelLimits = Partial<{ contextWindow: number; maxTokens: number }>;
+export type RealTestModel = { provider: string; model: string; limits?: ModelLimits; apiKey?: string };
+
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[]; modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper, realModel, fauxLimits, fauxApi, wrapModels,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[] | (() => Promise<Extension[]>); modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"]; realModel?: RealTestModel; fauxLimits?: ModelLimits; fauxApi?: string; wrapModels?: (factory: DurableModelsFactory) => DurableModelsFactory } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -39,7 +43,7 @@ export async function startDurableTestGateway({
   vi.stubEnv("YOPLAI_HOME", home);
   await writeTestV3Config(home, {
     extraConfig: { oauth: { encryptionKey: "fixture-encryption-key-durable" }, ...extraConfig, ...(appsPort ? { apps: { port: appsPort, origin: "http://127.0.0.1:" + appsPort } } : {}) },
-    agents: [{ id: "pilot", model: customModel ?? modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
+    agents: [{ id: "pilot", model: realModel ? { provider: realModel.provider, model: realModel.model } : customModel ?? modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
     extensions: multiUser ? {
       multiUser: {
         enabled: true, autoApprove: true, emailAndPassword: { enabled: true },
@@ -52,18 +56,29 @@ export async function startDurableTestGateway({
       [provider]: { api: "openai-completions", baseUrl, apiKey, headers, models: [{ id: model, contextWindow: 128000 }] },
     } }));
   }
+  async function seedModelKeys(keys: Record<string, string>) {
+    await fs.writeFile(path.join(home, "auth.json"), JSON.stringify(Object.fromEntries(
+      Object.entries(keys).map(([provider, key]) => [provider, { type: "api_key", key }]),
+    )), { mode: 0o600 });
+  }
   if (customModel) await configureCustomModel(customModel);
+  if (realModel?.limits) await fs.writeFile(path.join(home, "models.json"), JSON.stringify({ providers: {
+    [realModel.provider]: { modelOverrides: { [realModel.model]: realModel.limits } },
+  } }));
+  if (realModel?.apiKey) await seedModelKeys({ [realModel.provider]: realModel.apiKey });
   vi.resetModules();
   const { startServer } = await import("../server/index.js");
   const { loadConfig, reloadConfig } = await import("../config/index.js");
   const { getExtensionRuntime } = await import("../extensions/registry.js");
   const { createExtensionContext } = await import("../extensions/context.js");
   const { createDurableFaux } = await import("../durable/faux.js");
-  const faux = createDurableFaux(tokensPerSecond, modelFixture);
+  const faux = createDurableFaux(tokensPerSecond, modelFixture, undefined, fauxLimits, fauxApi);
+  const { createDurableModels } = await import("../durable/models.js");
+  const modelFactory = realModel || customModel ? createDurableModels : faux.createModels;
   faux.script("The seedlings are ready.");
   const runtime = getExtensionRuntime();
 
-  const extensions: Extension[] = [...fixtureExtensions];
+  const extensions: Extension[] = [...(typeof fixtureExtensions === "function" ? await fixtureExtensions() : fixtureExtensions)];
   if (reviewer) {
     extensions.push({
       id: "fixture-reviewer", displayName: "Fixture Reviewer", description: "", dependencies: [], routePrefixes: [],
@@ -102,7 +117,7 @@ export async function startDurableTestGateway({
     const channels = startChannels && createExtensionContext(loadConfig());
     if (channels) stopChannels = await startChannels?.(channels, home);
     server = startServer(0, "127.0.0.1", runtime, {
-      createModels: customModel ? undefined : faux.createModels,
+      createModels: wrapModels?.(modelFactory) ?? modelFactory,
       fixture,
       deliveryFixture,
       keeper,
@@ -249,13 +264,10 @@ export async function startDurableTestGateway({
     },
     close: cleanUp,
     failBetweenCommits() { fault = true; },
-    async seedModelKeys(keys: Record<string, string>) {
-      await fs.writeFile(path.join(home, "auth.json"), JSON.stringify(Object.fromEntries(
-        Object.entries(keys).map(([provider, key]) => [provider, { type: "api_key", key }]),
-      )), { mode: 0o600 });
-    },
+    home,
+    seedModelKeys,
     async configure(model: string, yaml = extraYaml, source?: ModelSource) {
-      await writeTestAgent(home, { id: "pilot", model: { provider: modelFixture?.provider ?? "faux", model, source }, extraYaml: yaml });
+      await writeTestAgent(home, { id: "pilot", model: { provider: realModel?.provider ?? modelFixture?.provider ?? "faux", model, source }, extraYaml: yaml });
       reloadConfig();
     },
     async restart(model?: string) {

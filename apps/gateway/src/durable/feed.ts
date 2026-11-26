@@ -94,7 +94,7 @@ export class DurableFeed {
     return { records: project(entries), review, hiddenNames };
   }
 
-  private async *memoryTurns(conversation: Conversation, min: EntryId, max: EntryId) {
+  private async *memoryTurns(conversation: Conversation, min: EntryId | undefined, max: EntryId) {
     const query = { order: "ascending" as const, minEntryId: min, maxEntryId: max };
     let entries: EntryRecord[] = [];
     let cursor: Cursor | undefined;
@@ -140,7 +140,7 @@ export class DurableFeed {
     return turn;
   }
 
-  async *memoryBatches(conversation: Conversation, min: EntryId, max: EntryId, maxBytes: number) {
+  async *memoryBatches(conversation: Conversation, min: EntryId | undefined, max: EntryId, maxBytes: number) {
     const { project } = await this.projectionRules(conversation);
     let batch: MemoryTranscript = { messages: [], toolResults: [] };
     let through: EntryId | undefined;
