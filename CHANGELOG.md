@@ -129,6 +129,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
 - Durable memory keeper failure warnings now say why the update failed: the error, the model's stop reason, and a short redacted excerpt of a rejected reply.
 - The desktop wait screen shows an animated loader, then the app fades in. The loader stops if you enable reduced motion.
 - Upgrade Pi packages to 1.6.0 and carry forward the bundled Yoplai OAuth pages. Rebuild the sandbox image to include the patched SDK.
