@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import type { AgentConfig } from "@yoplai/shared";
-import { CONFIG_DIR, getAgent } from "../config/index.js";
+import { CONFIG_DIR, getAgent, loadConfig } from "../config/index.js";
 import type { GatewayExtensionContext } from "../extensions/context.js";
-import type { ExtensionRuntime } from "../extensions/runtime.js";
+import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
+import { durableModeFor } from "../durable-mode/resolve.js";
 import { logError } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
 import type { DurableHostOptions } from "./host.js";
@@ -40,6 +41,29 @@ export class DurableWeb {
       if (!agent || input.surface !== input.actor.surface || !await eligible()) return { status: "not_durable" };
       return (await this.host(agent)).submitChannel(input, eligible);
     });
+    channels.connectWebhookInput(async (input) => {
+      const agent = await this.backgroundAgent(input.agentId, input.owner);
+      return agent ? (await this.host(agent)).submitWebhook(input) : { status: "not_durable" };
+    });
+    channels.connectJobTick(async (input) => {
+      const agent = await this.backgroundAgent(input.agentId, input.owner);
+      return agent ? (await this.host(agent)).runJobTick(input) : { status: "not_durable" };
+    });
+  }
+
+  private async backgroundAgent(agentId: string, owner: string) {
+    if (this.closing) throw new Error("Gateway is shutting down.");
+    const config = loadConfig();
+    const multiUser = config.extensions?.multiUser?.enabled;
+    if (!owner || (!multiUser && owner !== "local")) return;
+    const agent = getAgent(agentId);
+    if (!agent || !await durableModeFor(owner === "local" ? undefined : owner, agent)) return;
+    try {
+      await requireActorExecution(agentId, config, owner);
+      return agent;
+    } catch {
+      return undefined;
+    }
   }
 
   host(agent: AgentConfig) {

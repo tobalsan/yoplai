@@ -1551,6 +1551,29 @@ export type ChannelInput = Pick<ChannelOwnerRequest, "agentId" | "actor"> & {
   route: ChannelRoute;
 };
 
+export type WebhookInput = {
+  agentId: string;
+  owner: string;
+  name: string;
+  requestId: string;
+  deliveryId?: string;
+  text: string;
+};
+
+export type JobTickInput = {
+  agentId: string;
+  owner: string;
+  jobId: string;
+  jobName: string;
+  tickTime: number;
+  prompt: string;
+  signal: AbortSignal;
+  onAdmitted?: (tickKey: string) => void;
+};
+
+export type JobTickResult = { status: "done"; result: RunAgentResult } | { status: "not_durable" };
+
+export type WebhookAdmission = { status: "admitted"; duplicate: boolean } | { status: "not_durable" };
 export type ChannelAdmission = { status: "admitted"; duplicate: boolean } | { status: "not_durable" };
 
 /**
@@ -1795,6 +1818,10 @@ export interface ExtensionContext {
   getDeliverySink(id: string): DeliverySink | undefined;
   registerChannelOwnerResolver?(surface: ChannelSurface, resolver: ChannelOwnerResolver): () => void;
   submitChannelInput?(input: ChannelInput): Promise<ChannelAdmission>;
+  /** Admit a webhook into its owner's Durable child when eligible. */
+  submitWebhookInput?(input: WebhookInput): Promise<WebhookAdmission>;
+  /** Run one scheduled tick in its owner's Durable child when eligible. */
+  runJobTick?(input: JobTickInput): Promise<JobTickResult>;
   registerUserNotifier(id: string, notifier: UserNotifier): () => void;
   getUserNotifiers(): Map<string, UserNotifier>;
   resolveConnectPath?(agentId: string, hints: CredentialConnectHints): Promise<string | undefined>;
@@ -2730,7 +2757,7 @@ type FeedMessage = { id: string; text: string; timestamp: number };
 export type FeedDelivery = { surface: ChannelSurface; state: "pending" | "sent" | "uncertain" };
 
 export type FeedItem = FeedMessage & (
-  | { role: "user"; sender: string; surface?: "web" | ChannelSurface }
+  | { role: "user"; sender: string; surface?: "web" | ChannelSurface | "job" | "webhook" }
   | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[] }
   | { role: "failure"; kind: RunFailureKind }
   | { role: "seam"; reason: "manual" | "threshold" | "overflow"; carried: { firstKept: string; indexed: number } }

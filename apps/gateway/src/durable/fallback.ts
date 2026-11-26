@@ -19,7 +19,7 @@ type Attempt = {
 };
 
 type ModelSelection = ModelRef & { source?: ModelSource; mode?: NonNullable<AgentConfig["auth"]>["mode"] };
-const FallbackDoc = defineDoc<{ model?: ModelRef; primary?: ModelSelection; attempts: Record<string, Attempt> }>({
+const FallbackDoc = defineDoc<{ model?: ModelRef; primary?: ModelSelection; attempts: Record<string, Attempt>; cancelled?: boolean }>({
   kind: "yoplai.fallback",
   version: 1,
   scope: "conversation",
@@ -75,12 +75,23 @@ export async function originalFallbackInput(harness: Harness, conversation: Conv
   return state?.attempts[id]?.inputs[0];
 }
 
+export async function abortWithoutFallback(conversation: Conversation) {
+  try {
+    await conversation.commit(async (tx) => {
+      (await tx.doc(FallbackDoc, conversation.id)).cancelled = true;
+    }, context);
+  } finally {
+    await conversation.abort(context);
+  }
+}
+
 export async function reserveFallback(conversation: Conversation, id: SubmissionId, threadId?: string): Promise<SubmissionId | undefined> {
   const last = (await conversation.entries({ order: "descending" }, 1, undefined, context)).items[0];
   return conversation.commit(async (tx) => {
     const state = await tx.doc(FallbackDoc, conversation.id);
     const existing = Object.values(state.attempts).find(({ inputs }) => inputs.includes(id));
     if (existing) return existing.submissionId;
+    if (state.cancelled) return;
     if (threadId !== undefined && (await tx.doc(ThreadMap)).threads[threadId]?.closed) return;
     const live = await tx.doc(LiveDoc, conversation.id);
     const failed = live.runFailure;

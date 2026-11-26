@@ -4,7 +4,7 @@ import type { Models } from "@earendil-works/pi-ai-durable/models";
 import type { AgentConfig } from "@yoplai/shared";
 import { messageText, messageToolCalls, oneLine } from "../history/condense.js";
 import { compactionIndexLines, projectRecords } from "./feed-projection.js";
-import { InputEntry, ReviewDoc } from "./state.js";
+import { ChildDigestEntry, InputEntry, ReviewDoc } from "./state.js";
 
 const KEEP_RECENT_TOKENS = 20_000;
 const SUMMARY_CHARS = 16_000;
@@ -12,6 +12,10 @@ const MEMORY_HEADING = "\n\nMemory\n";
 export const COMPACTION_MEMORY_CHARS = SUMMARY_CHARS / 4 - MEMORY_HEADING.length;
 const FRAME = "Older messages are stored outside this context. Answer the latest request. Return to an older topic only if the user does. Bracketed ids identify older requests. Open any bracketed request with session_history read, around: <id>.";
 const OMITTED_TOOLS = "Earlier tool calls in this run are not listed.";
+
+export function compactionInputCeiling(contextWindow: number, maxOutputTokens: number): number {
+  return Math.min(150_000, Math.floor(0.75 * Math.max(0, contextWindow - maxOutputTokens)));
+}
 
 export function createMainCompactionSettings(models: Models) {
   // A run can still use a former model selection while the agent config changes.
@@ -22,7 +26,7 @@ export function createMainCompactionSettings(models: Models) {
       if (!ref?.provider) continue;
       const model = models.getModel(ref.provider, ref.model);
       if (!model) continue;
-      const ceiling = Math.min(150_000, Math.floor(0.75 * Math.max(0, model.contextWindow - model.maxTokens)));
+      const ceiling = compactionInputCeiling(model.contextWindow, model.maxTokens);
       modelOverrides[`${ref.provider}/${ref.model}`] = {
         reserveTokens: model.contextWindow - ceiling,
         keepRecentTokens: Math.min(KEEP_RECENT_TOKENS, Math.floor(ceiling / 4)),
@@ -96,7 +100,8 @@ export async function summarizeCompaction(
     } catch {
       // Memory is optional. Still build the index from the stored inputs.
     }
-    let summary = FRAME + running + memory + "\n\nOlder requests";
+    const heading = FRAME + running + memory + "\n\nOlder requests";
+    const lines: { text: string; digest: boolean }[] = [];
     let cursor: Cursor | undefined;
     const previous = entries[0];
     const previousCut = CompactionEntry.is(previous) ? previous : undefined;
@@ -104,24 +109,38 @@ export async function summarizeCompaction(
     do {
       const page = await api.entries(query, 100, cursor, context);
       for (const entry of page.items) {
-        if (!InputEntry.is(entry)) continue;
+        const digest = ChildDigestEntry.is(entry);
+        if (!digest && !InputEntry.is(entry)) continue;
         const [record] = projectRecords([entry], {}, new Set(), "en");
         if (record?.kind !== "user") continue;
         const date = new Date(record.message.timestamp).toISOString().slice(0, 10);
-        const line = `\n[${record.id}] ${date} · ${oneLine(record.sender)} · ${record.surface} · ${oneLine(messageText(record.message)).slice(0, 200)}`;
-        if (summary.length + line.length > SUMMARY_CHARS) return { summary };
-        summary += line;
+        const sender = oneLine(record.sender).replaceAll(" · ", " / ");
+        const excerpt = oneLine(messageText(record.message)).slice(0, digest ? 100 : 200);
+        lines.push({ text: `[${record.id}] ${date} · ${sender} · ${record.surface} · ${excerpt}`, digest });
       }
       cursor = page.next;
     } while (cursor !== undefined);
     if (previousCut) {
       // The previous checkpoint already indexed the prefix before its retained tail.
       for (const line of compactionIndexLines(previousCut)) {
-        if (summary.length + line.length + 1 > SUMMARY_CHARS) break;
-        summary += "\n" + line;
+        const surface = line.split(" · ", 4)[2];
+        lines.push({ text: line, digest: surface === "job" || surface === "webhook" });
       }
     }
-    return { summary };
+    let remaining = SUMMARY_CHARS - heading.length;
+    const kept = new Set<(typeof lines)[number]>();
+    for (const digest of [false, true]) {
+      for (const line of lines) {
+        if (line.digest !== digest) continue;
+        if (line.text.length + 1 > remaining) {
+          if (digest) break;
+          continue;
+        }
+        remaining -= line.text.length + 1;
+        kept.add(line);
+      }
+    }
+    return { summary: heading + lines.filter((line) => kept.has(line)).map(({ text }) => "\n" + text).join("") };
   } catch {
     return { summary: FRAME };
   }

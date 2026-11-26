@@ -7,6 +7,7 @@ import type {
   CreateScheduleRequest,
   UpdateScheduleRequest,
   ExtensionContext,
+  RunAgentParams,
   StreamEvent,
   CredentialConnectHints,
 } from "@yoplai/shared";
@@ -28,6 +29,7 @@ import {
 } from "./script.js";
 
 const CREDENTIAL_REFUSAL_PAUSE_THRESHOLD = 3;
+const warnedOverrides = new Set<string>();
 
 const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -133,6 +135,7 @@ type CompleteRunInput = {
   errorMessage?: string;
   errorCode?: string;
   credentialRefused?: CredentialRefusal;
+  durable?: boolean;
 };
 
 let schedulerCtx: ExtensionContext | null = null;
@@ -748,10 +751,11 @@ export class SchedulerService {
     console.log(`[scheduler] Running job: ${job.name} -> ${agent.name}`);
 
     const workspaceDir = ctx.resolveWorkspaceDir(agent);
-    const outputModel = job.model ?? {
+    const configuredModel = {
       provider: agent.model.provider ?? "",
       model: agent.model.model,
     };
+    const outputModel = job.model ?? configuredModel;
 
     let authorityError: string | undefined;
     if (credentialMode === "owner") {
@@ -958,7 +962,8 @@ export class SchedulerService {
     // so the next scheduled fire cannot overlap with a still-aborting run.
     let missingCredentialError: CredentialRefusal | undefined;
     let deviceDropped = false;
-    const runPromise = ctx.runAgent({
+    let durableKey: string | undefined;
+    const legacyParams: RunAgentParams = {
       agentId: job.agentId,
       userId: credentialMode === "owner" ? ownerUserId : undefined,
       actorUserId: config.extensions?.multiUser?.enabled ? (credentialMode === "owner" ? ownerUserId : undefined) : "local",
@@ -983,7 +988,33 @@ export class SchedulerService {
           controller.abort();
         }
       },
-      });
+    };
+    const owner = config.extensions?.multiUser?.enabled
+      ? (credentialMode === "owner" ? ownerUserId : undefined)
+      : "local";
+    let legacyLaunchFailure: { error: unknown } | undefined;
+    const runPromise = (async () => {
+      if (owner && !requiresDevice && payload.sessionId === undefined) {
+        const outcome = await ctx.runJobTick?.({
+          agentId: job.agentId, owner, jobId: job.id, jobName: job.name,
+          tickTime: scheduledFiredAtMs ?? firedAt.getTime(), prompt, signal: controller.signal,
+          onAdmitted(tickKey) {
+            durableKey = tickKey;
+            if ((job.model || job.reasoning) && !warnedOverrides.has(job.agentId)) {
+              warnedOverrides.add(job.agentId);
+              ctx.logger.warn("[scheduler] model and reasoning overrides are ignored for Durable runs", { agentId: job.agentId });
+            }
+          },
+        });
+        if (outcome?.status === "done") return outcome.result;
+      }
+      try {
+        return ctx.runAgent(legacyParams);
+      } catch (error) {
+        legacyLaunchFailure = { error };
+        throw error;
+      }
+    })();
 
     const runSettled = runPromise
       .catch(() => {})
@@ -1018,6 +1049,11 @@ export class SchedulerService {
       runSessionId = result.meta.sessionId;
       response = latestAssistantText(result.payloads);
     } catch (err) {
+      // A synchronous legacy launch failure belongs to the caller's dispatch error handling.
+      if (legacyLaunchFailure && err === legacyLaunchFailure.error) {
+        void runSettled.then(() => this.releaseExecution(key));
+        throw err;
+      }
       runStatus = "error";
       errorValue = err;
       runError = err instanceof Error ? err.message : String(err);
@@ -1053,9 +1089,10 @@ export class SchedulerService {
         scheduledRunAt,
         agent,
         workspaceDir,
-        model: outputModel,
+        model: durableKey ? configuredModel : outputModel,
         firedAt,
-        sessionId: runSessionId,
+        sessionId: durableKey ?? runSessionId,
+        durable: durableKey !== undefined,
         status: runStatus,
         statusLabel:
           runStatus === "error"
@@ -1218,7 +1255,7 @@ export class SchedulerService {
           statusLabel: input.statusLabel,
           exitCode: input.exitCode,
           durationMs: Date.now() - firedAt.getTime(),
-          response: input.response,
+          response: input.durable ? undefined : input.response,
           gateOutput: input.runKind === "woke_agent" ? input.gateOutput : undefined,
           error: input.error,
           delivery,

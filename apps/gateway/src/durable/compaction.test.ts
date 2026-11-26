@@ -166,3 +166,38 @@ it("carries only request index lines at the next cut", async () => {
     "[m_10] 2026-08-12 · Casey · web · Check the greenhouse.",
   ]);
 });
+
+it("clips background digests and keeps carried user requests ahead of newer digests", async () => {
+  const previous = {
+    ...entry(30, CompactionEntry.kind, { model: [{
+      role: "user", timestamp: date, content:
+        "Older requests\n[m_10] 2026-08-12 · Casey · web · Read the orchard plan.\n[m_9] 2026-08-12 · Archive · job · Completed.",
+    }] }),
+    head: 20 as EntryId,
+  };
+  const job = entry(25, "yoplai.child-digest", { data: {
+    timestamp: date, text: "j".repeat(150), surface: "job", name: "Inventory",
+  } });
+  const webhook = entry(26, "yoplai.child-digest", { data: {
+    timestamp: date, text: "w".repeat(150), surface: "webhook", name: "Dispatch",
+  } });
+  const small = [job, webhook];
+  const summarize = (records: EntryRecord[]) => summarizeCompaction({ entries: [previous, ...records], firstKept: 300 as EntryId },
+    history(records, 301), BACKGROUND_CONTEXT, async () => new Set());
+  const lines = (await summarize(small)).summary.split("\n").slice(-4);
+  expect(lines).toEqual([
+    "[m_26] 2026-08-12 · Dispatch · webhook · " + "w".repeat(100),
+    "[m_25] 2026-08-12 · Inventory · job · " + "j".repeat(100),
+    "[m_10] 2026-08-12 · Casey · web · Read the orchard plan.",
+    "[m_9] 2026-08-12 · Archive · job · Completed.",
+  ]);
+
+  const crowded = [...small, ...Array.from({ length: 200 }, (_, index) => entry(index + 40, "yoplai.child-digest", {
+    data: { timestamp: date, text: "w".repeat(150), surface: "webhook", name: "Dispatch" },
+  }))];
+  const { summary } = await summarize(crowded);
+  expect(summary).toContain(lines[2]);
+  expect(summary).toContain("[m_239] 2026-08-12 · Dispatch · webhook");
+  expect(summary).not.toContain(lines[3]);
+  expect(summary.length).toBeLessThanOrEqual(16_000);
+});
