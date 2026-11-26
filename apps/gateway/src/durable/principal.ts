@@ -16,7 +16,12 @@ export function mainIdentity(owner: string, config: GatewayConfig) {
   };
 }
 
-export function mainPrincipal(agentId: string, owner: string, config: GatewayConfig) {
+export function mainPrincipal(agentId: string, owner: string, config: GatewayConfig, background = false) {
   const identity = mainIdentity(owner, config);
-  return { ...identity, conversationFiles: getConversationFiles(agentId, identity.sessionId, identity.userId) };
+  return {
+    ...identity, background,
+    source: background ? "scheduler" as const : identity.source,
+    sender: background ? { kind: "scheduler" as const } : identity.sender,
+    conversationFiles: getConversationFiles(agentId, identity.sessionId, identity.userId),
+  };
 }

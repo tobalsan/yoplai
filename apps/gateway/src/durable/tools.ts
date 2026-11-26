@@ -24,6 +24,7 @@ export function createDurableTools(
   registry: Registry,
   ownerOf: (id: ConversationId) => string | undefined,
   sessionRef: (id: ConversationId) => string,
+  isBackground: (id: ConversationId) => boolean,
   onInterrupted: () => void,
   sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
 ) {
@@ -34,7 +35,11 @@ export function createDurableTools(
       throw new DurableAccessDenied();
     }
     const config = loadConfig();
-    return { agent, config, principal: { ...mainPrincipal(agentId, owner, config), sessionId: sessionRef(id) } };
+    const principal = { ...mainPrincipal(agentId, owner, config, isBackground(id)), sessionId: sessionRef(id) };
+    if (principal.background) {
+      await requireActorExecution(agentId, config, principal.userId, principal).catch(() => { throw new DurableAccessDenied(); });
+    }
+    return { agent, config, principal };
   }
 
   async function describe(id: ConversationId) {

@@ -12,18 +12,19 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
-  type ChannelAdmission, type ChannelInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
+  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, webhookDeliveryKey, type AgentConfig, type FeedWindow, type FullHistoryMessage,
+  type ChannelAdmission, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
-import { messageText } from "../history/condense.js";
+import { messageText, oneLine } from "../history/condense.js";
+import { buildHandoff } from "../history/handoff.js";
 import { historyPage } from "../history/page.js";
-import { logWarn } from "../logging.js";
+import { logError, logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
-import { COMPACTION_MEMORY_CHARS, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
+import { COMPACTION_MEMORY_CHARS, compactionInputCeiling, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
 import { ThreadError, type WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
@@ -31,7 +32,7 @@ import { feedDetail, feedItems, feedSearch } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
 import { DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
-import { durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
+import { abortWithoutFallback, durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
@@ -39,17 +40,21 @@ import { createMemoryTools } from "./memory-tools.js";
 import { MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
 import { durableSessionHistory, type ReadableConversation } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
-import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
+import { AbortedRuns, ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type BackgroundChild, type MainIdentityMap, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
 import { describeThread, firstLine, threadRef } from "./threads.js";
 import { durableStorePath } from "./store-path.js";
 import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
 
+import { handoffTranscript } from "./background.js";
+
+const CHILD_DIGEST_CHARS = 500;
 const context = BACKGROUND_CONTEXT;
 const toolSearch = createToolSearchExtension();
 const routingWarnings = new Set<string>();
 export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
+  afterChildSettlement?: () => void | Promise<void>;
   afterThreadArchive?: () => void | Promise<void>;
   fixture?: { extension: Extension; invisibleTools?: readonly string[] };
   wakeDelivery?: () => void;
@@ -59,11 +64,20 @@ export type DurableHostOptions = {
 
 type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string } | ChannelInput;
 const CHANNEL_NO_LONGER_ELIGIBLE = Symbol("channel-no-longer-eligible");
+type ChildAdmission = Omit<BackgroundChild, "id"> & {
+  key: string;
+  text: string;
+  deliveryId?: string;
+  signal?: AbortSignal;
+};
 
 export class DurableHost {
   readonly deliveries: DeliveryQueue;
   private readonly feed: DurableFeed;
   private readonly keeper: MemoryKeeper;
+  private readonly settlingChildren = new Map<ConversationId, Promise<RunAgentResult>>();
+  private readonly waitingDigests = new Set<string>();
+  private readonly childKeys = new Map<ConversationId, string>();
   private readonly threadIds = new Map<ConversationId, string>();
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
@@ -73,7 +87,7 @@ export class DurableHost {
 
   private constructor(
     private readonly harness: Harness,
-    models: Awaited<ReturnType<DurableModelsFactory>>,
+    private readonly models: Awaited<ReturnType<DurableModelsFactory>>,
     private readonly agent: AgentConfig,
     private readonly runtime: ExtensionRuntime,
     private readonly providerConversations: Map<string, ConversationId>,
@@ -132,6 +146,7 @@ export class DurableHost {
     let host: DurableHost | undefined;
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
       (id) => host?.sessionRef(id) ?? DURABLE_MAIN_SESSION_ID,
+      (id) => host?.childKeys.has(id) ?? false,
       () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
         if (!host) throw new Error("Durable host is not open.");
         return host.sessionHistory(id, args);
@@ -210,7 +225,7 @@ export class DurableHost {
   }
 
   private noteTurn(id: ConversationId, last: EntryId) {
-    if (this.threadIds.has(id)) return;
+    if (this.threadIds.has(id) || this.childKeys.has(id)) return;
     const key = userMemoryKey(this.owners.get(id));
     if (key !== undefined) this.keeper.noteTurn(key, id, last);
   }
@@ -259,6 +274,148 @@ export class DurableHost {
         .then((wait) => wait()).catch(() => { /* The public feed records settlement failures. */ });
     }
     return { status: "admitted", duplicate };
+  }
+
+  async submitWebhook(input: WebhookInput): Promise<WebhookAdmission> {
+    const key = webhookDeliveryKey(input.name, input.deliveryId ?? input.requestId);
+    const child = await this.admitChild({
+      key, owner: input.owner, kind: "webhook", name: input.name, text: input.text, deliveryId: input.deliveryId,
+    });
+    if (!child) return { status: "admitted", duplicate: true };
+    void this.waitForChild(child.conversation, child.submission, input.owner).catch(() => { /* Failures are digested. */ });
+    return { status: "admitted", duplicate: child.duplicate };
+  }
+
+  async runJobTick(input: JobTickInput): Promise<JobTickResult> {
+    const key = `job:${input.jobId}:${input.tickTime}`;
+    input.signal.throwIfAborted();
+    input.onAdmitted?.(key);
+    const admitted = await this.admitChild({
+      key, owner: input.owner, kind: "job", name: input.jobName, text: input.prompt, signal: input.signal,
+    });
+    if (!admitted) throw new Error("Durable tick belongs to another owner.");
+    const { conversation, submission } = admitted;
+    let aborting: Promise<void> | undefined;
+    const abort = () => {
+      aborting ??= abortWithoutFallback(conversation);
+      void aborting.catch(() => { /* Settlement or shutdown owns the caller's result. */ });
+    };
+    input.signal.addEventListener("abort", abort, { once: true });
+    if (input.signal.aborted) abort();
+    try {
+      const result = await this.waitForChild(conversation, submission, input.owner);
+      input.signal.throwIfAborted();
+      if (result.meta.aborted) throw new Error("Durable tick was stopped.");
+      return { status: "done", result };
+    } finally {
+      input.signal.removeEventListener("abort", abort);
+      await aborting?.catch(() => { /* The tick already reported its settlement. */ });
+    }
+  }
+
+  private async admitChild({ key, owner, kind, name, text, deliveryId, signal }: ChildAdmission) {
+    signal?.throwIfAborted();
+    const child = await this.harness.commit(async (tx) => {
+      const map = await tx.doc(MainMap);
+      map.children ??= {};
+      const children = map.children;
+      if (children[key]) return { ...children[key] };
+      const { id } = await tx.createConversation({ ownership: { kind: "ownerless" } });
+      return children[key] = { id, owner, kind, name };
+    }, context);
+    if (child.owner !== owner) return;
+    const { id } = child;
+    this.owners.set(id, owner);
+    this.childKeys.set(id, key);
+    await this.registerProviderSession(id);
+    const conversation = await this.harness.conversation(id, context);
+    if (!conversation) throw new Error("Could not open Durable background conversation.");
+
+    const { submissionId, duplicate } = await this.mutateConversation(id, async () => {
+      const existing = await conversation.commit((tx) => tx.submissionByRequest(id, key), context);
+      if (existing) return { submissionId: existing.id, duplicate: true };
+      const { change, primary, fallback } = await this.configureFor(id);
+      signal?.throwIfAborted();
+      const seedKey = key + ":seed";
+      if (!await conversation.commit((tx) => tx.submissionByRequest(id, seedKey), context)) {
+        const main = await this.mainFor(owner);
+        const transcript = main ? handoffTranscript((await this.feed.read(main)).records) : [];
+        const memory = await this.harness.snapshot(MemoryDoc, "user:" + owner, context);
+        const memoryText = memory && renderMemory(memory, COMPACTION_MEMORY_CHARS);
+        // At four characters per token, reserve at most a quarter of the smaller model ceiling for the handoff.
+        const maxChars = Math.min(...[primary, fallback].flatMap((ref) => {
+          const model = ref && this.models.getModel(ref.provider, ref.modelId);
+          return model ? [compactionInputCeiling(model.contextWindow, model.maxTokens)] : [];
+        }));
+        const seed = buildHandoff({ transcript, memory: memoryText ? { text: memoryText } : undefined, maxChars }).text;
+        // Durable accepts one submit per transaction. Persist the seed first and reuse it after a crash.
+        await conversation.submit({
+          type: "write", requestId: seedKey,
+          entry: { kind: ChildSeedEntry.kind, model: [{ role: "user", timestamp: Date.now(), content: seed }] },
+        }, context);
+      }
+      const timestamp = Date.now();
+      const submissionId = await conversation.commit(async (tx) => {
+        await configure(tx, id, change);
+        await setModelPolicy(tx, id, primary, fallback);
+        signal?.throwIfAborted();
+        return conversation.submit(tx, {
+          type: "input", requestId: key,
+          content: kind === "webhook" ? `[from ${name.replace(/[\r\n[\]]/g, " ")} via webhook]\n${text}` : text,
+          entry: { kind: ChildInputEntry.kind, data: { timestamp, surface: kind, name, owner, text, ...(deliveryId !== undefined && { deliveryId }) } },
+        });
+      }, context);
+      return { submissionId, duplicate: false };
+    });
+    const submission = await this.harness.submission(submissionId, context);
+    if (!submission) throw new Error("Could not find the admitted Durable background input.");
+    return { conversation, submission, duplicate };
+  }
+
+  private waitForChild(conversation: Conversation, submission: Submission, owner: string) {
+    let result = this.settlingChildren.get(conversation.id);
+    if (!result) {
+      result = this.attachSubmission(conversation, submission, owner, false).then((wait) => wait())
+        .finally(() => this.settlingChildren.delete(conversation.id));
+      this.settlingChildren.set(conversation.id, result);
+    }
+    return result;
+  }
+
+  private async writeChildDigest(id: ConversationId, status: "done" | "unanswered" | "aborted", answer?: string) {
+    const key = this.childKeys.get(id);
+    if (!key || this.waitingDigests.has(key)) return;
+    const child = (await this.harness.snapshot(MainMap, context))?.children?.[key];
+    if (!child) return;
+    await this.options.afterChildSettlement?.();
+    const main = await this.openMain(child.owner);
+    const label = status === "done" ? "completed" : status === "aborted" ? "stopped" : "failed";
+    const excerpt = answer ? oneLine(answer).slice(0, CHILD_DIGEST_CHARS) : "";
+    const text = oneLine(child.name) + " " + label + (excerpt ? ": " + excerpt : ".");
+    const writeIfIdle = () => main.commit(async (tx) => {
+      if (await tx.submissionByRequest(main.id, key)) return true;
+      // A model-visible write queued mid-run can enter the very next tool round.
+      if ((await tx.doc(LiveDoc, main.id)).run) return false;
+      const timestamp = Date.now();
+      await main.submit(tx, {
+        type: "write", requestId: key,
+        entry: {
+          kind: ChildDigestEntry.kind,
+          data: { timestamp, text, surface: child.kind, name: child.name, key, status },
+          model: [{ role: "user", timestamp, content: text }],
+        },
+      });
+      return true;
+    }, context);
+    if (await writeIfIdle() || this.waitingDigests.has(key)) return;
+    // The scheduler can deliver the tick even while a Main turn is still running.
+    // The persisted child settlement can reconstruct this pending digest after a restart.
+    this.waitingDigests.add(key);
+    void (async () => {
+      do { await main.waitForIdle(context); } while (!await writeIfIdle());
+    })().catch((error: unknown) => {
+      logError("Could not write Durable background digest", error, { agentId: this.agent.id });
+    }).finally(() => this.waitingDigests.delete(key));
   }
 
   async createThread(owner: string, options: { messageId?: string; title?: string; dashboardId?: string }) {
@@ -327,6 +484,8 @@ export class DurableHost {
   }
 
   private sessionRef(id: ConversationId) {
+    const childKey = this.childKeys.get(id);
+    if (childKey !== undefined) return childKey;
     const threadId = this.threadIds.get(id);
     return threadId === undefined ? DURABLE_MAIN_SESSION_ID : threadRef(threadId);
   }
@@ -541,7 +700,7 @@ export class DurableHost {
     const change: AgentChange = {
       model: { provider, modelId: agent.model.model },
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
-      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, this.memoryTools, ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
+      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...(principal.background ? [] : [this.memoryTools]), ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
       instructions: await durableInstructions(agent, config, principal, this.runtime, summary),
     };
     const fallback = agent.fallback_model;
@@ -597,6 +756,10 @@ export class DurableHost {
     for (const [key, id] of Object.entries(map?.conversations ?? {})) {
       this.owners.set(id as ConversationId, key.slice("main:".length));
     }
+    for (const [key, { id, owner }] of Object.entries(map?.children ?? {})) {
+      this.owners.set(id, owner);
+      this.childKeys.set(id, key);
+    }
     const threads = await this.harness.snapshot(ThreadMap, context);
     for (const [threadId, { conversationId, owner }] of Object.entries(threads?.threads ?? {})) {
       this.owners.set(conversationId, owner);
@@ -607,6 +770,7 @@ export class DurableHost {
     const configured = new Set<ConversationId>();
     for (const record of pending) {
       const user = this.owners.get(record.conversationId);
+      const child = this.childKeys.has(record.conversationId);
       const threadId = this.threadIds.get(record.conversationId);
       if (!user || (threadId !== undefined && threads?.threads[threadId]?.closed)) continue;
       const conversation = await this.harness.conversation(record.conversationId, context);
@@ -628,13 +792,13 @@ export class DurableHost {
         const run = (await this.harness.snapshot(LiveDoc, conversation.id, context))?.run;
         if (run) {
           const task = await this.harness.getTask(run.taskId, context);
-          if (task?.abortRequested && task.abortReason !== "restart") stopping.push({ conversation, user });
-        } else {
+          if (!child && task?.abortRequested && task.abortReason !== "restart") stopping.push({ conversation, user });
+        } else if (!child) {
           await this.continueKeptInputs(conversation, user);
         }
         configured.add(conversation.id);
       }
-      routes.push(await this.attachSubmission(conversation, submission, user, true));
+      if (!child) routes.push(await this.attachSubmission(conversation, submission, user, true));
     }
     this.harness.resume();
     for (const { conversation, user } of stopping) {
@@ -644,6 +808,24 @@ export class DurableHost {
       }).catch(() => { /* The persisted inbox can be recovered on the next open. */ });
     }
     for (const wait of routes) void wait().catch(() => { /* Settlement already notified the owning subscribers. */ });
+    void this.recoverChildDigests(map).catch((error: unknown) => {
+      logError("Could not recover Durable background digests", error, { agentId: this.agent.id });
+    });
+  }
+
+  private async recoverChildDigests(map: MainIdentityMap | undefined) {
+    for (const [key, child] of Object.entries(map?.children ?? {})) {
+      const main = map?.conversations[`main:${child.owner}`] as ConversationId | undefined;
+      const record = await this.harness.commit(async (tx) => {
+        if (main !== undefined && await tx.submissionByRequest(main, key)) return;
+        return tx.submissionByRequest(child.id, key);
+      }, context);
+      if (!record) continue;
+      const conversation = await this.harness.conversation(child.id, context);
+      const submission = await this.harness.submission(record.id, context);
+      if (!conversation || !submission) continue;
+      void this.waitForChild(conversation, submission, child.owner).catch(() => { /* Failures are digested. */ });
+    }
   }
 
   private async attachSubmission(
@@ -766,6 +948,7 @@ export class DurableHost {
     const original = await submission.wait(context);
     const result = await this.effectiveSettlement(conversation, original, true) ?? original;
     if (result.status === "unanswered") {
+      await this.writeChildDigest(conversation.id, result.reason === "aborted" ? "aborted" : "unanswered");
       if (result.reason === "aborted") {
         return { response: { payloads: [], meta: { durationMs: 0, sessionId: this.sessionRef(conversation.id), aborted: true } } };
       }
@@ -776,6 +959,7 @@ export class DurableHost {
     }
     const input = await conversation.commit((tx) => tx.entry(original.entry!), context);
     const answer = await this.publicAnswer(conversation, result.answer);
+    await this.writeChildDigest(conversation.id, "done", answer?.text ?? WITHHELD_REPLY);
     if (!answer) throw new Error(WITHHELD_REPLY);
     const { text } = answer;
     return {
@@ -785,7 +969,7 @@ export class DurableHost {
       response: {
         payloads: text ? [{ text }] : [],
         meta: {
-          durationMs: InputEntry.is(input) ? Math.max(0, answer.timestamp - input.data.timestamp) : 0,
+          durationMs: InputEntry.is(input) || ChildInputEntry.is(input) ? Math.max(0, answer.timestamp - input.data.timestamp) : 0,
           sessionId: this.sessionRef(conversation.id),
         },
       },

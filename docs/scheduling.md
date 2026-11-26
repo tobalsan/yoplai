@@ -16,6 +16,20 @@ Jobs live in `<agent-workspace>/cron/jobs.json`; output lives under `cron/output
 
 Jobs created by a signed-in user through chat or the web UI record that user as `ownerUserId` and default to `credentialMode: "owner"`. Owner mode uses the owner's personal connection when present, otherwise the team connection; a personal connection needing reconnection stops the run and reports which integration to reconnect. Team mode uses only team credentials. Existing jobs and jobs created from config or without a signed-in user default to team mode. The mode can be changed through scheduler tools or the web UI.
 
+## Durable mode
+
+When an eligible owner's job reaches the agent, the tick runs in a private
+`job:<job id>:<fire time in ms>` conversation seeded from the owner's Main.
+It uses the agent's configured model with background authority. Main gets one
+`<job name> · job` digest after settlement, including failed or stopped ticks.
+A retry for the same tick and gateway restart recovery reuse that digest.
+
+The scheduler still sends responses to configured delivery targets. The shared
+cron output omits the response and records run status and metadata, and the ledger links to the tick
+key. Device-required jobs, pinned sessions, ownerless team jobs on multi-user
+gateways, and jobs whose owner has Durable mode off use the existing path.
+Script-only runs and gates that skip the agent produce their usual output.
+
 ## CLI
 
 ```bash

@@ -34,7 +34,7 @@ export class WebhookPromptError extends Error {
 
 export type WebhookPromptVariables = {
   originUrl: string;
-  headers: Record<string, string>;
+  headers: Record<string, string> | string;
   payload: string;
   gateContext?: string;
 };
@@ -82,7 +82,7 @@ export function interpolateWebhookPrompt(
 ): string {
   const replacements: Record<string, string> = {
     $WEBHOOK_ORIGIN_URL: variables.originUrl,
-    $WEBHOOK_HEADERS: JSON.stringify(variables.headers),
+    $WEBHOOK_HEADERS: typeof variables.headers === "string" ? variables.headers : JSON.stringify(variables.headers),
     $WEBHOOK_PAYLOAD: variables.payload,
     $WEBHOOK_GATE_CONTEXT: variables.gateContext ?? "",
   };

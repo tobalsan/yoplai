@@ -32,6 +32,7 @@ type HandoffInput = {
   transcript: TranscriptEntry[];
   memory?: HandoffMemory;
   templates?: ToolLabelTemplates;
+  maxChars?: number;
 };
 
 export type HandoffBreakdown = {
@@ -49,13 +50,14 @@ function shorten(value: string, limit: number): string {
     : value.slice(0, Math.max(0, limit - 1)) + "…";
 }
 
-function memorySection(text = ""): string {
+function memorySection(text = "", maxChars = Infinity): string {
   if (!text) return "";
   const budget =
-    MEMORY_TOKENS * CHARS_PER_TOKEN - MEMORY_HEADER.length - SEPARATOR.length;
+    Math.min(MEMORY_TOKENS * CHARS_PER_TOKEN, maxChars) - MEMORY_HEADER.length - SEPARATOR.length;
   if (text.length <= budget) return MEMORY_HEADER + text;
   const marker = (removed: number) => `… [+${removed} chars]`;
   const keep = budget - marker(text.length).length;
+  if (keep <= 0) return "";
   return MEMORY_HEADER + text.slice(0, keep) + marker(text.length - keep);
 }
 
@@ -96,18 +98,20 @@ function renderEntry(
   return render(shorten(id, idLimit));
 }
 
-function selectRecent(transcript: TranscriptEntry[]) {
+function selectRecent(transcript: TranscriptEntry[], maxChars: number) {
   const messages: string[] = [];
   const carried = new Set<string>();
   let start = transcript.length;
-  const budget = RECENT_TOKENS * CHARS_PER_TOKEN - RECENT_HEADER.length;
+  const budget = Math.min(RECENT_TOKENS * CHARS_PER_TOKEN, maxChars) - RECENT_HEADER.length;
+  // Reserve room for both sides of the latest exchange on small models.
+  const cap = Math.min(FULL_MESSAGE_CAP, Math.max(0, Math.floor(budget / 2) - 128));
   let remaining = budget;
   for (let i = transcript.length - 1; i >= 0; i--) {
     const entry = transcript[i];
     if (carried.has(entry.id)) continue;
     const block = renderEntry(
       entry,
-      FULL_MESSAGE_CAP,
+      cap,
       budget - SEPARATOR.length
     );
     const cost = block.length + SEPARATOR.length;
@@ -302,7 +306,10 @@ export function buildHandoff(input: HandoffInput): {
   text: string;
   breakdown: HandoffBreakdown;
 } {
-  const recent = selectRecent(input.transcript);
+  const maxChars = input.maxChars ?? Infinity;
+  const memory = memorySection(input.memory?.text, Math.floor(maxChars / 4));
+  const recent = selectRecent(input.transcript, maxChars - memory.length - (memory ? SEPARATOR.length : 0));
+  const recentText = section(RECENT_HEADER, recent.messages);
   const omitted = input.transcript.slice(0, recent.start);
   const older = selectExcerpts(
     omitted,
@@ -314,10 +321,10 @@ export function buildHandoff(input: HandoffInput): {
   const sections: Array<
     [Exclude<keyof HandoffBreakdown, "totalTokens">, string]
   > = [
-    ["memoryTokens", memorySection(input.memory?.text)],
+    ["memoryTokens", memory],
     ["excerptTokens", section(OLDER_HEADER, older)],
     ["stepTokens", steps.text],
-    ["recentTokens", section(RECENT_HEADER, recent.messages)],
+    ["recentTokens", recentText],
     ["omissionTokens", omissionNotice(omitted, recent.carried, steps)],
   ];
   const breakdown: HandoffBreakdown = {
@@ -328,9 +335,15 @@ export function buildHandoff(input: HandoffInput): {
     recentTokens: 0,
     omissionTokens: 0,
   };
+  let optionalChars = maxChars - memory.length - recentText.length - (memory && recentText ? SEPARATOR.length : 0);
   let text = "";
   for (const [field, part] of sections) {
     if (!part) continue;
+    if (field !== "memoryTokens" && field !== "recentTokens") {
+      const cost = part.length + SEPARATOR.length;
+      if (cost > optionalChars) continue;
+      optionalChars -= cost;
+    }
     const block = text ? SEPARATOR + part : part;
     text += block;
     breakdown[field] = Math.ceil(block.length / CHARS_PER_TOKEN);

@@ -5,7 +5,7 @@ import {
 } from "@yoplai/shared";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { draftDigest } from "./review.js";
-import { FailureNoteEntry, InputEntry, type ReviewDecision } from "./state.js";
+import { ChildDigestEntry, FailureNoteEntry, InputEntry, type ReviewDecision } from "./state.js";
 
 type AssistantBlock =
   | { type: "text"; text: string }
@@ -29,7 +29,7 @@ type PublicToolCall = ToolCallBlock & { view?: McpAppViewReference };
 type PublicBlock = Exclude<ContentBlock, ToolCallBlock> | PublicToolCall;
 type ToolResult = { message: PublicResult; nested: Array<{ call: PublicToolCall; message: PublicResult }> };
 type PublicAssistant = Omit<Extract<FullHistoryMessage, { role: "assistant" }>, "content"> & { content: PublicBlock[] };
-type PublicRecord =
+export type PublicRecord =
   | { kind: "user"; id: string; sender: string; surface: NonNullable<Extract<FeedItem, { role: "user" }>["surface"]>; message: Extract<FullHistoryMessage, { role: "user" }> }
   | { kind: "failure"; id: string; message: PublicAssistant & { meta: { failure: NonNullable<ModelMeta["failure"]>; stopReason: "error" } } }
   | { kind: "assistant"; id: string; entryId: EntryId; message: PublicAssistant }
@@ -46,7 +46,7 @@ function failureRecord(id: EntryRecord["id"], timestamp: number, kind: RunFailur
 
 export function feedBoundary(entry: EntryRecord) {
   // Only boundaries that close the adjacent answer can end a window scan.
-  return InputEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
+  return InputEntry.is(entry) || ChildDigestEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
 }
 
 export function activeDurableContextUsage(entries: readonly EntryRecord[]): { inputTokens: number; model?: string } {
@@ -210,11 +210,11 @@ export function projectRecords(
     pending = undefined;
   };
   for (const entry of entries) {
-    if (InputEntry.is(entry)) {
+    if (InputEntry.is(entry) || ChildDigestEntry.is(entry)) {
       flush();
       anchor = undefined;
       const { data } = entry;
-      const sender = "sender" in data ? data.sender.name : data.actor.name;
+      const sender = "name" in data ? data.name : "sender" in data ? data.sender.name : data.actor.name;
       records.push({ kind: "user", id: "m_" + entry.id, sender, surface: data.surface ?? "web", message: {
         role: "user", timestamp: entry.data.timestamp, content: [{ type: "text", text: entry.data.text }],
       } });

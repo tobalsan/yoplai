@@ -10,7 +10,16 @@ type ChannelEntry = Pick<WebInput, "timestamp" | "text"> & {
   route: ChannelRoute;
 };
 
-export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
+export type BackgroundChild = {
+  id: ConversationId;
+  owner: string;
+  name: string;
+  kind: "job" | "webhook";
+};
+
+export type MainIdentityMap = { conversations: Record<string, number>; children?: Record<string, BackgroundChild> };
+
+export const MainMap = defineDoc<MainIdentityMap>({
   kind: "yoplai.main",
   version: 1,
   scope: "session",
@@ -19,6 +28,23 @@ export const MainMap = defineDoc<{ conversations: Record<string, number> }>({
 });
 
 export const InputEntry = defineEntry<WebInput | ChannelEntry>("yoplai.web-input");
+export const ChildSeedEntry = defineEntry("yoplai.child-seed");
+export const ChildInputEntry = defineEntry<{
+  timestamp: number;
+  text: string;
+  surface: BackgroundChild["kind"];
+  name: string;
+  owner: string;
+  deliveryId?: string;
+}>("yoplai.child-input");
+export const ChildDigestEntry = defineEntry<{
+  timestamp: number;
+  text: string;
+  surface: "job" | "webhook";
+  name: string;
+  key: string;
+  status: "done" | "unanswered" | "aborted";
+}>("yoplai.child-digest");
 export const FailureNoteEntry = defineEntry<{ submissionId: SubmissionId; kind: RunFailureKind; accessError?: string }>("yoplai.failure-note");
 
 export const AbortedRuns = defineDoc<{ byFirst: Record<string, number[]> }>({

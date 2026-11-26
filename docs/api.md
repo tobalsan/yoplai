@@ -270,7 +270,9 @@ When Durable mode applies, `/api/agents/:id/feed` exposes the caller's Main.
 IDs take the form `m_<entry id>` and remain stable across gateway restarts and
 context resets. An assistant item groups consecutive answer and tool rounds.
 
-User items carry a `sender` and a `surface` of `web`, `slack` or `mattermost`.
+User items carry a `sender` and a `surface` of `web`, `slack`, `mattermost`,
+`webhook`, or `job`. For webhook and job digests, `sender` is the route or job
+name. The digest is a passive entry. The child transcript has no feed route.
 Assistant items with channel delivery include `deliveries`, an array of
 `{ surface, state }` entries. A delivery is `pending` while queued or sending,
 `sent` after a channel receipt, or `uncertain` when the post could not be

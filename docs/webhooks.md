@@ -87,6 +87,24 @@ item; client-supplied owner ids are rejected. Both endpoints require permission
 to configure the agent's extensions; changing an owner-mode webhook (including
 `enabled`) also requires its owner.
 
+## Durable mode
+
+An eligible owner with Durable mode enabled gets a private child conversation
+for each delivery. The child starts with a handoff from the owner's Main and
+runs with background authority. Device tools are unavailable. Main receives
+one short `<route> · webhook` digest after the child settles and Main is idle.
+The child uses the agent's configured model and reasoning.
+
+The gateway checks `X-GitHub-Delivery`, `webhook-id`, and `Idempotency-Key` in
+that order. A stable ID deduplicates within the agent and route in Durable
+mode, including after restart. An eligible retry after a route changes hands
+stays with the original admission. Deliveries with no ID each get a fresh UUID. See the
+[GitHub docs](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header),
+[Standard Webhooks spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md#webhook-headers-sending-metadata-to-consumers),
+and [Probo docs](https://www.probo.com/docs/developers/api/webhooks/delivery-and-recovery#http-headers).
+Single-user gateways use the local owner. Multi-user team routes use the
+existing webhook session path. Owner-mode routes with no owner return 409.
+
 ## Prompts
 
 `prompt` can be inline text or workspace-relative `.md`/`.txt` file. Paths outside workspace are rejected.
@@ -98,7 +116,14 @@ Available interpolation:
 - `$WEBHOOK_PAYLOAD`
 - `$WEBHOOK_GATE_CONTEXT` — gate context serialized as JSON, or empty when absent
 
-Each request uses a fresh `webhook:<agentId>:<name>:<requestId>` session unless its gate returns a valid `sessionScope`. Langfuse uses `webhook` surface unless `langfuseTracing: false`.
+Legacy runs use a fresh `webhook:<agentId>:<name>:<requestId>` session unless
+the gate returns a valid `sessionScope`. Langfuse uses the `webhook` surface
+unless `langfuseTracing: false`.
+
+Durable prompts omit the URL secret and query string, as well as the
+authorization, cookie and provider signature headers. Interpolated payload,
+headers and gate context are clipped at 4,000, 1,000 and 1,000 characters,
+respectively. The gate still receives its usual input.
 
 ## Frontmatter
 
@@ -189,9 +214,10 @@ Gate failures **fail open**: missing files, spawn errors, non-zero exits,
 signals, and timeouts log an error with agent, webhook, reason and stderr tail,
 then run the agent with the per-request session and no abort. Empty or non-JSON
 output also wakes with no scope or abort. Gates are killed when the webhooks
-extension stops. The HTTP response stays immediate and unchanged:
-`{ ok, requestId }`; `requestId` and the gate's `WEBHOOK_REQUEST_ID` remain fresh
-UUIDs for every request, including scoped requests.
+extension stops. The HTTP response stays immediate and keeps the
+`{ ok, requestId }` shape. When the owner is eligible for Durable mode, a
+stable delivery header yields `webhook:<encoded route>:<encoded delivery id>`.
+Other deliveries return a fresh UUID. The gate's `WEBHOOK_REQUEST_ID` is always a fresh UUID.
 
 Invalid YAML, unknown keys, invalid values, or a script path escaping the
 workspace log an error naming the prompt file and do **not** run the agent.

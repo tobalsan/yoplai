@@ -293,6 +293,18 @@ describe("webhook prompt frontmatter", () => {
     });
   });
 
+  it("keeps failed Durable admissions out of legacy trace events", async () => {
+    const hook = fixture("Body=$WEBHOOK_PAYLOAD URL=$WEBHOOK_ORIGIN_URL", {}, { langfuseTracing: true });
+    hook.ctx.submitWebhookInput = vi.fn(async () => { throw new Error("admission unavailable"); });
+    const response = await hook.request("private payload");
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(hook.error).toHaveBeenCalledWith(
+      "[webhooks] sales/notion Durable admission failed", expect.any(Error),
+    ));
+    expect(hook.runAgent).not.toHaveBeenCalled();
+    expect(hook.emit).not.toHaveBeenCalled();
+  });
+
   it("reuses the gate scope while retaining fresh request ids and gate env", async () => {
     const hook = fixture("---\nscript: gate.sh\n---\nContext=$WEBHOOK_GATE_CONTEXT", {
       "gate.sh": `printf '{"sessionScope":" external:42 ","context":"%s"}\\n' "$WEBHOOK_REQUEST_ID"\n`,

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { webhookDeliveryKey } from "@yoplai/shared";
 import type {
   AgentConfig,
   ExtensionContext,
@@ -33,6 +34,15 @@ type WebhooksRuntime = {
 
 let runtime: WebhooksRuntime | null = null;
 export const WEBHOOK_SCRIPT_OWNER = "webhooks";
+const DURABLE_PAYLOAD_CHARS = 4_000;
+const DURABLE_HEADERS_CHARS = 1_000;
+const DURABLE_GATE_CONTEXT_CHARS = 1_000;
+const PRIVATE_HEADER = /^(?:authorization|proxy-authorization|cookie|x-hub-signature.*|x-notion-signature|x-zendesk-webhook-signature|webhook-signature)$/;
+const warnedOverrides = new Set<string>();
+
+function clip(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max)}[+${value.length - max} chars]`;
+}
 
 export function setWebhooksRuntime(next: WebhooksRuntime): void {
   setCachedWebhookSecrets(next.ctx.getDataDir(), next.secrets);
@@ -172,9 +182,11 @@ async function runWebhookAgent(params: {
   headers: Record<string, string>;
   payload: string;
   requestId: string;
+  deliveryId?: string;
   langfuseTracing: boolean;
   timestamp: string;
   ownerUserId?: string;
+  durableOwner?: string;
 }): Promise<void> {
   let sessionKey = `webhook:${params.agent.id}:${params.webhookName}:${params.requestId}`;
   const sessionOwner: [string?] = params.ownerUserId ? [params.ownerUserId] : [];
@@ -267,6 +279,36 @@ async function runWebhookAgent(params: {
         );
       }
     }
+    const owner = params.durableOwner;
+    if (owner && params.ctx.submitWebhookInput) {
+      try {
+        const { origin, pathname } = new URL(params.originUrl);
+        const headers = Object.fromEntries(Object.entries(params.headers).filter(([name]) => !PRIVATE_HEADER.test(name)));
+        const context = gateContext === undefined ? undefined : clip(gateContext, DURABLE_GATE_CONTEXT_CHARS);
+        let text = interpolateWebhookPrompt(prompt, {
+          originUrl: origin + pathname.slice(0, pathname.lastIndexOf("/")),
+          headers: clip(JSON.stringify(headers), DURABLE_HEADERS_CHARS),
+          payload: clip(params.payload, DURABLE_PAYLOAD_CHARS),
+          gateContext: context,
+        });
+        if (context !== undefined && !prompt.includes("$WEBHOOK_GATE_CONTEXT")) text += `\n\nGate context:\n${context}`;
+        const result = await params.ctx.submitWebhookInput({
+          agentId: params.agent.id, owner, name: params.webhookName,
+          requestId: params.requestId, deliveryId: params.deliveryId, text,
+        });
+        if (result.status === "admitted") {
+          if ((options.model || options.reasoning) && !warnedOverrides.has(params.agent.id)) {
+            warnedOverrides.add(params.agent.id);
+            params.ctx.logger.warn("[webhooks] model and reasoning overrides are ignored for Durable runs", { agentId: params.agent.id });
+          }
+          return;
+        }
+      } catch (err) {
+        params.ctx.logger.error(`[webhooks] ${params.agent.id}/${params.webhookName} Durable admission failed`, err);
+        return;
+      }
+    }
+
     message = interpolateWebhookPrompt(prompt, {
       originUrl: params.originUrl,
       headers: params.headers,
@@ -429,6 +471,10 @@ export function registerWebhookRoutes(app: Hono): void {
       return c.json({ error }, 409);
     }
 
+    const deliveryId = ["x-github-delivery", "webhook-id", "idempotency-key"].map((name) => headers[name]).find(Boolean);
+    const ownerUserId = webhookConfig.credentialMode === "owner" ? webhookConfig.ownerUserId : undefined;
+    const durableOwner = current.ctx.getConfig().extensions?.multiUser?.enabled ? ownerUserId : "local";
+    const stableAck = deliveryId && durableOwner && await current.ctx.canSubmitWebhookInput?.(agentId, durableOwner).catch(() => false);
     const originUrl = c.req.url;
     const timestamp = new Date().toISOString();
 
@@ -441,11 +487,13 @@ export function registerWebhookRoutes(app: Hono): void {
       headers,
       payload,
       requestId,
+      deliveryId,
       langfuseTracing: webhookConfig.langfuseTracing,
       timestamp,
-      ownerUserId: webhookConfig.credentialMode === "owner" ? webhookConfig.ownerUserId : undefined,
+      ownerUserId,
+      durableOwner,
     });
 
-    return c.json({ ok: true, requestId });
+    return c.json({ ok: true, requestId: stableAck && deliveryId ? webhookDeliveryKey(webhookName, deliveryId) : requestId });
   });
 }
