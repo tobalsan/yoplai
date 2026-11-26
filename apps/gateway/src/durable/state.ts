@@ -1,4 +1,4 @@
-import { defineDoc, defineEntry, type SubmissionId } from "@earendil-works/pi-durable";
+import { defineDoc, defineEntry, type ConversationId, type EntryId, type SubmissionId } from "@earendil-works/pi-durable";
 import type { ChannelActor, ChannelRoute, RunFailureKind } from "@yoplai/shared";
 import type { WebSender } from "./contract.js";
 
@@ -45,3 +45,28 @@ export const ReviewDoc = defineDoc<{
   initial: () => ({ byTask: {} }),
   checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
 });
+
+export type ThreadRecord = {
+  conversationId: ConversationId;
+  owner: string;
+  createdAt: number;
+  title?: string;
+  dashboardId?: string;
+  forkedAt?: EntryId;
+  forkedFrom?: string;
+  generation: number;
+  closed: boolean;
+  seeded?: boolean;
+  digestedGeneration?: number;
+};
+
+export const ThreadMap = defineDoc<{ threads: Record<string, ThreadRecord> }>({
+  kind: "yoplai.threads",
+  version: 1,
+  scope: "session",
+  initial: () => ({ threads: {} }),
+  checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
+});
+
+export const ThreadSeedEntry = defineEntry("yoplai.thread-seed");
+export const ThreadNoteEntry = defineEntry("yoplai.thread-note");

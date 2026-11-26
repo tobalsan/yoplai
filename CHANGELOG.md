@@ -11,6 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Create private Durable threads through the gateway API, either empty or forked from Main. Each thread has its own transcript and context budget. Closing archives it and records a digest. Reopen it or look it up with `session_history`.
 - Add an opt-in Durable Main compaction eval to compare recall, tool side effects, and cache usage against a no-cut baseline, with a free Faux projection.
 - Browse Durable Main in the web chat with Cmd+K message search, message links, two-way paging, Jump to latest, and context compaction markers.
 

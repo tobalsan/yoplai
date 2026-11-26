@@ -217,13 +217,13 @@ export const sessionHistoryExtension: Extension = {
       {
         name: "session_history",
         description:
-          "Look up conversation history (read-only). In Durable, list your own Main, search/read across context cuts, and use m_<n> message IDs. In legacy sessions, use numeric #idx anchors. A legacy chat project also includes its agents' sessions under agent/session. action=list: recent conversations. action=search: required case-insensitive substring query (filters: role, since, until, session, limit, and tool in legacy). action=read: required session in legacy. In Durable, session defaults to the current conversation. Condense with from/to or around+n and role. Use full to expand one message. Follow more: lines to continue.",
+          "Look up conversation history (read-only). In Durable, list your own Main and open or closed threads, search/read across context cuts, and use m_<n> message IDs. In legacy sessions, use numeric #idx anchors. A legacy chat project also includes its agents' sessions under agent/session. action=list: recent conversations. action=search: required case-insensitive substring query (filters: role, since, until, session, limit, and tool in legacy). action=read: required session in legacy. In Durable, session defaults to the current conversation. Condense with from/to or around+n and role. Use full to expand one message. Follow more: lines to continue.",
         parameters: {
           type: "object",
           properties: {
             action: { type: "string", enum: ["list", "search", "read"] },
             query: { type: "string", description: "search: REQUIRED substring to find" },
-            session: { type: "string", description: "read: defaults to current in Durable, required in legacy. search: optional session id" },
+            session: { type: "string", description: "Durable uses durable-main or thread:<id>, and read defaults to the current conversation. A session ID is required for legacy read. Search accepts an optional conversation reference." },
             role: { type: "string", enum: ["user", "assistant", "system"] },
             tool: { type: "string", description: "search in legacy: only messages calling this tool" },
             since: { type: "string", description: "ISO date lower bound" },

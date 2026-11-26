@@ -433,7 +433,7 @@ export class WsBroker {
         }
         if ("stop" in parsed) {
           const host = await this.options.durableWeb.host(agent);
-          const result = await host.stopMain(authContext?.session.userId ?? "local");
+          const result = await host.stop(authContext?.session.userId ?? "local");
           if ("forbidden" in result) this.send(ws, { type: "error", message: "Forbidden" });
           else this.send(ws, { type: "done", meta: { durationMs: 0, stopStatus: result.status } });
           return;

@@ -17,6 +17,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
+import { z } from "zod";
 import { resolveDefaultProjectManager, resolveHomeDir } from "@yoplai/shared";
 import { eligibleMainAgents } from "@yoplai/shared/main-agent";
 import { readMcpServerSources } from "../capabilities/catalog.js";
@@ -77,7 +78,8 @@ import {
   getMediaFileMetadata,
   resolveMediaFilePath,
 } from "../media/metadata.js";
-import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain, ThreadError } from "../durable/contract.js";
+import type { DurableHost } from "../durable/host.js";
 import type { DurableWeb } from "../durable/web.js";
 import type { OpsMetrics } from "./ops-metrics.js";
 import { normalizeRunRequest } from "./run-request.js";
@@ -1544,12 +1546,17 @@ api.post("/agents/:id/messages", async (c) => {
     const body = await c.req.json();
     const authContext = await getRequestAuthContext(c);
     const stop = isDurableStopCommand(body?.message);
-    if ((stop || body?.clientSendId !== undefined) && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), body.sessionId)) {
-      const parsed = parseDurableWebSend(body);
-      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-      if ("stop" in parsed) return await stopDurableMain(c, agent, authContext?.session.userId);
-      const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
-      return c.json(await host.submitWeb(durableWebSender(authContext), parsed.input));
+    const threadId = typeof body?.sessionId === "string" && body.sessionId.startsWith("thread:") ? body.sessionId.slice("thread:".length) : undefined;
+    if (threadId !== undefined || stop || body?.clientSendId !== undefined) {
+      const durable = await durableModeFor(authContext?.session.userId, agent);
+      if (threadId !== undefined && !durable) return c.json({ error: "Agent not found" }, 404);
+      if (threadId !== undefined || targetsDurableMain(durable, body.sessionId)) {
+        const parsed = parseDurableWebSend(body);
+        if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+        const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+        if ("stop" in parsed) return await stopDurable(c, host, authContext?.session.userId ?? "local", undefined, threadId);
+        return c.json(await host.submitWeb(durableWebSender(authContext), { ...parsed.input, threadId }));
+      }
     }
     const normalized = await normalizeRunRequest({
       agent,
@@ -1569,6 +1576,7 @@ api.post("/agents/:id/messages", async (c) => {
     const result = await runAgent(normalized.params);
     return c.json(result);
   } catch (err) {
+    if (err instanceof ThreadError) return c.json({ error: err.message }, err.status);
     return c.json(
       { error: err instanceof Error ? err.message : String(err) },
       500
@@ -1625,34 +1633,76 @@ api.post("/agents/:id/compact", async (c) => {
   }
 });
 
-api.post("/agents/:id/stop", async (c) => {
-  const agent = getAgent(c.req.param("id"));
+async function durableRoute(c: Context, action: (open: () => Promise<DurableHost>, principal: string) => Promise<Response>) {
+  const agent = getAgent(c.req.param("id") ?? "");
   const userId = await getRequestUserId(c);
   if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
+  const open = () => (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
+  try {
+    return await action(open, userId ?? "local");
+  } catch (error) {
+    if (error instanceof ThreadError) return c.json({ error: error.message }, error.status);
+    throw error;
+  }
+}
+
+const createThreadBody = z.object({
+  messageId: z.string().optional(),
+  title: z.string().optional(),
+  dashboardId: z.string().min(1).max(128).optional(),
+});
+
+api.get("/agents/:id/threads", (c) => durableRoute(c, async (open, principal) =>
+  c.json(await (await open()).listThreads(principal))));
+
+api.post("/agents/:id/threads", (c) => durableRoute(c, async (open, principal) => {
   const text = await c.req.text();
-  let body: { runId?: unknown };
+  let raw: unknown;
+  try {
+    raw = text ? JSON.parse(text) : {};
+  } catch {
+    return c.json({ error: "Invalid thread request" }, 400);
+  }
+  const body = createThreadBody.safeParse(raw);
+  if (!body.success) return c.json({ error: "Invalid thread request" }, 400);
+  return c.json(await (await open()).createThread(principal, body.data), 201);
+}));
+
+api.post("/agents/:id/threads/:threadId/close", (c) => durableRoute(c, async (open, principal) => {
+  const body = await c.req.json().catch(() => undefined);
+  if (!Number.isSafeInteger(body?.generation) || body.generation < 1) {
+    return c.json({ error: "Supply a positive integer generation" }, 400);
+  }
+  return c.json(await (await open()).closeThread(principal, c.req.param("threadId"), body.generation));
+}));
+
+api.post("/agents/:id/threads/:threadId/reopen", (c) => durableRoute(c, async (open, principal) =>
+  c.json(await (await open()).reopenThread(principal, c.req.param("threadId")))));
+
+api.post("/agents/:id/stop", (c) => durableRoute(c, async (open, principal) => {
+  const text = await c.req.text();
+  let body: { runId?: unknown; threadId?: unknown };
   try {
     body = text ? JSON.parse(text) : {};
     if (!body || typeof body !== "object" || Array.isArray(body) ||
         (body.runId !== undefined && (typeof body.runId !== "string" || !body.runId))) {
       return c.json({ error: "Supply a valid runId or omit it" }, 400);
     }
+    if (body.threadId !== undefined && (typeof body.threadId !== "string" || !body.threadId)) {
+      return c.json({ error: "Supply a valid threadId or omit it" }, 400);
+    }
   } catch {
     return c.json({ error: "Invalid stop request" }, 400);
   }
-  return stopDurableMain(c, agent, userId, typeof body.runId === "string" ? body.runId : undefined);
-});
+  return stopDurable(c, await open(), principal, typeof body.runId === "string" ? body.runId : undefined, body.threadId);
+}));
 
-async function stopDurableMain(c: Context, agent: AgentConfig, userId?: string, runId?: string) {
-  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
-  const result = await host.stopMain(userId ?? "local", runId);
+async function stopDurable(c: Context, host: DurableHost, principal: string, runId?: string, threadId?: string) {
+  const result = await host.stop(principal, runId, threadId);
   return "forbidden" in result ? c.json({ error: "Agent access denied" }, 403) : c.json(result);
 }
 
-api.get("/agents/:id/feed", async (c) => {
-  const agent = getAgent(c.req.param("id"));
-  const userId = await getRequestUserId(c);
-  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
+api.get("/agents/:id/feed", (c) => durableRoute(c, async (open, principal) => {
   const limit = Number(c.req.query("limit") ?? 50);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
     return c.json({ error: "Feed limit must be between 1 and 200" }, 400);
@@ -1660,37 +1710,25 @@ api.get("/agents/:id/feed", async (c) => {
   const selectors = (["before", "after", "around"] as const).flatMap((direction) =>
     (c.req.queries(direction) ?? []).map((id) => ({ direction, id })));
   if (selectors.length > 1) return c.json({ error: "Use a single feed selector" }, 400);
-  const principal = userId ?? "local";
-  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
-  const result = await host.feedWindow(principal, principal, limit, selectors[0]);
+  const result = await (await open()).feedWindow(principal, principal, limit, selectors[0], c.req.query("thread"));
   if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
   return result.window ? c.json(result.window) : c.json({ error: "Message not found" }, 404);
-});
+}));
 
-api.get("/agents/:id/feed/search", async (c) => {
-  const agent = getAgent(c.req.param("id"));
-  const userId = await getRequestUserId(c);
-  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
+api.get("/agents/:id/feed/search", (c) => durableRoute(c, async (open, principal) => {
   const limit = Number(c.req.query("limit") ?? 20);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     return c.json({ error: "Search limit must be between 1 and 50" }, 400);
   }
-  const principal = userId ?? "local";
-  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
-  const result = await host.feedSearch(principal, principal, c.req.query("q") ?? "", limit);
+  const result = await (await open()).feedSearch(principal, principal, c.req.query("q") ?? "", limit, c.req.query("thread"));
   return result.forbidden ? c.json({ error: "Agent access denied" }, 403) : c.json({ hits: result.hits });
-});
+}));
 
-api.get("/agents/:id/feed/messages/:messageId", async (c) => {
-  const agent = getAgent(c.req.param("id"));
-  const userId = await getRequestUserId(c);
-  if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
-  const principal = userId ?? "local";
-  const host = await (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
-  const result = await host.feedDetail(principal, principal, c.req.param("messageId"));
+api.get("/agents/:id/feed/messages/:messageId", (c) => durableRoute(c, async (open, principal) => {
+  const result = await (await open()).feedDetail(principal, principal, c.req.param("messageId"), c.req.query("thread"));
   if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
   return result.detail ? c.json(result.detail) : c.json({ error: "Message not found" }, 404);
-});
+}));
 
 // GET /api/agents/:id/history - get session history
 // Query params: sessionId OR sessionKey (default "main"), view ("simple" | "full", default "simple")

@@ -7,7 +7,7 @@ import { getAgent, loadConfig } from "../config/index.js";
 import { logWarn } from "../logging.js";
 import { MaintenanceCompletion, type MaintenanceOutcome } from "../maintenance/completion.js";
 import type { DurableFeed } from "./feed.js";
-import { applyKeeperResult, emptyMemory, MemoryDoc } from "./memory.js";
+import { applyKeeperResult, emptyMemory, keepThreadDigests, MemoryDoc } from "./memory.js";
 
 const IDLE_MS = 30_000;
 const TURN_THRESHOLD = 5;
@@ -265,7 +265,7 @@ export class MemoryKeeper {
         await this.harness.commit(async (tx) => {
           const doc = await tx.doc(MemoryDoc, key, null);
           this.stop.signal.throwIfAborted();
-          doc.topics = update.topics;
+          doc.topics = keepThreadDigests(update.topics, doc.topics);
           doc.drift = update.drift;
           doc.through = through;
         }, this.context);

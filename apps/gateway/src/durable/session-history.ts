@@ -3,16 +3,19 @@ import type { FeedItem } from "@yoplai/shared";
 import { DEFAULT_OUTPUT_BUDGET, DEFAULT_TEXT_LIMIT, formatTime, FULL_MESSAGE_CAP, truncateMessageText } from "../history/condense.js";
 import { day, parseDate, SessionHistoryArgsSchema } from "../session-history/arguments.js";
 import { feedDetail, feedItems, isFeedMessage, searchFeedMessages } from "./feed-projection.js";
+import type { ThreadRecord } from "./state.js";
+import { describeThread, firstLine, threadMessages } from "./threads.js";
 import { entryId, type DurableFeed } from "./feed.js";
 
 const CURRENT_NOTE =
   "[current conversation — older messages may have been cut out of your context; every message can be read here]";
 const CURRENT_MARK = " ★ CURRENT CONVERSATION";
 
-type ReadableConversation = {
+export type ReadableConversation = {
   ref: string;
   current: boolean;
-  read: () => ReturnType<DurableFeed["read"]>;
+  thread?: { id: string; record: ThreadRecord };
+  read: () => Promise<Pick<Awaited<ReturnType<DurableFeed["read"]>>, "records">>;
 };
 
 const messageId = z.string()
@@ -48,30 +51,49 @@ export async function durableSessionHistory(raw: unknown, audience: ReadableConv
   }
   if (args.action === "search") {
     if (args.tool) return invalidResult("The tool filter is unavailable in Durable conversations.");
-    if (!args.query) return invalidResult("search requires `query`");
+    const query = args.query;
+    if (!query) return invalidResult("search requires `query`");
     const limit = args.limit ?? 15;
-    const lines: string[] = [];
-    let remaining = limit;
-    for (const { ref, current, read } of scoped) {
-      const messages = feedItems((await read()).records).filter(isFeedMessage).filter(({ role, timestamp }) =>
+    const byConversation = await Promise.all(scoped.map(async ({ ref, current, thread, read }) => {
+      const items = feedItems((await read()).records);
+      const messages = thread && scoped.length > 1 ? threadMessages(thread.record, items) : items.filter(isFeedMessage);
+      const matching = messages.filter(({ role, timestamp }) =>
         (!args.role || role === args.role) && timestamp >= since && timestamp <= until);
-      const hits = searchFeedMessages(messages, args.query, remaining);
-      if (!hits.length && !current) continue;
-      lines.push(`conversation ${ref}${current ? CURRENT_MARK : ""}`);
-      if (current) lines.push(CURRENT_NOTE);
-      lines.push(...hits.map(({ id, role, timestamp, snippet }) =>
-        `[${id}] ${role === "assistant" ? "asst" : role} ${day(timestamp)}  ${snippet}`));
-      remaining -= hits.length;
-      if (!remaining) break;
+      return searchFeedMessages(matching, query, Infinity).map((hit) => ({ ref, current, hit }));
+    }));
+    const hits = byConversation.flat().sort((a, b) =>
+      b.hit.timestamp - a.hit.timestamp || (entryId(b.hit.id) ?? 0) - (entryId(a.hit.id) ?? 0));
+    const lines: string[] = [];
+    let previous: string | undefined;
+    for (const { ref, current, hit: { id, role, timestamp, snippet } } of hits.slice(0, limit)) {
+      if (previous !== ref) {
+        lines.push(`conversation ${ref}${current ? CURRENT_MARK : ""}`);
+        if (current) lines.push(CURRENT_NOTE);
+        previous = ref;
+      }
+      lines.push(`[${id}] ${role === "assistant" ? "asst" : role} ${day(timestamp)}  ${snippet}`);
     }
-    if (remaining === limit) lines.push("no matches");
-    if (!remaining) lines.push(`more: results capped at limit=${limit}; narrow the query or raise limit`);
+    if (!hits.length) {
+      const current = scoped.find((conversation) => conversation.current);
+      if (current) lines.push(`conversation ${current.ref}${CURRENT_MARK}`, CURRENT_NOTE);
+      lines.push("no matches");
+    }
+    if (hits.length >= limit) lines.push(`more: results capped at limit=${limit}; narrow the query or raise limit`);
     return lines.join("\n");
   }
   const offset = Math.max(0, Number.parseInt(args.cursor ?? "", 10) || 0);
   const limit = args.limit ?? 10;
-  const rows = await Promise.all(scoped.map(async ({ ref, current, read }) => {
-    const messages = feedItems((await read()).records).filter(isFeedMessage);
+  const rows = await Promise.all(scoped.map(async ({ ref, current, thread, read }) => {
+    const items = feedItems((await read()).records);
+    if (thread) {
+      const { title, lastActivityAt, closed } = describeThread(thread.id, thread.record, items);
+      const count = threadMessages(thread.record, items).length;
+      return {
+        activity: lastActivityAt,
+        line: `${ref} · ${day(lastActivityAt)} · ${count} msgs · ${firstLine(title, 80)}${closed ? " · closed" : ""}${current ? CURRENT_MARK : ""}`,
+      };
+    }
+    const messages = items.filter(isFeedMessage);
     const activity = messages.reduce((latest, { timestamp }) => Math.max(latest, timestamp), 0);
     const title = messages.find(({ role }) => role === "user")?.text.trim().split(/\r?\n/, 1)[0] ?? "";
     const clipped = title.length > 80 ? title.slice(0, 80) + "…" : title;

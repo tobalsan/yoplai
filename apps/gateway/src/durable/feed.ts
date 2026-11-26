@@ -1,7 +1,8 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { AgentDoc, LiveDoc, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedWindow } from "@yoplai/shared";
-import { activeDurableContextUsage, feedBoundary, feedItems, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
+import { activeDurableContextUsage, feedBoundary, feedItems, isFeedMessage, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
+import { ThreadError } from "./contract.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
 import type { DeliveryQueue } from "./outbox.js";
 
@@ -177,7 +178,39 @@ export class DurableFeed {
         if (entry.id !== window.id || entries.at(-1)?.id !== window.id) entries.push(entry);
       }
     }
-    return { ...await this.project(conversation, entries, observation?.selected), contextUsage: activeDurableContextUsage(entries) };
+    return { ...await this.project(conversation, entries, observation?.selected), entries, contextUsage: activeDurableContextUsage(entries) };
+  }
+
+  async forkPoint(conversation: Conversation, messageId: string) {
+    const id = entryId(messageId);
+    if (id === undefined) return;
+    const observed = await this.observe(conversation);
+    const { records, entries } = await this.read(conversation, { id, limit: 1 }, observed);
+    const items = feedItems(records);
+    const index = items.findIndex((item) => item.id === messageId && isFeedMessage(item));
+    if (index < 0) return;
+    if (items[index]?.role === "user") return id;
+
+    const { run } = observed.live ?? {};
+    if (run && !run.afterRun && run.first !== undefined && id >= run.first) {
+      throw new ThreadError(409, "Message is still running");
+    }
+
+    let last = id;
+    let interrupted = false;
+    for (const entry of entries) {
+      if (entry.id < id) continue;
+      if (feedBoundary(entry)) break;
+      if (AssistantEntry.is(entry)) {
+        if (interrupted) break;
+        last = entry.id;
+      } else if (ToolResultEntry.is(entry)) {
+        // An interruption splits public answers after the whole tool round.
+        interrupted ||= entry.data?.diagnostics?.some(({ code }) => code === "interrupted") ?? false;
+        last = entry.id;
+      }
+    }
+    return last;
   }
 
   async window(conversation: Conversation, limit: number, selector?: FeedSelector, observation?: FeedObservation): Promise<FeedWindow | undefined> {

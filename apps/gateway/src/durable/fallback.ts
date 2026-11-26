@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { classifyRunFailure, getProviderErrorCategory, isFallbackEligibleError, isReplayableFailedTurn, isSafetyRefusal, type AgentConfig, type ModelSource } from "@yoplai/shared";
 import { logWarn } from "../logging.js";
-import { InputEntry } from "./state.js";
+import { InputEntry, ThreadMap } from "./state.js";
 
 type Attempt = {
   submissionId: SubmissionId;
@@ -75,12 +75,13 @@ export async function originalFallbackInput(harness: Harness, conversation: Conv
   return state?.attempts[id]?.inputs[0];
 }
 
-export async function reserveFallback(conversation: Conversation, id: SubmissionId): Promise<SubmissionId | undefined> {
+export async function reserveFallback(conversation: Conversation, id: SubmissionId, threadId?: string): Promise<SubmissionId | undefined> {
   const last = (await conversation.entries({ order: "descending" }, 1, undefined, context)).items[0];
   return conversation.commit(async (tx) => {
     const state = await tx.doc(FallbackDoc, conversation.id);
     const existing = Object.values(state.attempts).find(({ inputs }) => inputs.includes(id));
     if (existing) return existing.submissionId;
+    if (threadId !== undefined && (await tx.doc(ThreadMap)).threads[threadId]?.closed) return;
     const live = await tx.doc(LiveDoc, conversation.id);
     const failed = live.runFailure;
     const error = failed?.detail;
@@ -105,8 +106,8 @@ export async function reserveFallback(conversation: Conversation, id: Submission
   }, context);
 }
 
-export async function settleFallback(harness: Harness, conversation: Conversation, id: SubmissionId, agentId: string, wait: boolean): Promise<SettledSubmissionRecord | "waiting" | undefined> {
-  const fallbackId = await reserveFallback(conversation, id);
+export async function settleFallback(harness: Harness, conversation: Conversation, id: SubmissionId, agentId: string, wait: boolean, threadId?: string): Promise<SettledSubmissionRecord | "waiting" | undefined> {
+  const fallbackId = await reserveFallback(conversation, id, threadId);
   if (fallbackId === undefined) return;
   const submission = await harness.submission(fallbackId, context);
   if (!submission) throw new Error("Could not find the Durable fallback.");
