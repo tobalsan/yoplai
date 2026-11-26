@@ -51,7 +51,7 @@ const change = z.object({ note, refs: z.array(z.string()).default([]) });
 const keeperResult = z.object({
   topics: z.array(z.union([
     change.extend({ id: z.string().min(1), kind: topicKind.optional(), title: note.optional(), resolved: z.boolean().optional() }),
-    change.extend({ id: z.undefined(), kind: topicKind, title: note, resolved: z.undefined() }),
+    change.extend({ id: z.undefined(), kind: topicKind, title: note, resolved: z.boolean().optional() }),
   ])),
   drift: z.array(change).default([]),
 });
