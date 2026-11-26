@@ -18,6 +18,16 @@ export type MaintenanceCompletionParams = {
   maxTokens: number;
   timeoutMs: number;
   onLength?: (text: string) => string;
+  /** Called once per completion, so callers can log why `null` came back. */
+  onOutcome?: (outcome: MaintenanceOutcome) => void;
+};
+
+export type MaintenanceOutcome = {
+  /** Set on failure: the same message the maintenance warning carries. */
+  error?: string;
+  /** The model's stop reason, when a response arrived. */
+  stopReason?: string;
+  elapsedMs: number;
 };
 
 type MaintenanceCompletionDeps = {
@@ -109,6 +119,7 @@ export async function completeMaintenance(
   const activeDeps = { ...testDeps, ...deps };
   let ref = "agent-model";
   let phase = "start";
+  let stopReason: string | undefined;
   const startedAt = Date.now();
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -163,6 +174,7 @@ export async function completeMaintenance(
         }
       );
       activeDeps.onUsage?.(response.usage);
+      stopReason = response.stopReason;
       if (response.stopReason === "error") {
         throw new Error(response.errorMessage ?? "Maintenance completion failed");
       }
@@ -171,9 +183,12 @@ export async function completeMaintenance(
       phase = "done";
       return response.stopReason === "length" && params.onLength ? params.onLength(text) : text;
     })();
-    return await Promise.race([run, timedOut]);
+    const text = await Promise.race([run, timedOut]);
+    params.onOutcome?.({ stopReason, elapsedMs: Date.now() - startedAt });
+    return text;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    params.onOutcome?.({ error: message, stopReason, elapsedMs: Date.now() - startedAt });
     warnOnce(
       `${ref}:${message}`,
       "[maintenance] completion failed",

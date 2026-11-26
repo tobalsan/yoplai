@@ -138,6 +138,45 @@ it("warns on null, invalid and thrown responses and retries the same public mess
   }
 }, 20_000);
 
+it("logs why the keeper failed, with a bounded reply excerpt and no transcript", async () => {
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const fenced = "```json\n" + JSON.stringify({ topics: [{ kind: "open", title: "Orchard", note: "apiKey=fixture-secret " + "pear ".repeat(100) }] }) + "\n```";
+  const complete = vi.spyOn(MaintenanceCompletion, "complete")
+    .mockResolvedValueOnce(fenced)
+    .mockResolvedValueOnce('{"topics":[{"title":"Orchard"}]}')
+    .mockImplementationOnce(async ({ onOutcome }) => {
+      onOutcome?.({ error: "Maintenance completion timed out after 20000ms", elapsedMs: 20_003 });
+      return null;
+    })
+    .mockImplementationOnce(async ({ onOutcome }) => {
+      onOutcome?.({ error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: 9 });
+      return null;
+    })
+    .mockResolvedValue('{"topics":[]}');
+  const warn = vi.spyOn(await import("../logging.js"), "logWarn");
+  const failures = () => warn.mock.calls.filter(([message]) => message === "Durable memory keeper failed").map(([, fields]) => fields);
+  try {
+    for (let index = 0; index < 4; index++) {
+      gateway.script("Report checked.");
+      expect((await gateway.send("local", "Unlogged orchard transcript " + index, { clientSendId: "reason-" + index })).status).toBe(200);
+      await vi.waitFor(() => expect(failures()).toHaveLength(index + 1));
+    }
+    expect(failures()).toEqual([
+      expect.objectContaining({ phase: "result", error: expect.stringContaining("is not valid JSON"), replyChars: fenced.length, reply: fenced.slice(0, 200) }),
+      expect.objectContaining({ phase: "result", error: expect.stringContaining("topics"), reply: '{"topics":[{"title":"Orchard"}]}' }),
+      { agentId: "pilot", conversationId: expect.any(Number), phase: "completion", error: "Maintenance completion timed out after 20000ms", stopReason: undefined, elapsedMs: 20_003 },
+      { agentId: "pilot", conversationId: expect.any(Number), phase: "completion", error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: 9 },
+    ]);
+    for (const fields of failures()) expect((fields?.error as string).length).toBeLessThanOrEqual(300);
+    expect(JSON.stringify(failures())).not.toContain("Unlogged orchard transcript");
+  } finally {
+    await gateway.close();
+    warn.mockRestore();
+    complete.mockRestore();
+  }
+}, 20_000);
+
 it("catches up in order when maintenance recovers with a limited input budget", async () => {
   const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");

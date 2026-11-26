@@ -152,6 +152,33 @@ describe("completeMaintenance", () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it("reports the failure reason and stop reason of each completion", async () => {
+    const modelRuntime = runtime();
+    const deps = {
+      getConfig: () => config({ provider: "maintenance-provider", model: "maintenance-model" }),
+      getAgent: () => agent,
+      createRuntime: async () => modelRuntime as never,
+      warn: vi.fn(),
+    };
+    const onOutcome = vi.fn();
+    const refusal = { stopReason: "error", errorMessage: "The model refused", content: [] };
+
+    // The warning is logged once per message; the outcome reaches the caller every time.
+    for (const response of [refusal, refusal, { stopReason: "length", content: [] }, { stopReason: "length", content: [{ type: "text", text: "{" }] }]) {
+      await completeMaintenance({ ...params(), onOutcome }, { ...deps, completeSimple: async () => response as never });
+    }
+    await completeMaintenance({ ...params(), timeoutMs: 1, onOutcome }, { ...deps, completeSimple: () => new Promise<never>(() => {}) });
+
+    expect(deps.warn).toHaveBeenCalledTimes(3);
+    expect(onOutcome.mock.calls.map(([outcome]) => outcome)).toEqual([
+      { error: "The model refused", stopReason: "error", elapsedMs: expect.any(Number) },
+      { error: "The model refused", stopReason: "error", elapsedMs: expect.any(Number) },
+      { error: "Maintenance completion returned no text", stopReason: "length", elapsedMs: expect.any(Number) },
+      { stopReason: "length", elapsedMs: expect.any(Number) },
+      { error: "Maintenance completion timed out after 1ms", stopReason: undefined, elapsedMs: expect.any(Number) },
+    ]);
+  });
+
   it("times out while the model runtime is still initializing", async () => {
     const warn = vi.fn();
 

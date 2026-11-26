@@ -129,6 +129,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Durable memory keeper failure warnings now say why the update failed: the error, the model's stop reason, and a short redacted excerpt of a rejected reply.
 - The desktop wait screen shows an animated loader, then the app fades in. The loader stops if you enable reduced motion.
 - Upgrade Pi packages to 1.6.0 and carry forward the bundled Yoplai OAuth pages. Rebuild the sandbox image to include the patched SDK.
 - Agent settings show eligible global skills and let you manage workspace and personal skills per agent. Personal skills start off for every agent after upgrade. The old per-user `enabled` list is ignored.
