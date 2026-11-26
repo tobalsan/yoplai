@@ -745,3 +745,42 @@ it("rechecks ownership for a DM waiting behind a reviewed turn", async () => {
     await gateway.close();
   }
 });
+
+it("appends the grouped turn plan to one Slack reply", async () => {
+  const gateway = await startDeliveryFixture();
+  try {
+    gateway.script(
+      { tool: "turn_plan", args: {
+        steps: [{ id: "inspect", text: "Superseded seedling check", status: "pending" }],
+      } },
+      { tool: "turn_plan", args: {
+        explanation: "Nursery checklist",
+        steps: [
+          { id: "count", text: "Count the trays", status: "completed" },
+          { id: "water", text: "Water the trays", status: "in_progress" },
+          { id: "move", text: "Move them outside", status: "pending" },
+        ],
+      } },
+      "The seedlings are ready.",
+    );
+    expect(await gateway.submit()).toEqual({ status: "admitted", duplicate: false });
+    const text = [
+      "The seedlings are ready.", "", "Nursery checklist",
+      "- [x] Count the trays", "- [ ] Water the trays (in progress)", "- [ ] Move them outside",
+    ].join("\n");
+    await vi.waitFor(async () => {
+      const answer = (await gateway.window()).items.at(-1);
+      expect(answer).toMatchObject({
+        role: "assistant", text: "The seedlings are ready.", toolCallCount: 0,
+        deliveries: [{ surface: "slack", state: "sent" }],
+      });
+      expect(await gateway.posts()).toEqual([{ ingress: slackDm.route.ingress, text }]);
+    }, { timeout: 4000 });
+    expect(await (await gateway.request("local", feed + "/search?q=Nursery")).json()).toEqual({ hits: [] });
+    await gateway.restart();
+    expect(await gateway.submit()).toEqual({ status: "admitted", duplicate: true });
+    expect(await gateway.posts()).toEqual([{ ingress: slackDm.route.ingress, text }]);
+  } finally {
+    await gateway.close();
+  }
+}, 12000);

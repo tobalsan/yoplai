@@ -35,6 +35,7 @@ import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { abortWithoutFallback, durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
+import { turnPlanTools } from "./turn-plan.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
 import { createMemoryTools } from "./memory-tools.js";
 import { MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
@@ -112,7 +113,10 @@ export class DurableHost {
       if (result.type === "write") return undefined;
       const answer = await this.publicAnswer(conversation, result.answer);
       if (answer?.text) return result.answer;
-    }, async (conversation, id) => (await this.publicAnswer(conversation, id))?.text, (id) => {
+    }, async (conversation, id) => {
+      const answer = await this.publicAnswer(conversation, id);
+      if (answer?.text) return { text: answer.text, plan: await this.feed.answerPlan(conversation, id) };
+    }, (id) => {
       for (const changed of this.feedListeners.get(id) ?? []) changed();
     }, options.deliveryFixture);
     this.feed = new DurableFeed(harness, agent, (selected) => {
@@ -186,6 +190,7 @@ export class DurableHost {
     registry.install(boundary);
     registry.install(review.extension);
     registry.install(memoryTools);
+    registry.install(turnPlanTools);
     registry.install(CodingTools);
     registry.install(toolSearch);
     registry.install(tools.gate);
@@ -700,7 +705,7 @@ export class DurableHost {
     const change: AgentChange = {
       model: { provider, modelId: agent.model.model },
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
-      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...(principal.background ? [] : [this.memoryTools]), ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
+      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...(principal.background ? [] : [this.memoryTools]), ...(principal.sessionId === DURABLE_MAIN_SESSION_ID ? [turnPlanTools] : []), ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
       instructions: await durableInstructions(agent, config, principal, this.runtime, summary),
     };
     const fallback = agent.fallback_model;
@@ -1056,7 +1061,7 @@ export class DurableHost {
     const first = id === undefined ? undefined : (await conversation.entries({ minEntryId: id, maxEntryId: id }, 1, undefined, context)).items[0];
     const partial = live.generation?.message;
     const timestamp = InputEntry.is(first) ? first.data.timestamp : partial?.timestamp ?? Date.now();
-    const projected = await this.feed.live(conversation, observed, projection);
+    const projected = await this.feed.live(conversation, observed, projection, false);
     if (!projected) return null;
     const attachedViews = projected.toolCalls.flatMap(({ id, parentToolCallId, name, view, status }) =>
       parentToolCallId && view && status === "done" ? [{ id, parentToolCallId, name, view, content: "", isError: false }] : []);
@@ -1114,7 +1119,10 @@ export class DurableHost {
   async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector, threadId?: string) {
     if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
     const conversation = await this.feedConversation(owner, threadId);
-    return { window: conversation ? await this.feed.window(conversation, limit, selector) : selector ? undefined : emptyFeedWindow };
+    return {
+      window: conversation ? await this.feed.window(conversation, limit, { selector, includePlan: threadId === undefined })
+        : selector ? undefined : emptyFeedWindow,
+    };
   }
 
   private async waitForMain(owner: string, signal: AbortSignal) {
@@ -1153,7 +1161,7 @@ export class DurableHost {
     let latest: ConversationView | undefined = watch.value;
     let refresh = Promise.resolve();
     const read = async (value: ConversationView | undefined, snapshot: boolean) => {
-      const window = await this.feed.window(main, limit, undefined, value && observeFeed(value));
+      const window = await this.feed.window(main, limit, { observation: value && observeFeed(value) });
       if (window && !signal.aborted) publish(window, snapshot);
     };
     const queueRead = (snapshot: boolean) => {
@@ -1225,7 +1233,7 @@ export class DurableHost {
     if (!conversation) return { messages: [], view };
     const observed = await this.feed.observe(conversation);
     const projection = await this.feed.read(conversation, undefined, observed);
-    const full = projection.records.flatMap((record) => record.kind === "seam" ? [] : [record.message]);
+    const full = projection.records.flatMap((record) => (record.kind === "seam" || record.kind === "plan") ? [] : [record.message]);
     if (!full.length) return { messages: [], view };
     const activeTurn = await this.activeTurn(conversation, observed, projection);
     const messages: (FullHistoryMessage | SimpleHistoryMessage)[] = view === "full" ? full : full.flatMap((item) => {

@@ -1,10 +1,11 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineDoc, type Conversation, type ConversationId, type EntryId, type Harness, type Submission, type SubmissionId, type Tx } from "@earendil-works/pi-durable";
-import type { ChannelInput, ChannelRoute, DeliverySink, FeedDelivery } from "@yoplai/shared";
+import type { ChannelInput, ChannelRoute, DeliverySink, FeedDelivery, TurnPlan } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import type { GatewayExtensionContext } from "../extensions/context.js";
 import { logWarn } from "../logging.js";
 import { mayUseChannel } from "./delivery.js";
+import { formatTurnPlan } from "./turn-plan.js";
 
 type PendingRoute = Pick<ChannelInput, "actor" | "owner" | "route"> & { conversationId: ConversationId; queuedAt: number };
 type Effect = PendingRoute & {
@@ -52,7 +53,7 @@ export class DeliveryQueue {
     private readonly harness: Harness,
     private readonly agentId: string,
     private readonly settledAnswer: (conversation: Conversation, submission: Submission) => Promise<EntryId | "waiting" | undefined>,
-    private readonly answerText: (conversation: Conversation, id: EntryId) => Promise<string | undefined>,
+    private readonly publicAnswer: (conversation: Conversation, id: EntryId) => Promise<{ text: string; plan?: TurnPlan } | undefined>,
     private readonly changed: (conversationId: ConversationId) => void,
     private readonly fixture?: DeliveryFixture,
   ) {}
@@ -131,11 +132,11 @@ export class DeliveryQueue {
     if (signal.aborted) return;
     const { route, owner, actor, answerId, conversationId } = effect;
     const conversation = await this.harness.conversation(conversationId, context);
-    const text = conversation && await this.answerText(conversation, answerId);
-    const allowed = text && await mayUseChannel(this.agentId, owner, actor, route, channels, true).catch(() => false);
+    const answer = conversation && await this.publicAnswer(conversation, answerId);
+    const allowed = answer?.text && await mayUseChannel(this.agentId, owner, actor, route, channels, true).catch(() => false);
     const agent = getAgent(this.agentId);
     const sink = channels.getDeliverySink(route.sink);
-    if (!text || !allowed || !agent || !sink) {
+    if (!answer?.text || !allowed || !agent || !sink) {
       await this.transition(key, "pending", "dropped");
       return;
     }
@@ -147,7 +148,8 @@ export class DeliveryQueue {
     const feedUrl = url && (url.protocol === "http:" || url.protocol === "https:") ? url.href : undefined;
     if (!await this.transition(key, "pending", "sending")) return;
     const result = await sendOnce(sink, {
-      agent, text, destination: route.destination, durable: { ingress: route.ingress, feedUrl },
+      agent, text: answer.plan ? answer.text + "\n\n" + formatTurnPlan(answer.plan) : answer.text,
+      destination: route.destination, durable: { ingress: route.ingress, feedUrl },
     });
     if (this.fixture?.afterSend) {
       await this.fixture.afterSend(signal);

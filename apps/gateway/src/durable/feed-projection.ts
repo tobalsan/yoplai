@@ -1,10 +1,11 @@
 import { AssistantEntry, CompactionEntry, ToolResultEntry, type EntryId, type EntryRecord, type LiveState } from "@earendil-works/pi-durable";
 import {
   McpAppViewReferenceSchema, runFailureMessage, type ContentBlock, type FeedDelivery, type FeedDetail, type FeedHit, type FeedItem, type FeedLive, type FeedToolCall, type FullHistoryMessage,
-  type McpAppViewReference, type ModelMeta, type RunFailureKind, type ToolCallBlock,
+  type McpAppViewReference, type ModelMeta, type RunFailureKind, type ToolCallBlock, type TurnPlan,
 } from "@yoplai/shared";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { draftDigest } from "./review.js";
+import { TURN_PLAN, turnPlanSchema } from "./turn-plan.js";
 import { ChildDigestEntry, FailureNoteEntry, InputEntry, type ReviewDecision } from "./state.js";
 
 type AssistantBlock =
@@ -23,6 +24,7 @@ type ToolDetails = {
   content?: unknown;
   fullOutputPath?: unknown;
   nested?: unknown;
+  plan?: unknown;
 };
 type PublicResult = Extract<FullHistoryMessage, { role: "toolResult" }>;
 type PublicToolCall = ToolCallBlock & { view?: McpAppViewReference };
@@ -34,7 +36,8 @@ export type PublicRecord =
   | { kind: "failure"; id: string; message: PublicAssistant & { meta: { failure: NonNullable<ModelMeta["failure"]>; stopReason: "error" } } }
   | { kind: "assistant"; id: string; entryId: EntryId; message: PublicAssistant }
   | { kind: "seam"; item: Extract<FeedItem, { role: "seam" }> }
-  | { kind: "result"; message: PublicResult };
+  | { kind: "result"; message: PublicResult }
+  | { kind: "plan"; entryId: EntryId; plan: TurnPlan };
 type FailureRecord = Extract<PublicRecord, { kind: "failure" }>;
 
 function failureRecord(id: EntryRecord["id"], timestamp: number, kind: RunFailureKind, text: string): FailureRecord {
@@ -172,10 +175,10 @@ export function projectRecords(
 ): PublicRecord[] {
   const records: PublicRecord[] = [];
   let anchor: string | undefined;
-  let pending: { entry: EntryRecord; results: Map<string, ToolResult | null>; interruptions: FailureRecord[] } | undefined;
+  let pending: { entry: EntryRecord; results: Map<string, ToolResult | null>; plans: TurnPlan[]; interruptions: FailureRecord[] } | undefined;
   const flush = () => {
     if (!pending) return;
-    const { entry, results, interruptions } = pending;
+    const { entry, results, plans, interruptions } = pending;
     const decision = entry.byTaskId === undefined ? undefined : byTask[entry.byTaskId];
     const invisible = decision?.hiddenTools ? new Set(decision.hiddenTools) : hiddenNames;
     for (const message of entry.model ?? []) {
@@ -203,6 +206,7 @@ export function projectRecords(
         for (const nested of result.nested) records.push({ kind: "result", message: nested.message });
       }
     }
+    for (const plan of plans) records.push({ kind: "plan", entryId: entry.id, plan });
     if (interruptions.length) {
       records.push(...interruptions);
       anchor = undefined;
@@ -238,7 +242,7 @@ export function projectRecords(
     } else if (AssistantEntry.is(entry) && entry.byTaskId !== undefined) {
       flush();
       anchor ??= "m_" + entry.id;
-      pending = { entry, results: new Map(), interruptions: [] };
+      pending = { entry, results: new Map(), plans: [], interruptions: [] };
     } else if (ToolResultEntry.is(entry) && pending) {
       for (const message of entry.model ?? []) {
         if (message.role !== "toolResult") continue;
@@ -247,6 +251,10 @@ export function projectRecords(
             runFailureMessage("tool_interrupted", language)));
         }
         const details = message.details as ToolDetails | undefined;
+        if (message.toolName === TURN_PLAN) {
+          const plan = message.isError === false && turnPlanSchema.safeParse(details?.plan).data;
+          if (plan) pending.plans.push(plan);
+        }
         if (details?.hidden === true) {
           pending.results.set(message.toolCallId, null);
           continue;
@@ -296,6 +304,7 @@ export function publicText(content: readonly ContentBlock[]) {
 export function feedItems(records: readonly PublicRecord[], deliveries?: ReadonlyMap<EntryId, FeedDelivery[]>): FeedItem[] {
   const items: FeedItem[] = [];
   let answer: Extract<FeedItem, { role: "assistant" }> | undefined;
+  let plan: TurnPlan | undefined;
   for (const record of records) {
     if (record.kind === "seam") {
       // Place the seam ahead of the whole answer and keep its existing anchor.
@@ -303,13 +312,18 @@ export function feedItems(records: readonly PublicRecord[], deliveries?: Readonl
       continue;
     }
     if (record.kind === "result") continue;
+    if (record.kind === "plan") {
+      plan = record.plan;
+      if (answer) answer.plan = plan;
+      continue;
+    }
     const { id, message } = record;
     if (record.kind === "assistant") {
       const text = publicText(message.content);
       const count = message.content.filter((block) => block.type === "toolCall").length;
       if (!text && !count) continue;
       if (!answer) {
-        answer = { id, role: "assistant", timestamp: message.timestamp, text, toolCallCount: count };
+        answer = { id, role: "assistant", timestamp: message.timestamp, text, toolCallCount: count, ...(plan ? { plan } : {}) };
         items.push(answer);
       } else {
         if (text) answer.text = answer.text ? answer.text + "\n" + text : text;
@@ -320,6 +334,7 @@ export function feedItems(records: readonly PublicRecord[], deliveries?: Readonl
       continue;
     }
     answer = undefined;
+    plan = undefined;
     const base = { id, timestamp: message.timestamp, text: publicText(message.content) };
     items.push(record.kind === "user" ? { ...base, role: "user", sender: record.sender, surface: record.surface }
       : { ...base, role: "failure", kind: record.message.meta.failure.kind });
@@ -363,7 +378,7 @@ export function feedDetail(records: readonly PublicRecord[], id: string): FeedDe
         ...(result.details?.diff !== undefined ? { diff: result.details.diff } : {}),
         ...(result.view ? { view: result.view } : {}),
       };
-    } else if (record.kind !== "seam") {
+    } else if (record.kind !== "seam" && record.kind !== "plan") {
       round.clear();
     }
   }
@@ -411,7 +426,7 @@ export function projectLive(
     const results = new Map<string, PublicResult>();
     for (let index = records.length - 1; index >= 0; index--) {
       const record = records[index];
-      if (record.kind === "seam") continue;
+      if (record.kind === "seam" || record.kind === "plan") continue;
       if (record.kind === "result") {
         results.set(record.message.toolCallId, record.message);
         continue;

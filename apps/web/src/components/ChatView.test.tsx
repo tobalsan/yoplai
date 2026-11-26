@@ -2809,6 +2809,51 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByText(container, "Pears weigh six kilograms")).not.toBeNull());
   });
 
+  it("renders one turn checklist through plan-only, streaming and settled frames", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    const answer: Extract<FeedItem, { role: "assistant" }> = {
+      id: "m_2", role: "assistant", timestamp: 2, text: "", toolCallCount: 1,
+      plan: {
+        explanation: "Orchard work",
+        steps: [
+          { id: "pick", text: "Pick the pears", status: "completed" },
+          { id: "weigh", text: "Weigh the pears", status: "in_progress" },
+          { id: "pack", text: "Pack the pears", status: "pending" },
+        ],
+      },
+    };
+    const live = { runId: "pear-run", text: "", reasoning: [], toolCalls: [], plan: answer.plan };
+    const user = feedMessage(1);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...feedWindow([user, answer]), live })));
+    const { container } = renderView();
+    const checklists = () => queryAllByRole(container, "list", { name: "Turn plan" });
+    await waitFor(() => expect(checklists()).toHaveLength(1));
+    const checklist = checklists()[0]!;
+    const names = () => ["Completed", "In progress", "Pending"].map((name) =>
+      queryByRole(checklist, "img", { name })?.parentElement?.textContent);
+    expect(names()).toEqual(["Pick the pears", "Weigh the pears", "Pack the pears"]);
+    expect(queryByText(container, "Orchard work")).not.toBeNull();
+
+    const plan = { steps: [{ id: "weigh", text: "Weighed the pears", status: "completed" as const }] };
+    const revised = { ...answer, plan };
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false, items: [user, revised],
+      live: { ...live, text: "The pears weighed", plan },
+    });
+    expect(checklists()).toEqual([checklist]);
+    expect(queryByText(checklist, "Weighed the pears")).not.toBeNull();
+    expect(queryByText(checklist, "Pick the pears")).toBeNull();
+
+    socket().frame({
+      type: "feed_delta", agentId: "agent-1", seq: 2, hasBefore: false, live: null,
+      upsert: [{ ...revised, text: "The pears weighed six kilograms." }],
+    });
+    expect(checklists()).toHaveLength(1);
+    expect(queryByText(checklists()[0]!, "Weighed the pears")).not.toBeNull();
+    expect(queryByText(container, "The pears weighed six kilograms.")).not.toBeNull();
+  });
+
   it("restores the saved Durable app tab when its visible reply detail arrives", async () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     installFeedSocket();

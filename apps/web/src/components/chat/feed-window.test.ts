@@ -128,3 +128,13 @@ it("returns to the tail from a socket snapshot while the HTTP tail request hangs
   expect(ids(feed.items())).toEqual(["m_50"]);
   await jumped;
 });
+
+it("updates a revised checklist on the existing answer ID", async () => {
+  const initial = { ...answer, plan: { steps: [{ id: "pick", text: "Pick the pears", status: "pending" as const }] } };
+  const feed = createFeedWindow(vi.fn().mockResolvedValue(windowOf([user("m_8"), initial])));
+  await feed.openTail();
+  feed.onFrame(snapshot([user("m_8"), initial]));
+  const revised = { ...answer, plan: { steps: [{ id: "pick", text: "Pears picked", status: "completed" as const }] } };
+  feed.onFrame({ type: "feed_delta", agentId: "pear-agent", seq: 2, upsert: [revised], hasBefore: false, live: null });
+  expect(feed.items()).toEqual([user("m_8"), revised]);
+});

@@ -523,3 +523,215 @@ it("ends the target feed when the signed-in admin exits impersonation", async ()
     await gateway.close();
   }
 });
+
+it("keeps only the latest turn plan on the grouped answer across a restart", async () => {
+  const gateway = await startDurableTestGateway({ extraYaml: "toolDeferral: { enabled: false }" });
+  try {
+    gateway.script(
+      { tool: "turn_plan", id: "initial-plan", args: {
+        steps: [{ id: "inspect", text: "Check the old inventory", status: "in_progress" }],
+      } },
+      { tool: "bash", id: "count-boxes", args: { command: "printf '4'" } },
+      { tool: "turn_plan", id: "revised-plan", args: {
+        explanation: "Counted the boxes.",
+        steps: [{ id: "count", text: "Count the boxes", status: "completed" }],
+      } },
+      "There are four boxes.",
+    );
+    expect((await gateway.send("local", "Check and report the stock", { clientSendId: "check-stock" })).status).toBe(200);
+    const tail = await (await gateway.request("local", feed)).json();
+    expect(tail).toMatchObject({
+      items: [
+        { role: "user", text: "Check and report the stock" },
+        { role: "assistant", text: "There are four boxes.", toolCallCount: 1, plan: {
+          explanation: "Counted the boxes.",
+          steps: [{ id: "count", text: "Count the boxes", status: "completed" }],
+        } },
+      ],
+      live: null,
+    });
+    expect(JSON.stringify(tail)).not.toContain("old inventory");
+    const detail = await (await gateway.request("local", feed + "/messages/" + tail.items[1].id)).json();
+    expect(detail.toolCalls).toMatchObject([{ id: "count-boxes", name: "bash" }]);
+    expect((await gateway.history("local", "?view=full")).messages).toContainEqual(expect.objectContaining({
+      role: "assistant", content: [{ type: "text", text: "There are four boxes." }],
+    }));
+    await gateway.restart();
+    expect(await (await gateway.request("local", feed)).json()).toEqual(tail);
+  } finally {
+    await gateway.close();
+  }
+}, 15000);
+
+it("streams plan-only changes and keeps the revised plan during the final answer", async () => {
+  const tool = latch();
+  const answer = latch();
+  const gateway = await startDurableTestGateway({
+    tokensPerSecond: 55,
+    fixture: { extension: defineExtension({
+      name: "turn-plan-feed-fixture",
+      tools: [defineTool({
+        name: "count_packets", description: "Count the seed packets", parameters: { type: "object" },
+        async execute() {
+          await tool.promise;
+          return { output: [{ type: "text", text: "Six packets" }] };
+        },
+      })],
+    }) },
+  });
+  try {
+    const socket = await gateway.socket();
+    socket.send({ type: "subscribeFeed", agentId: "pilot" });
+    await vi.waitFor(() => expect(socket.events[0]).toMatchObject({ type: "feed_snapshot" }));
+    const first = { steps: [{ id: "count", text: "Count seed packets", status: "in_progress" }] };
+    const final = { steps: [{ id: "count", text: "Count seed packets", status: "completed" }] };
+    const reply = "There are six seed packets ready for the new planting season.";
+    gateway.script(
+      { tool: "turn_plan", id: "plan-start", args: first },
+      { tool: "count_packets", id: "count-packets" },
+      { tool: "turn_plan", id: "plan-done", args: final },
+      async () => {
+        await answer.promise;
+        return reply;
+      },
+    );
+    const sending = gateway.send("local", "Count and report the packets", { clientSendId: "count-packets" });
+    const frames = () => socket.events.filter((event) => event.type === "feed_snapshot" || event.type === "feed_delta");
+    await vi.waitFor(() => expect(frames().some(({ live }) =>
+      live?.plan?.steps[0]?.status === "in_progress" &&
+      live.toolCalls.some((call) => call.id === "count-packets" && call.status === "running"))).toBe(true),
+      { timeout: 4000 });
+    tool.resolve();
+    await vi.waitFor(() => expect(frames().at(-1)?.live).toMatchObject({ text: "", toolCalls: [], plan: final }),
+      { timeout: 4000 });
+    const tail = await (await gateway.request("local", feed)).json();
+    expect(tail.items).toMatchObject([
+      { role: "user" }, { role: "assistant", toolCallCount: 1, plan: final },
+    ]);
+    answer.resolve();
+    await vi.waitFor(async () => {
+      const window = await (await gateway.request("local", feed + "?around=" + tail.items[0].id)).json();
+      expect(window.live).toMatchObject({ text: expect.stringMatching(/\S/), toolCalls: [], plan: final });
+      expect(window.live.text).not.toBe(reply);
+      expect(frames().some(({ live }) => live?.text && live.text !== reply &&
+        live.plan?.steps[0]?.status === "completed" && live.toolCalls.length === 0)).toBe(true);
+    }, { timeout: 4000 });
+
+    expect((await sending).status).toBe(200);
+    expect(JSON.stringify(frames())).not.toMatch(/turn_plan|plan-start|plan-done/);
+    expect(frames().flatMap((frame) => frame.type === "feed_snapshot" ? frame.items : frame.upsert)
+      .filter((item) => item.role === "assistant").every((item) => item.toolCallCount === 1)).toBe(true);
+  } finally {
+    tool.resolve();
+    answer.resolve();
+    await gateway.close();
+  }
+}, 15000);
+
+it("offers the turn plan with a direct-call reflex without inventing one for plain conversation", async () => {
+  const gateway = await startDurableTestGateway({ extraYaml: "codemode: true" });
+  try {
+    gateway.script("Yes, the supply room is open.");
+    expect((await gateway.send("local", "Is the supply room open?", { clientSendId: "supply-hours" })).status).toBe(200);
+    expect(gateway.offeredTools(0)).toEqual(expect.arrayContaining(["turn_plan", "plan_update", "codemode"]));
+    expect(gateway.prompt(0)).toContain("Call `turn_plan` directly before the first action");
+    expect(gateway.prompt(0)).toContain("Single-command answers and plain conversation need no plan.");
+    expect((await (await gateway.request("local", feed + "?limit=1")).json()).items).toEqual([{
+      id: expect.any(String), role: "assistant", timestamp: expect.any(Number),
+      text: "Yes, the supply room is open.", toolCallCount: 0,
+    }]);
+    expect(gateway.callCount()).toBe(1);
+  } finally {
+    await gateway.close();
+  }
+}, 12000);
+
+it("gives the model a tool error for invalid turn plans and leaves the feed clear", async () => {
+  const gateway = await startDurableTestGateway();
+  try {
+    gateway.script(
+      { tool: "turn_plan", id: "too-many", args: {
+        steps: Array.from({ length: 21 }, (_, index) => ({ id: String(index), text: "Check tray " + index, status: "pending" })),
+      } },
+      { tool: "turn_plan", id: "bad-status", args: { steps: [{ id: "tray", text: "Check the tray", status: "ready" }] } },
+      { tool: "turn_plan", id: "empty-text", args: { steps: [{ id: "tray", text: "", status: "pending" }] } },
+      "The tray is ready.",
+    );
+    expect((await gateway.send("local", "Check the tray", { clientSendId: "check-tray" })).status).toBe(200);
+    const errors = gateway.requests.at(-1)?.messages.flatMap((message) =>
+      message.role === "toolResult" && message.toolName === "turn_plan" && message.isError ? [message.toolCallId] : []);
+    expect(errors).toEqual(["too-many", "bad-status", "empty-text"]);
+    expect((await (await gateway.request("local", feed + "?limit=1")).json()).items).toEqual([{
+      id: expect.any(String), role: "assistant", timestamp: expect.any(Number),
+      text: "The tray is ready.", toolCallCount: 0,
+    }]);
+  } finally {
+    await gateway.close();
+  }
+}, 12000);
+
+it("keeps Alice's and Bob's Main plans private and leaves long-lived goals intact", async () => {
+  const gateway = await startDurableTestGateway({ multiUser: true });
+  try {
+    const alicePlan = { steps: [{ id: "mint", text: "Harvest the mint", status: "completed" }] };
+    gateway.script(
+      { tool: "plan_update", args: { goals: ["Stock the pantry"], nextSteps: ["Buy grains"] } },
+      { tool: "turn_plan", args: alicePlan },
+      { tool: "plan_get", id: "long-term-goals" },
+      "Your mint harvest is ready.",
+    );
+    expect((await gateway.send("alice", "Harvest my herbs", { clientSendId: "alice-mint" })).status).toBe(200);
+    expect(gateway.requests.at(-1)?.messages).toContainEqual(expect.objectContaining({
+      role: "toolResult", toolCallId: "long-term-goals", isError: false,
+      content: [expect.objectContaining({ text: expect.stringContaining('"goals":["Stock the pantry"],"nextSteps":["Buy grains"]') })],
+    }));
+    const alice = await (await gateway.request("alice", feed + "?limit=1")).json();
+    expect(alice.items).toMatchObject([{ role: "assistant", plan: alicePlan }]);
+    expect((await gateway.request("bob", feed + "?around=" + alice.items[0].id)).status).toBe(404);
+    const socket = await gateway.socket("bob");
+    socket.send({ type: "subscribeFeed", agentId: "pilot" });
+    await vi.waitFor(() => expect(socket.events[0]).toMatchObject({ type: "feed_snapshot", items: [], live: null }));
+
+    const bobPlan = { steps: [{ id: "basil", text: "Harvest the basil", status: "completed" }] };
+    gateway.script({ tool: "turn_plan", args: bobPlan }, "Your basil harvest is ready.");
+    expect((await gateway.send("bob", "Harvest my herbs", { clientSendId: "bob-basil" })).status).toBe(200);
+    await vi.waitFor(() => expect(JSON.stringify(socket.events)).toContain("Harvest the basil"));
+    expect(JSON.stringify(socket.events)).not.toContain("Harvest the mint");
+    expect((await (await gateway.request("bob", feed + "?limit=1")).json()).items).toMatchObject([
+      { role: "assistant", text: "Your basil harvest is ready.", plan: bobPlan },
+    ]);
+    expect(await (await gateway.request("alice", feed + "?limit=1")).json()).toEqual(alice);
+  } finally {
+    await gateway.close();
+  }
+}, 12000);
+
+it("offers and displays turn plans only in Main, even after forking its answer", async () => {
+  const gateway = await startDurableTestGateway();
+  try {
+    const plan = { steps: [{ id: "count", text: "Count the boxes", status: "completed" }] };
+    gateway.script({ tool: "turn_plan", args: plan }, "There are four boxes.", "Packing can begin.");
+    expect((await gateway.send("local", "Count and report the boxes", { clientSendId: "count-boxes" })).status).toBe(200);
+    const main = await (await gateway.request("local", feed + "?limit=1")).json();
+    expect(main.items).toMatchObject([{ role: "assistant", plan }]);
+    const response = await gateway.request("local", "/api/agents/pilot/threads", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messageId: main.items[0].id }),
+    });
+    expect(response.status).toBe(201);
+    const thread = await response.json();
+    const forked = await (await gateway.request("local", feed + "?thread=" + thread.id)).json();
+    expect(forked.items.at(-1)).toEqual({
+      id: main.items[0].id, role: "assistant", timestamp: main.items[0].timestamp,
+      text: "There are four boxes.", toolCallCount: 0,
+    });
+    expect((await gateway.send("local", "Can we start packing?", {
+      clientSendId: "pack-boxes", sessionId: "thread:" + thread.id,
+    })).status).toBe(200);
+    expect(gateway.offeredTools(-1)).toContain("plan_update");
+    expect(gateway.offeredTools(-1)).not.toContain("turn_plan");
+    expect(gateway.prompt(-1)).not.toContain("## Turn plan");
+  } finally {
+    await gateway.close();
+  }
+}, 12000);
