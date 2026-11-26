@@ -511,6 +511,41 @@ it("builds a Faux compaction request that indexes and clips both kinds of digest
   }
 });
 
+it("keeps a short older request ahead of a digest when a newer request cannot fit the index", async () => {
+  let ctx!: ExtensionContext;
+  const gateway = await startDurableTestGateway({ startChannels(context) { ctx = context; } });
+  try {
+    const shortRequest = "Send the north orchard inventory to Morgan.";
+    const longRequests = Array.from({ length: 70 }, (_, index) =>
+      `Inventory revision ${index + 1}: ` + "crates ".repeat(32));
+    const lastRevision = "Final inventory revision: " + "crates ".repeat(13);
+    gateway.script(
+      { content: "Morgan can review it.", usage: { input: 180 } },
+      "Inventory ready.",
+      ...longRequests.map(() => ({ content: "Revision saved.", usage: { input: 180 } })),
+      { content: "Final revision saved.", usage: { input: 180 } },
+      { content: "Packed the crates. " + "orchard ".repeat(690), usage: { input: 5_250 } },
+      { content: "Summary ready.", usage: { input: 300 } },
+    );
+    expect((await gateway.send("local", shortRequest, { clientSendId: "short-inventory" })).status).toBe(200);
+    expect(await ctx.runJobTick!(tick)).toMatchObject({ status: "done" });
+    for (const [index, message] of longRequests.entries()) {
+      expect((await gateway.send("local", message, { clientSendId: "revision-" + index })).status).toBe(200);
+    }
+    expect((await gateway.send("local", lastRevision, { clientSendId: "last-revision" })).status).toBe(200);
+    expect((await gateway.send("local", "Pack the crates.", { clientSendId: "pack" })).status).toBe(200);
+    expect((await gateway.send("local", "Summarize the orchard.", { clientSendId: "summarize" })).status).toBe(200);
+
+    const modelInput = JSON.stringify(gateway.requests.at(-1)?.messages);
+    expect(modelInput).toContain("Older requests");
+    expect(modelInput).not.toContain("Inventory revision 1:");
+    expect(modelInput).toContain(" · web · " + shortRequest);
+    expect(modelInput).not.toContain(" · job · Orchard inventory completed:");
+  } finally {
+    await gateway.close();
+  }
+}, 20_000);
+
 it("writes a failure digest and only the public withheld notice for a rejected reply", async () => {
   let ctx!: ExtensionContext;
   const gateway = await startDurableTestGateway({

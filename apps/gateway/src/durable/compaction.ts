@@ -132,7 +132,10 @@ export async function summarizeCompaction(
     for (const digest of [false, true]) {
       for (const line of lines) {
         if (line.digest !== digest) continue;
-        if (line.text.length + 1 > remaining) break;
+        if (line.text.length + 1 > remaining) {
+          if (digest) break;
+          continue;
+        }
         remaining -= line.text.length + 1;
         kept.add(line);
       }
