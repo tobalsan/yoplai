@@ -252,6 +252,8 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
       maxTokens: OUTPUT_CAP, ...(variant === "cheap" && { contextWindow: CHEAP_WINDOW }),
     } },
     fauxLimits: options.faux ? { contextWindow: budget.contextWindow, maxTokens: budget.maxTokens } : undefined,
+    // The API id is included in serialized transcript token estimates.
+    fauxApi: options.faux ? "faux-api-compaction-eval" : undefined,
     keeper: { onBatch(outcome) {
       // The eval has one audience and at most one keeper batch in flight.
       const row = keeper.at(-1);
