@@ -26,6 +26,7 @@ export function createDurableTools(
   ownerOf: (id: ConversationId) => string | undefined,
   sessionRef: (id: ConversationId) => string,
   isBackground: (id: ConversationId) => boolean,
+  isPersonal: (id: ConversationId) => boolean,
   onInterrupted: () => void,
   sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
 ) {
@@ -40,17 +41,25 @@ export function createDurableTools(
     if (principal.background) {
       await requireActorExecution(agentId, config, principal.userId, principal).catch(() => { throw new DurableAccessDenied(); });
     }
-    return { agent, config, principal };
+    const legacyHistoryEnabled = isPersonal(id) && config.sessionHistory?.enabled !== false &&
+      runtime.isEnabled("sessionHistory", config) && agent.extensions?.sessionHistory?.enabled !== false;
+    return { agent, config, principal, legacyHistoryEnabled };
   }
 
   async function describe(id: ConversationId) {
-    const { agent, config, principal } = await authority(id);
+    const { agent, config, principal, legacyHistoryEnabled } = await authority(id);
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
     const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update", TURN_PLAN]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
       ...descriptors.filter(({ extensionId }) => runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
-        .map((tool) => ({ ...tool, kind: "extension" as const })),
-      ...durableCoreTools(config).map((tool) => ({ ...tool, kind: "core" as const, extensionId: "core", core: true })),
+        .map((tool) => ({
+          ...tool,
+          kind: "extension" as const,
+          description: legacyHistoryEnabled && tool.extensionId === "sessionHistory" && tool.name === "session_history"
+            ? tool.description + " Older chats from before Durable are in legacy_history."
+            : tool.description,
+        })),
+      ...durableCoreTools(config, legacyHistoryEnabled).map((tool) => ({ ...tool, kind: "core" as const, extensionId: "core", core: true })),
     ];
     return all.map(({ name, description, parameters, outputSchema, extensionId, kind, core, namespace, extensionDescription }) => claimToolDescriptor(
       { name, description, parameters, outputSchema, extensionId, kind, core, namespace, extensionDescription }, names,
@@ -85,9 +94,12 @@ export function createDurableTools(
         name,
         namespace,
         tools: descriptors.map((tool) => defineGatewayTool(tool, async (args, api, context) => {
-          const { agent, config, principal } = await authority(api.conversationId);
+          const { agent, config, principal, legacyHistoryEnabled } = await authority(api.conversationId);
           const { kind, canonicalName, extensionId } = tool;
           if (kind === "core") {
+            if (canonicalName === "legacy_history" && !legacyHistoryEnabled) {
+              return { isError: true, error: "Tool is no longer available." };
+            }
             return executeDurableCoreTool(canonicalName, args, config, principal, agent.id, api.callId, context.abortSignal);
           }
           if (!runtime.isEnabled(extensionId, config) || agent.extensions?.[extensionId]?.enabled === false) {

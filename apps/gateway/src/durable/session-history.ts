@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { FeedItem } from "@yoplai/shared";
 import { DEFAULT_OUTPUT_BUDGET, DEFAULT_TEXT_LIMIT, formatTime, FULL_MESSAGE_CAP, truncateMessageText } from "../history/condense.js";
-import { day, parseDate, SessionHistoryArgsSchema } from "../session-history/arguments.js";
+import { day, invalidResult, parseDate, SessionHistoryArgsSchema } from "../session-history/arguments.js";
 import { feedDetail, feedItems, isFeedMessage, searchFeedMessages } from "./feed-projection.js";
 import type { ThreadRecord } from "./state.js";
 import { describeThread, firstLine, threadMessages } from "./threads.js";
@@ -24,10 +24,6 @@ const messageId = z.string()
 const DurableArgsSchema = SessionHistoryArgsSchema.extend({
   from: messageId, to: messageId, around: messageId, full: messageId,
 });
-
-function invalidResult(error: string) {
-  return { isError: true, code: "invalid_input", error };
-}
 
 export async function durableSessionHistory(raw: unknown, audience: ReadableConversation[]) {
   const parsed = DurableArgsSchema.safeParse(raw);

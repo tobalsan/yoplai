@@ -80,6 +80,7 @@ export class DurableHost {
   private readonly waitingDigests = new Set<string>();
   private readonly childKeys = new Map<ConversationId, string>();
   private readonly threadIds = new Map<ConversationId, string>();
+  private readonly mainIds = new Set<ConversationId>();
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
@@ -151,6 +152,7 @@ export class DurableHost {
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
       (id) => host?.sessionRef(id) ?? DURABLE_MAIN_SESSION_ID,
       (id) => host?.childKeys.has(id) ?? false,
+      (id) => host?.mainIds.has(id) === true || host?.threadIds.has(id) === true,
       () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
         if (!host) throw new Error("Durable host is not open.");
         return host.sessionHistory(id, args);
@@ -588,6 +590,7 @@ export class DurableHost {
       return created.id;
     }, context);
     this.owners.set(id, owner);
+    this.mainIds.add(id);
     for (const opened of this.mainWaiters.get(owner) ?? []) opened(id);
     await this.registerProviderSession(id);
     await this.options.afterMainCommit?.();
@@ -760,6 +763,7 @@ export class DurableHost {
     const map = await this.harness.snapshot(MainMap, context);
     for (const [key, id] of Object.entries(map?.conversations ?? {})) {
       this.owners.set(id as ConversationId, key.slice("main:".length));
+      this.mainIds.add(id as ConversationId);
     }
     for (const [key, { id, owner }] of Object.entries(map?.children ?? {})) {
       this.owners.set(id, owner);

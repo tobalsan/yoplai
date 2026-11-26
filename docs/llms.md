@@ -671,6 +671,14 @@ Session history is a core gateway extension (`apps/gateway/src/session-history/`
 
 In Durable, `session_history` lists the calling agent and owner's Main as `durable-main` and their open and closed threads as `thread:<id>`. It marks the conversation where the tool runs `★ CURRENT CONVERSATION`. Thread rows count their own messages and show their title and closed state. A search across conversations reports inherited hits once, under Main. Reading a thread includes its inherited messages. It searches and reads projected user and assistant messages across context cuts using the same `m_<n>` IDs as the feed and compaction summary. Search is case-insensitive, newest first, and accepts role and date filters. Read defaults to the current conversation and returns the newest messages within the output budget. Use `around` with a message ID for nearby messages, `from` and `to` for an inclusive range, or `full` for expanded text and public tool names. Read windows show a separator at context cuts. Search and read remind the model that older messages may have been cut from context and remain readable here.
 
+`legacy_history` gives Durable Main and private threads read-only access to pre-Durable JSONL chats for the same agent and conversation owner. It uses the `session_history` enable controls and rechecks ownership and archive state on every call. Set `includeArchived: true` to include archived chats. Legacy runs, rooms, and Durable background conversations have no access.
+
+- `list` shows the newest sessions first with date, message count, and title. Use `since`, `until`, `limit`, and `cursor` to filter or page.
+- `search` matches all query words across the session title and user or assistant text. Title and cross-message matches return a session ID. Individual message matches return a session ID with a `#<index>` anchor.
+- `read` accepts `legacy:<agentId>:<sessionId>` to read from the start or a message ID to read around its anchor. Use numeric `from` and `to`, `around` and `n`, or `full` to drill down. Follow `more:` to continue.
+
+In the `<sessionId>` part, `%` becomes `%25` and `#` becomes `%23`. IDs resolve inside the conversation owner's own history directory. If files share an ID, the newest file determines its transcript and archive state. Chat project membership confers no extra access. The tool leaves the JSONL files untouched.
+
 `history/transcript.ts` defines the neutral, chronological `TranscriptEntry` and
 `ToolStep` shapes. Entries use stable public IDs, user or assistant text, and
 optional author and UTC timestamp. Tool steps pair a call with its optional

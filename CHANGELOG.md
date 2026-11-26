@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- List, search, and read your pre-Durable chats with `legacy_history` in Durable Main and private threads.
+
 - Durable Main shows live turn checklists that stay with finished answers and appear in eligible Slack and Mattermost DM replies.
 
 - Eligible webhooks and scheduled jobs run in private Durable child conversations seeded from the owner's Main. Main shows one digest per delivery or tick, including after retries and restarts. Webhook requests receive an immediate acknowledgement with a fresh UUID.
