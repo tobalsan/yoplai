@@ -137,7 +137,8 @@ export class MemoryKeeper {
           ...memory.topics.flatMap(({ refs }) => refs),
           ...memory.drift.flatMap(({ refs }) => refs),
         ]);
-        const update = applyKeeperResult(memory, JSON.parse(text), knownIds, Date.now());
+        const json = text.trim().replace(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```$/i, "$1");
+        const update = applyKeeperResult(memory, JSON.parse(json), knownIds, Date.now());
         phase = "commit";
         await this.harness.commit(async (tx) => {
           const doc = await tx.doc(MemoryDoc, key, null);

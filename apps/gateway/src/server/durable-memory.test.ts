@@ -60,6 +60,58 @@ it("remembers public messages on the first keeper tick and returns topics to the
   }
 }, 20_000);
 
+it("commits topics from a fenced keeper reply", async () => {
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 2 } });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  // Recorded Haiku reply h1-haiku-cut-k02 (invented eval data).
+  const reply = `\`\`\`json
+{
+  "topics": [
+    {
+      "kind": "digest",
+      "title": "Kite seal reference",
+      "note": "The current kite seal is Quillfeather-41, correcting the earlier Quillfeather-18.",
+      "refs": ["m_10", "m_45", "m_48"]
+    },
+    {
+      "kind": "digest",
+      "title": "Filing and checks",
+      "note": "Clock dial sketch, orchard weather clipping, ferry timetable clipping, and planetarium exhibit clipping were acknowledged for filing. Kiln fixture was read and reported as checked.",
+      "refs": ["m_21", "m_24", "m_31", "m_34", "m_49", "m_52", "m_53", "m_56", "m_59", "m_62"]
+    },
+    {
+      "kind": "open",
+      "title": "Lantern inspection",
+      "note": "Lantern inspection is pending.",
+      "refs": ["m_35", "m_38"]
+    },
+    {
+      "kind": "decision",
+      "title": "Mosaic inventory",
+      "note": "Mosaic inventory is done.",
+      "refs": ["m_39", "m_42"]
+    }
+  ],
+  "drift": []
+}
+\`\`\``;
+  const complete = vi.spyOn(MaintenanceCompletion, "complete").mockResolvedValue(reply);
+  try {
+    gateway.script("Seal noted.", "Inspection noted.", { tool: "topics_get", id: "fenced-topics" }, "These are the topics.");
+    expect((await gateway.send("local", "Note the kite seal.", { clientSendId: "kite" })).status).toBe(200);
+    expect((await gateway.send("local", "Note the lantern inspection.", { clientSendId: "lantern" })).status).toBe(200);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+    expect((await gateway.send("local", "What do you remember?", { clientSendId: "remember" })).status).toBe(200);
+    expect(toolValue(gateway, "fenced-topics")).toMatchObject({ topics: [
+      { title: "Lantern inspection" }, { title: "Mosaic inventory" },
+      { title: "Kite seal reference", note: expect.stringContaining("Quillfeather-41") }, { title: "Filing and checks" },
+    ] });
+  } finally {
+    await gateway.close();
+    complete.mockRestore();
+  }
+}, 20_000);
+
 it("replaces the agent plan during a pending keeper tick and keeps the keeper's drift separate", async () => {
   const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
@@ -141,7 +193,7 @@ it("warns on null, invalid and thrown responses and retries the same public mess
 it("logs why the keeper failed, with a bounded reply excerpt and no transcript", async () => {
   const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
-  const fenced = "```json\n" + JSON.stringify({ topics: [{ kind: "open", title: "Orchard", note: "apiKey=fixture-secret " + "pear ".repeat(100) }] }) + "\n```";
+  const fenced = "Here is the result:\n```json\n" + JSON.stringify({ topics: [{ kind: "open", title: "Orchard", note: "apiKey=fixture-secret " + "pear ".repeat(100) }] }) + "\n```";
   const complete = vi.spyOn(MaintenanceCompletion, "complete")
     .mockResolvedValueOnce(fenced)
     .mockResolvedValueOnce('{"topics":[{"title":"Orchard"}]}')
