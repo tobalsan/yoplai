@@ -48,6 +48,9 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
+- Durable memory keeper warnings report the failure kind and, for rejected replies, structural details instead of raw values or parser and schema error text.
+- Durable compaction eval uses a fixed Faux API identifier so projected token totals are repeatable.
 - Durable compaction eval confirms each ledger step before its padding and asks the model to finish all three without pausing for confirmation.
 - Durable compaction eval keeps idling until its measured gap reaches six minutes, so a wall clock that runs slower than the timer no longer invalidates a paid run by a few milliseconds.
 - Durable compaction eval stops and marks the run invalid if a turn attempts to open more than eight model requests.
@@ -129,8 +132,6 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
-- Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
-- Durable memory keeper failure warnings now say why the update failed: the error, the model's stop reason, and a short redacted excerpt of a rejected reply.
 - The desktop wait screen shows an animated loader, then the app fades in. The loader stops if you enable reduced motion.
 - Upgrade Pi packages to 1.6.0 and carry forward the bundled Yoplai OAuth pages. Rebuild the sandbox image to include the patched SDK.
 - Agent settings show eligible global skills and let you manage workspace and personal skills per agent. Personal skills start off for every agent after upgrade. The old per-user `enabled` list is ignored.
