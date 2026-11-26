@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
   AgentDoc, CompactionTask, configure, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, ProviderDoc,
-  type AgentChange, type Conversation, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type SettledSubmissionRecord, type Submission, type SubmissionId, type TaskId,
+  type AgentChange, type Conversation, type ConversationCreateOptions, type ConversationId, type ConversationView, type EntryDraft, type EntryId, type Extension, type LiveState, type SettledSubmissionRecord, type Submission, type SubmissionId, type TaskId,
 } from "@earendil-works/pi-durable";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
@@ -24,9 +25,9 @@ import type { OpsMetrics } from "../server/ops-metrics.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 import { COMPACTION_MEMORY_CHARS, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
-import type { WebSender } from "./contract.js";
+import { ThreadError, type WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
-import { feedDetail, feedSearch } from "./feed-projection.js";
+import { feedDetail, feedItems, feedSearch } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
 import { DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
@@ -35,10 +36,11 @@ import { durableExecutionEnv } from "./env.js";
 import { durableInstructions } from "./prompt.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
 import { createMemoryTools } from "./memory-tools.js";
-import { MemoryDoc, renderMemory } from "./memory.js";
-import { durableSessionHistory } from "./session-history.js";
+import { MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
+import { durableSessionHistory, type ReadableConversation } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
-import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc } from "./state.js";
+import { AbortedRuns, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
+import { describeThread, firstLine, threadRef } from "./threads.js";
 import { durableStorePath } from "./store-path.js";
 import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
 
@@ -48,6 +50,7 @@ const routingWarnings = new Set<string>();
 export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
+  afterThreadArchive?: () => void | Promise<void>;
   fixture?: { extension: Extension; invisibleTools?: readonly string[] };
   wakeDelivery?: () => void;
   deliveryFixture?: DeliveryFixture;
@@ -61,6 +64,7 @@ export class DurableHost {
   readonly deliveries: DeliveryQueue;
   private readonly feed: DurableFeed;
   private readonly keeper: MemoryKeeper;
+  private readonly threadIds = new Map<ConversationId, string>();
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
@@ -104,7 +108,7 @@ export class DurableHost {
     }, (conversation, callId) => {
       const owner = this.owners.get(conversation.id);
       if (owner === undefined) return;
-      return getMcpAppView({ agentId: agent.id, sessionId: DURABLE_MAIN_SESSION_ID, userId: owner === "local" ? undefined : owner }, callId);
+      return getMcpAppView({ agentId: agent.id, sessionId: this.sessionRef(conversation.id), userId: owner === "local" ? undefined : owner }, callId);
     }, this.deliveries);
     this.keeper = new MemoryKeeper(harness, this.feed, models, agent.id, options.keeper);
   }
@@ -127,6 +131,7 @@ export class DurableHost {
     const memoryTools = createMemoryTools((id) => userMemoryKey(owners.get(id)));
     let host: DurableHost | undefined;
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
+      (id) => host?.sessionRef(id) ?? DURABLE_MAIN_SESSION_ID,
       () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
         if (!host) throw new Error("Durable host is not open.");
         return host.sessionHistory(id, args);
@@ -205,6 +210,7 @@ export class DurableHost {
   }
 
   private noteTurn(id: ConversationId, last: EntryId) {
+    if (this.threadIds.has(id)) return;
     const key = userMemoryKey(this.owners.get(id));
     if (key !== undefined) this.keeper.noteTurn(key, id, last);
   }
@@ -229,10 +235,13 @@ export class DurableHost {
 
   async submitWeb(
     sender: WebSender,
-    { message, clientSendId }: { message: string; clientSendId: string },
+    { message, clientSendId, threadId }: { message: string; clientSendId: string; threadId?: string },
     onEvent?: (event: StreamEvent) => void,
   ): Promise<RunAgentResult> {
-    const conversation = await this.openMain(sender.id);
+    const thread = threadId === undefined ? undefined : await this.requireThread(sender.id, threadId);
+    if (thread?.closed) throw new ThreadError(409, "Thread is closed");
+    const conversation = thread ? await this.threadConversation(thread) : await this.openMain(sender.id);
+    if (thread) await this.registerProviderSession(conversation.id);
     const { submission, duplicate } = await this.admit(conversation, { surface: "web", sender, text: message, requestId: "web:" + clientSendId });
     const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
     return wait();
@@ -250,6 +259,156 @@ export class DurableHost {
         .then((wait) => wait()).catch(() => { /* The public feed records settlement failures. */ });
     }
     return { status: "admitted", duplicate };
+  }
+
+  async createThread(owner: string, options: { messageId?: string; title?: string; dashboardId?: string }) {
+    if (!await this.mayReadFeed(owner, owner)) throw new ThreadError(404, "Agent not found");
+    const id = randomUUID();
+    const { title, dashboardId, messageId } = options;
+    const main = messageId === undefined ? undefined : await this.mainFor(owner);
+    const forkedAt = main && messageId !== undefined ? await this.feed.forkPoint(main, messageId) : undefined;
+    if (messageId !== undefined && forkedAt === undefined) throw new ThreadError(404, "Message not found");
+    const metadata = {
+      owner, createdAt: Date.now(), generation: 1, closed: false,
+      ...(title !== undefined && { title }),
+      ...(dashboardId !== undefined && { dashboardId }),
+      ...(forkedAt !== undefined && { forkedAt, forkedFrom: messageId! }),
+    };
+    const create: ConversationCreateOptions = {
+      ownership: { kind: "ownerless" },
+      init: async (tx, conversationId) => {
+        const map = await tx.doc(ThreadMap);
+        map.threads[id] = { ...metadata, conversationId };
+        if (main) {
+          const parent = await tx.doc(ReviewDoc, main.id);
+          const child = await tx.doc(ReviewDoc, conversationId);
+          child.byTask = { ...parent.byTask };
+        }
+      },
+    };
+    const conversation = main && forkedAt !== undefined
+      ? await main.fork(forkedAt, create, context)
+      : await this.harness.createConversation(create, context);
+    this.threadIds.set(conversation.id, id);
+    this.owners.set(conversation.id, owner);
+    await this.registerProviderSession(conversation.id);
+    return this.describeThread(id, { ...metadata, conversationId: conversation.id });
+  }
+
+  private async requireThread(owner: string, id: string) {
+    const map = await this.harness.snapshot(ThreadMap, context);
+    const thread = map?.threads[id];
+    if (thread?.owner !== owner || !await this.mayReadFeed(owner, owner)) {
+      throw new ThreadError(404, "Thread not found");
+    }
+    return thread;
+  }
+
+  private async threadConversation(thread: ThreadRecord) {
+    const conversation = await this.harness.conversation(thread.conversationId, context);
+    if (!conversation) throw new ThreadError(404, "Thread not found");
+    return conversation;
+  }
+
+  private async seedThread(conversation: Conversation, id: string) {
+    await conversation.commit(async (tx) => {
+      const thread = (await tx.doc(ThreadMap)).threads[id]!;
+      if (thread.closed) throw new ThreadError(409, "Thread is closed");
+      if (thread.seeded) return;
+      const memory = await tx.doc(MemoryDoc, "user:" + thread.owner, null);
+      const seed = renderMemory(memory, COMPACTION_MEMORY_CHARS);
+      if (seed) await conversation.submit(tx, {
+        type: "write",
+        requestId: "thread-seed:" + id,
+        entry: { kind: ThreadSeedEntry.kind, model: [{ role: "user", content: "Agent memory\n" + seed, timestamp: Date.now() }] },
+      });
+      thread.seeded = true;
+    }, context);
+  }
+
+  private sessionRef(id: ConversationId) {
+    const threadId = this.threadIds.get(id);
+    return threadId === undefined ? DURABLE_MAIN_SESSION_ID : threadRef(threadId);
+  }
+
+  private async threadsFor(owner: string) {
+    const map = await this.harness.snapshot(ThreadMap, context);
+    return Object.fromEntries(Object.entries(map?.threads ?? {}).filter(([, thread]) => thread.owner === owner));
+  }
+
+  private async describeThread(id: string, thread: ThreadRecord) {
+    const conversation = await this.harness.conversation(thread.conversationId, context);
+    const items = conversation ? feedItems((await this.feed.read(conversation)).records) : [];
+    return describeThread(id, thread, items);
+  }
+
+  async listThreads(owner: string) {
+    if (!await this.mayReadFeed(owner, owner)) throw new ThreadError(404, "Agent not found");
+    const threads = await this.threadsFor(owner);
+    const descriptions = await Promise.all(Object.entries(threads).map(([id, thread]) => this.describeThread(id, thread)));
+    return descriptions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  }
+
+  async closeThread(owner: string, id: string, generation: number) {
+    if (id === DURABLE_MAIN_SESSION_ID || id === "main") throw new ThreadError(400, "Main cannot be closed");
+    const record = await this.requireThread(owner, id);
+    const conversation = await this.threadConversation(record);
+    return this.mutateConversation(conversation.id, async () => {
+      const thread = await this.requireThread(owner, id);
+      if (thread.generation !== generation) throw new ThreadError(409, "Stale generation");
+      if (!thread.closed) {
+        await conversation.commit(async (tx) => {
+          if ((await tx.doc(LiveDoc, conversation.id)).run) {
+            throw new ThreadError(409, "Stop the thread before closing it");
+          }
+          (await tx.doc(ThreadMap)).threads[id]!.closed = true;
+        }, context);
+        await this.options.afterThreadArchive?.();
+      }
+      return this.finishThreadClose(id, { ...thread, closed: true }, conversation);
+    });
+  }
+
+  async reopenThread(owner: string, id: string) {
+    const record = await this.requireThread(owner, id);
+    const conversation = await this.threadConversation(record);
+    return this.mutateConversation(conversation.id, async () => {
+      const thread = await this.requireThread(owner, id);
+      if (!thread.closed) return this.describeThread(id, thread);
+      const closed = await this.finishThreadClose(id, thread, conversation);
+      const generation = thread.generation + 1;
+      await conversation.commit(async (tx) => {
+        const stored = (await tx.doc(ThreadMap)).threads[id]!;
+        stored.closed = false;
+        stored.generation = generation;
+      }, context);
+      return { ...closed, closed: false, generation };
+    });
+  }
+
+  private async finishThreadClose(id: string, thread: ThreadRecord, conversation: Conversation) {
+    const items = feedItems((await this.feed.read(conversation)).records);
+    const description = describeThread(id, thread, items);
+    const answer = items.filter(({ role }) => role === "assistant").at(-1);
+    const digest = threadDigest(id, description.title, firstLine(answer?.text ?? "") || "no conclusion");
+    if (thread.digestedGeneration !== thread.generation) {
+      await this.harness.commit(async (tx) => {
+        const stored = (await tx.doc(ThreadMap)).threads[id]!;
+        const memory = await tx.doc(MemoryDoc, "user:" + thread.owner, null);
+        memory.topics = putThreadDigest(memory.topics, digest);
+        stored.digestedGeneration = thread.generation;
+      }, context);
+    }
+    const main = await this.openMain(thread.owner);
+    await main.commit((tx) => main.submit(tx, {
+      type: "write",
+      requestId: `thread-note:${id}:${thread.generation}`,
+      entry: {
+        kind: ThreadNoteEntry.kind,
+        model: [{ role: "user", content: `[thread ${JSON.stringify(digest.title)} closed] ${digest.note}`, timestamp: Date.now() }],
+      },
+    }), context);
+    return description;
   }
 
   private async openMain(owner: string) {
@@ -294,6 +453,8 @@ export class DurableHost {
       const admit = (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => this.mutateConversation(id, async () => {
         // Reviewed replies and fallback can delay the admission while the actor unlinks.
         if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
+        const threadId = this.threadIds.get(id);
+        if (threadId !== undefined) await this.seedThread(conversation, threadId);
         return conversation.commit(async (tx) => {
           const existing = await tx.submissionByRequest(conversation.id, requestId);
           if (existing) return { submissionId: existing.id, duplicate: true };
@@ -332,7 +493,7 @@ export class DurableHost {
         const failedInput = live?.runFailure?.inputs[0];
         // Give settlement a chance to reserve fallback before replacing the failed turn with a new one.
         if (!live?.run && failedInput !== undefined) {
-          const fallback = await reserveFallback(conversation, failedInput);
+          const fallback = await reserveFallback(conversation, failedInput, this.threadIds.get(id));
           if (fallback !== undefined) {
             const submission = await this.harness.submission(fallback, context);
             await submission?.wait(context);
@@ -412,7 +573,9 @@ export class DurableHost {
     const failed = live?.runFailure;
     if (live?.run || (failed && failed.reason !== "aborted") || !await this.mayReadFeed(user, user)) return;
     await this.configureQueuedRun(id);
+    const threadId = this.threadIds.get(id);
     await conversation.commit(async (tx) => {
+      if (threadId !== undefined && (await tx.doc(ThreadMap)).threads[threadId]?.closed) return;
       // A continue can reuse the failed run's first entry. Persist its cutoff
       // in the same commit as the new run so recovery cannot reuse the old ID.
       if (failed?.first !== undefined) {
@@ -434,12 +597,18 @@ export class DurableHost {
     for (const [key, id] of Object.entries(map?.conversations ?? {})) {
       this.owners.set(id as ConversationId, key.slice("main:".length));
     }
+    const threads = await this.harness.snapshot(ThreadMap, context);
+    for (const [threadId, { conversationId, owner }] of Object.entries(threads?.threads ?? {})) {
+      this.owners.set(conversationId, owner);
+      this.threadIds.set(conversationId, threadId);
+    }
     const routes = [];
     const stopping: { conversation: Conversation; user: string }[] = [];
     const configured = new Set<ConversationId>();
     for (const record of pending) {
       const user = this.owners.get(record.conversationId);
-      if (!user) continue;
+      const threadId = this.threadIds.get(record.conversationId);
+      if (!user || (threadId !== undefined && threads?.threads[threadId]?.closed)) continue;
       const conversation = await this.harness.conversation(record.conversationId, context);
       if (!conversation || record.type === "write") continue;
       const id = record.type === "continue" ? await originalFallbackInput(this.harness, conversation, record.id) : record.id;
@@ -485,7 +654,8 @@ export class DurableHost {
     let streamedTask: TaskId | undefined;
     let readThrough: EntryId | undefined;
     let replyChanged = false;
-    const watch = notify ? await conversation.watch(context) : undefined;
+    const publishMain = notify && !this.threadIds.has(conversation.id);
+    const watch = publishMain ? await conversation.watch(context) : undefined;
     let acceptingPartials = true;
     const emitText = (taskId: TaskId | undefined, text: string) => {
       if (streamedTask !== taskId) {
@@ -559,7 +729,7 @@ export class DurableHost {
       } finally {
         await watch?.stop();
         this.options.wakeDelivery?.();
-        if (notify) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
+        if (publishMain) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
       }
     };
   }
@@ -575,7 +745,7 @@ export class DurableHost {
 
   private async effectiveSettlement(conversation: Conversation, original: Awaited<ReturnType<Submission["wait"]>>, wait: boolean) {
     if (original.status !== "unanswered" || original.type !== "input" || original.reason !== "model_error") return original;
-    const fallback = await settleFallback(this.harness, conversation, original.id, this.agent.id, wait);
+    const fallback = await settleFallback(this.harness, conversation, original.id, this.agent.id, wait, this.threadIds.get(conversation.id));
     return fallback === "waiting" ? undefined : fallback ?? original;
   }
 
@@ -597,7 +767,7 @@ export class DurableHost {
     const result = await this.effectiveSettlement(conversation, original, true) ?? original;
     if (result.status === "unanswered") {
       if (result.reason === "aborted") {
-        return { response: { payloads: [], meta: { durationMs: 0, sessionId: DURABLE_MAIN_SESSION_ID, aborted: true } } };
+        return { response: { payloads: [], meta: { durationMs: 0, sessionId: this.sessionRef(conversation.id), aborted: true } } };
       }
       throw new Error(await this.recordFailure(conversation, submission.id, result));
     }
@@ -616,7 +786,7 @@ export class DurableHost {
         payloads: text ? [{ text }] : [],
         meta: {
           durationMs: InputEntry.is(input) ? Math.max(0, answer.timestamp - input.data.timestamp) : 0,
-          sessionId: DURABLE_MAIN_SESSION_ID,
+          sessionId: this.sessionRef(conversation.id),
         },
       },
     };
@@ -735,8 +905,8 @@ export class DurableHost {
     return id === undefined ? undefined : this.harness.conversation(id, context);
   }
 
-  async stopMain(principal: string, runId?: string): Promise<DurableStopResult | { forbidden: true }> {
-    const conversation = await this.mainFor(principal);
+  async stop(principal: string, runId?: string, threadId?: string): Promise<DurableStopResult | { forbidden: true }> {
+    const conversation = await this.feedConversation(principal, threadId);
     if (!conversation) {
       return await this.mayReadFeed(principal, principal) ? { status: "already_finished" } : { forbidden: true };
     }
@@ -753,9 +923,13 @@ export class DurableHost {
     });
   }
 
-  async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector) {
+  private async feedConversation(owner: string, threadId?: string) {
+    return threadId === undefined ? this.mainFor(owner) : this.threadConversation(await this.requireThread(owner, threadId));
+  }
+
+  async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector, threadId?: string) {
     if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
-    const conversation = await this.mainFor(owner);
+    const conversation = await this.feedConversation(owner, threadId);
     return { window: conversation ? await this.feed.window(conversation, limit, selector) : selector ? undefined : emptyFeedWindow };
   }
 
@@ -825,27 +999,36 @@ export class DurableHost {
   private async historyAudience(caller: ConversationId) {
     const owner = this.owners.get(caller);
     if (owner === undefined || !await this.mayReadFeed(owner, owner)) return [];
-    const conversation = await this.mainFor(owner);
-    if (!conversation) return [];
-    return [{
+    const main = await this.mainFor(owner);
+    const threads = await this.threadsFor(owner);
+    const audience: ReadableConversation[] = [{
       ref: DURABLE_MAIN_SESSION_ID,
-      current: conversation.id === caller,
-      read: () => this.feed.read(conversation),
+      current: main?.id === caller,
+      read: async () => main ? this.feed.read(main) : { records: [] },
     }];
+    for (const [id, record] of Object.entries(threads)) {
+      audience.push({
+        ref: threadRef(id),
+        current: record.conversationId === caller,
+        thread: { id, record },
+        read: async () => this.feed.read(await this.threadConversation(record)),
+      });
+    }
+    return audience;
   }
 
   private async sessionHistory(caller: ConversationId, args: unknown) {
     return durableSessionHistory(args, await this.historyAudience(caller));
   }
-  async feedSearch(owner: string, principal: string, query: string, limit: number) {
+  async feedSearch(owner: string, principal: string, query: string, limit: number, threadId?: string) {
     if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
-    const conversation = await this.mainFor(owner);
+    const conversation = await this.feedConversation(owner, threadId);
     return { hits: conversation && query.trim() ? feedSearch((await this.feed.read(conversation)).records, query, limit) : [] };
   }
 
-  async feedDetail(owner: string, principal: string, id: string) {
+  async feedDetail(owner: string, principal: string, id: string, threadId?: string) {
     if (!await this.mayReadFeed(owner, principal)) return { forbidden: true as const };
-    const conversation = await this.mainFor(owner);
+    const conversation = await this.feedConversation(owner, threadId);
     const anchor = entryId(id);
     if (!conversation || anchor === undefined) return { detail: undefined };
     const { records } = await this.feed.read(conversation, { id: anchor, limit: 1 });

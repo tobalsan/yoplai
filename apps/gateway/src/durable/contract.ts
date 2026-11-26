@@ -37,3 +37,9 @@ export function parseDurableWebSend(input: DurableWebRequest):
 export function durableWebSender(auth: { user: { name?: string }; session: { userId: string } } | null): WebSender {
   return auth ? { id: auth.session.userId, name: auth.user.name || "Web user" } : { id: "local", name: "Local user" };
 }
+
+export class ThreadError extends Error {
+  constructor(readonly status: 400 | 404 | 409, message: string) {
+    super(message);
+  }
+}

@@ -3,7 +3,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { AgentDoc, defineExtension, hook, ToolTask, type ConversationId, type HookApi, type Registry, type TaskId, type ToolNamespace } from "@earendil-works/pi-durable";
 import { renderToolSignature } from "@earendil-works/pi-codemode";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
-import { DURABLE_MAIN_SESSION_ID, type ExtensionAgentTool, type McpAppViewReference } from "@yoplai/shared";
+import type { ExtensionAgentTool, McpAppViewReference } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
@@ -23,6 +23,7 @@ export function createDurableTools(
   runtime: ExtensionRuntime,
   registry: Registry,
   ownerOf: (id: ConversationId) => string | undefined,
+  sessionRef: (id: ConversationId) => string,
   onInterrupted: () => void,
   sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
 ) {
@@ -33,7 +34,7 @@ export function createDurableTools(
       throw new DurableAccessDenied();
     }
     const config = loadConfig();
-    return { agent, config, principal: mainPrincipal(agentId, owner, config) };
+    return { agent, config, principal: { ...mainPrincipal(agentId, owner, config), sessionId: sessionRef(id) } };
   }
 
   async function describe(id: ConversationId) {
@@ -86,8 +87,7 @@ export function createDurableTools(
           if (!runtime.isEnabled(extensionId, config) || agent.extensions?.[extensionId]?.enabled === false) {
             return { isError: true, error: "Tool is no longer available." };
           }
-          if (extensionId === "sessionHistory" && canonicalName === "session_history"
-            && principal.sessionId === DURABLE_MAIN_SESSION_ID) {
+          if (extensionId === "sessionHistory" && canonicalName === "session_history") {
             context.abortSignal?.throwIfAborted();
             return sessionHistory(api.conversationId, args);
           }
@@ -139,7 +139,7 @@ export function createDurableTools(
         const descriptor = descriptors.find(({ name }) => name === call.name);
         const owner = ownerOf(api.conversationId);
         const userId = owner === "local" ? undefined : owner;
-        const view = descriptor && !result.isError && owner !== undefined && getMcpAppView({ agentId, sessionId: DURABLE_MAIN_SESSION_ID, userId }, call.id);
+        const view = descriptor && !result.isError && owner !== undefined && getMcpAppView({ agentId, sessionId: sessionRef(api.conversationId), userId }, call.id);
         const hidden = descriptor?.extensionId === "taskLifecycle";
         if (call.parent && !hidden && view) {
           nestedViews.get(call.parent.taskId)?.set(call.id, { id: call.id, name: call.name, view });

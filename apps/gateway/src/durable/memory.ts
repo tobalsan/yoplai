@@ -58,7 +58,7 @@ const keeperResult = z.object({
 
 export function applyKeeperResult(doc: Readonly<Memory>, result: unknown, knownIds: ReadonlySet<string>, at: number): Memory {
   const update = keeperResult.parse(result);
-  const topics = new Map(doc.topics.map((topic) => [topic.id, topic]));
+  const topics = new Map(doc.topics.filter((topic) => !isThreadDigest(topic)).map((topic) => [topic.id, topic]));
   const publicRefs = (refs: string[]) => [...new Set(refs.filter((ref) => knownIds.has(ref)))].slice(-MAX_REFS);
   const changed = new Set<string>();
   let sequence = 1;
@@ -111,4 +111,20 @@ export function renderMemory(doc: Readonly<Memory>, maxChars: number): string | 
     text = next;
   }
   return text || undefined;
+}
+
+export function threadDigest(id: string, title: string, note: string): Topic {
+  return { id: "th_" + id, kind: "digest", title: oneLine(title).slice(0, MAX_TITLE_CHARS), note: note.slice(0, MAX_NOTE_CHARS), refs: [] };
+}
+
+export function putThreadDigest(topics: readonly Topic[], digest: Topic) {
+  return [...topics.filter(({ id }) => id !== digest.id), digest].slice(0, MAX_TOPICS);
+}
+
+function isThreadDigest({ id }: Topic) {
+  return id.startsWith("th_");
+}
+
+export function keepThreadDigests(updated: readonly Topic[], live: readonly Topic[]) {
+  return [...updated, ...live.filter(isThreadDigest)].slice(0, MAX_TOPICS);
 }

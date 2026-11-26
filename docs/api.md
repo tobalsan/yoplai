@@ -326,6 +326,56 @@ history. URL-encode the entire call ID in the MCP Apps route, including any
 slashes. When Durable mode applies, either `main` or `durable-main` selects the
 caller's Main in that route.
 
+## Durable threads
+
+Threads are private to the caller and their agent. Enable Durable mode for
+the account to use these routes. In single-user mode the caller is `local`.
+An unavailable agent or disabled Durable mode returns 404.
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `POST /api/agents/:id/threads` | Optional `{ messageId?, title?, dashboardId? }` | 201 with the new thread |
+| `GET /api/agents/:id/threads` | | 200 with open and closed threads, newest activity first |
+| `POST /api/agents/:id/threads/:threadId/close` | `{ generation }` | 200 with the archived thread |
+| `POST /api/agents/:id/threads/:threadId/reopen` | | 200 with the open thread |
+
+Each response row has `id`, `title`, `preview`, `createdAt`, `lastActivityAt`,
+`closed`, `generation`, and optional `dashboardId` and `forkedFrom`. Dates are
+Unix milliseconds. By default, the title comes from the first new user message
+(up to 80 characters), then the forked message, then `New thread`. The preview
+comes from the latest new message (up to 120 characters), then the forked
+message, then an empty string. Activity starts at creation and follows the
+latest new message. `dashboardId` is a caller-provided string of 1–128
+characters and survives closing and reopening.
+
+Create an empty thread with no `messageId`. Supply a public `m_<n>` ID from
+the caller's Main to inherit history through that user message or the whole
+settled assistant answer. A missing or inaccessible message returns 404
+`Message not found`. An unsettled assistant answer returns 409
+`Message is still running`. The first send places a snapshot of available
+agent memory in model context before the new input.
+
+Close requires the current generation. It starts at 1 and advances once per
+successful reopening. Retrying a close at the same generation completes any
+pending effects and returns the same archived thread. A mismatched generation
+returns 409 `Stale generation`. A live turn returns 409
+`Stop the thread before closing it`. Closing `main` or `durable-main` returns
+400 `Main cannot be closed`. Missing and other users' threads return 404
+`Thread not found`. Each close replaces the thread's digest in the topic map
+and adds one model-visible note to Main. Reopening finishes pending close
+effects and preserves the digest. Reopening an already open thread returns
+its current generation.
+
+Send with `POST /api/agents/:id/messages` and
+`{ "sessionId": "thread:<threadId>", "clientSendId": "<client id>", "message": "<text>" }`.
+The response's `meta.sessionId` uses the same thread reference. Sending to an
+archived thread returns 409 `Thread is closed`. Read both open and archived
+threads by adding `?thread=<threadId>` to the feed, feed search, or message detail
+route. Forked messages keep their original IDs. Stop a running thread with
+`POST /api/agents/:id/stop` and `{ threadId, runId? }`, or send `/stop` or
+`/abort` with the thread's `sessionId`. Thread chat uses HTTP. Main keeps its
+own WebSocket events, compatibility history, and channel delivery.
+
 ## Authentication
 
 Single-user mode has no Yoplai user boundary; keep it private. Multi-user extension guards `/api/*` and `/ws` using Better Auth cookie session or bearer API key. Both resolve same request auth context and agent/team access checks.

@@ -28,7 +28,7 @@ async function crashFixture(multiUser = false) {
   }
 
   return {
-    async start(phase: "stream" | "tool" | "stop" | "resume" | "settled", activeAgent?: string) {
+    async start(phase: "stream" | "tool" | "stop" | "tool-pair" | "resume" | "settled", activeAgent?: string) {
       const args = ["--import", "tsx", "--conditions=development", entry, phase, multiUser ? "multi-user" : "single-user"];
       if (activeAgent) args.push(activeAgent);
       const child = spawn(process.execPath, args, {
@@ -262,6 +262,93 @@ it.each([false, true])("recovers a killed tool exactly once and scopes the notic
     expect(await json(await settled.request(metrics, owner))).toEqual({ metrics: [] });
     expect(await fixture.read("tool-executions.txt")).toBe("Recorded seedlings.\n");
     expect(await fixture.exists("model-settled.jsonl")).toBe(false);
+  } finally {
+    await fixture.close();
+  }
+}, 45_000);
+
+it("resumes an interrupted thread and retains its dashboard and feed after a killed gateway", async () => {
+  const fixture = await crashFixture();
+  try {
+    const original = await fixture.start("stream");
+    await enableDurable(original);
+    const threads = "/api/agents/pilot/threads";
+    const created = await original.request(threads, post("POST", { dashboardId: "orchard/board" }));
+    expect(created.status).toBe(201);
+    const thread = await created.json() as { id: string };
+    const threadFeed = feed + "?thread=" + thread.id;
+    const pending = original.request("/api/agents/pilot/messages", post("POST", {
+      message: "Account for the orchard.", clientSendId: "thread-crash", sessionId: "thread:" + thread.id,
+    })).catch((error: unknown) => error);
+    await vi.waitFor(async () => {
+      expect((await json<FeedWindow>(await original.request(threadFeed))).live?.text).toContain("An unfinished");
+    }, { timeout: 5000 });
+    expect(await original.kill()).toEqual([null, "SIGKILL"]);
+    expect(await pending).toBeInstanceOf(Error);
+
+    const recovered = await fixture.start("resume");
+    await vi.waitFor(async () => {
+      expect(await fixture.read("model-resume.jsonl")).toContain("Account for the orchard.");
+    }, { timeout: 5000 });
+    expect(await json(await recovered.request(threads))).toMatchObject([{
+      id: thread.id, dashboardId: "orchard/board", closed: false, generation: 1,
+    }]);
+    await vi.waitFor(async () => {
+      const window = await json<FeedWindow>(await recovered.request(threadFeed));
+      expect(window.live).toBeNull();
+      expect(window.items.map(({ text }) => text)).toEqual([
+        "Account for the orchard.", "The greenhouse is accounted for.",
+      ]);
+    });
+    expect((await json<FeedWindow>(await recovered.request(feed))).items).toEqual([]);
+  } finally {
+    await fixture.close();
+  }
+}, 45_000);
+
+
+it("forks an interrupted round with results for both sibling calls", async () => {
+  const fixture = await crashFixture();
+  try {
+    const original = await fixture.start("tool-pair");
+    await enableDurable(original);
+    const sending = send(original, "Record both seedling beds.", "tool-pair-crash");
+    await vi.waitFor(async () => {
+      expect(await fixture.read("tool-executions.txt")).toBe("Recorded seedlings.\nRecorded seedlings.\n");
+      expect(await fixture.read("tool-ready.txt")).toBe("ready");
+    }, { timeout: 5000 });
+    await original.kill();
+    expect(await sending).toBeInstanceOf(Error);
+
+    const recovered = await fixture.start("resume");
+    const answer = await vi.waitFor(async () => {
+      const window = await json<FeedWindow>(await recovered.request(feed));
+      expect(window.live).toBeNull();
+      expect(window.items.map(({ role }) => role)).toEqual(["user", "assistant", "failure", "failure", "assistant"]);
+      expect(window.items[1]).toMatchObject({ text: "Recording two beds.", toolCallCount: 2 });
+      return window.items[1]!;
+    }, { timeout: 5000 });
+    const created = await recovered.request("/api/agents/pilot/threads", post("POST", { messageId: answer.id }));
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    const detail = await json(await recovered.request(feed + "/messages/" + answer.id + "?thread=" + id));
+    expect(detail).toMatchObject({
+      toolCalls: [{ id: "basil-record", status: "error" }, { id: "mint-record", status: "error" }],
+    });
+    await json(await recovered.request("/api/agents/pilot/messages", post("POST", {
+      sessionId: "thread:" + id, message: "Review receipts in the fork.", clientSendId: "review-fork",
+    })));
+    const capture = (await fixture.read("model-resume.jsonl")).trim().split("\n").at(-1)!;
+    const request = JSON.parse(capture) as { role: string; toolCallId?: string }[];
+    const results = request.filter(({ role }) => role === "toolResult");
+    expect(results).toHaveLength(2);
+    for (const toolCallId of ["basil-record", "mint-record"]) {
+      expect(results).toContainEqual(expect.objectContaining({
+        toolCallId, isError: true,
+        content: expect.arrayContaining([{ type: "text", text: expect.stringContaining("may have partially run") }]),
+      }));
+    }
+    expect(capture).not.toContain("The greenhouse is accounted for.");
   } finally {
     await fixture.close();
   }
