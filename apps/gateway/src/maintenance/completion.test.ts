@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfig, GatewayConfig } from "@yoplai/shared";
+import { keeperLimits } from "../durable/keeper.js";
 import {
   completeMaintenance,
   resetMaintenanceCompletionDepsForTests,
@@ -177,6 +178,38 @@ describe("completeMaintenance", () => {
       { stopReason: "length", elapsedMs: expect.any(Number) },
       { error: "Maintenance completion timed out after 1ms", stopReason: undefined, elapsedMs: expect.any(Number) },
     ]);
+  });
+
+  it("gives reasoning keepers higher output and time limits", () => {
+    expect(keeperLimits({ reasoning: true })).toEqual({ maxTokens: 6_000, timeoutMs: 60_000 });
+    expect(keeperLimits({ reasoning: false })).toEqual({ maxTokens: 2_000, timeoutMs: 20_000 });
+    expect(keeperLimits(undefined)).toEqual({ maxTokens: 2_000, timeoutMs: 20_000 });
+  });
+
+  it("returns the recorded DeepSeek keeper reply after 28,114 ms", async () => {
+    // Recorded r3-ds-p2-relaxed-120s-8000-03 reply (invented eval data).
+    const text = '{"topics":[{"kind":"open","title":"User profile onboarding","note":"USER.md is blank; assistant asked for name, preferred form of address, timezone, and current work. User has not answered.","refs":["m_15"]},{"kind":"decision","title":"Kite seal corrected","note":"User corrected the kite seal after an earlier value; assistant acknowledged the update and did not repeat the seal.","refs":["m_10","m_45","m_48"]},{"kind":"digest","title":"Invented shipment code","note":"Assistant supplied VRT-408 as an invented shipment code in the requested AAA-999 format.","refs":["m_16","m_20"]},{"kind":"digest","title":"Kiln fixture checked","note":"Kiln fixture was read via read_kiln and acknowledged; seal and contents were kept private per instruction.","refs":["m_21","m_24"]},{"kind":"open","title":"Filing requests blocked","note":"Requests to file clock dial, orchard weather, ferry timetable, planetarium, loom, and two invented clippings were acknowledged, but no filing tool or named files are present; actual filing remains pending.","refs":["m_31","m_34","m_49","m_52","m_53","m_56","m_59","m_62","m_63","m_66","m_67","m_70","m_71","m_74"]},{"kind":"open","title":"Lantern inspection pending","note":"Lantern inspection is pending; assistant acknowledged without restating status.","refs":["m_35","m_38"]},{"kind":"digest","title":"Mosaic inventory completed","note":"Mosaic inventory is done; assistant acknowledged without restating status.","refs":["m_39","m_42"]}],"drift":[]}';
+    const model = { provider: "opencode-go", id: "deepseek-v4.1-flash", reasoning: true };
+    const deps = {
+      getConfig: () => config({ provider: model.provider, model: model.id }),
+      getAgent: () => agent,
+      createRuntime: async () => runtime(model) as never,
+      warn: vi.fn(),
+      completeSimple: vi.fn(() => new Promise(resolve => setTimeout(() =>
+        resolve({ stopReason: "stop", content: [{ type: "text", text }] }), 28_114))) as never,
+    };
+    vi.useFakeTimers();
+    try {
+      const old = completeMaintenance({ ...params(), maxTokens: 6_000, timeoutMs: 20_000 }, deps);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expect(old).resolves.toBeNull();
+      const replay = completeMaintenance({ ...params(), ...keeperLimits(model) }, deps);
+      await vi.advanceTimersByTimeAsync(28_114);
+      await expect(replay).resolves.toBe(text);
+      expect(deps.completeSimple).toHaveBeenLastCalledWith(model, expect.anything(), expect.objectContaining({ maxTokens: 6_000 }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("times out while the model runtime is still initializing", async () => {

@@ -1,4 +1,5 @@
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
+import type { Model } from "@earendil-works/pi-ai-durable";
 import type { Models } from "@earendil-works/pi-ai-durable/models";
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 import { getAgent, loadConfig } from "../config/index.js";
@@ -12,7 +13,6 @@ const IDLE_MS = 30_000;
 const TURN_THRESHOLD = 5;
 const MAX_PROMPT_BYTES = 20_000;
 const DEFAULT_CONTEXT_TOKENS = 8_000;
-const RESPONSE_TOKENS = 2_000;
 const LOG_ERROR_CHARS = 300;
 const LOG_REPLY_CHARS = 200;
 const SYSTEM = [
@@ -24,6 +24,12 @@ const SYSTEM = [
   'Record drift only when the conversation moves away from a plan goal. Each drift item has a one-line "note" and public "refs".',
   "The plan is read-only.",
 ].join("\n");
+
+export function keeperLimits(model: Pick<Model<string>, "reasoning"> | undefined) {
+  return model?.reasoning
+    ? { maxTokens: 6_000, timeoutMs: 60_000 }
+    : { maxTokens: 2_000, timeoutMs: 20_000 };
+}
 
 export type KeeperOptions = { idleMs?: number; turns?: number };
 
@@ -107,7 +113,8 @@ export class MemoryKeeper {
       const ref = loadConfig().maintenance ?? getAgent(this.agentId)?.model;
       const model = ref?.provider ? this.models.getModel(ref.provider, ref.model) : undefined;
       const contextTokens = model?.contextWindow ?? DEFAULT_CONTEXT_TOKENS;
-      const maxTokens = Math.min(RESPONSE_TOKENS, model?.maxTokens ?? RESPONSE_TOKENS, Math.floor(contextTokens / 4));
+      const limits = keeperLimits(model);
+      const maxTokens = Math.min(limits.maxTokens, model?.maxTokens ?? limits.maxTokens, Math.floor(contextTokens / 4));
       // Use one input byte per token and reserve room for the system prompt,
       // message framing and the requested output.
       const promptBytes = Math.min(MAX_PROMPT_BYTES, contextTokens - maxTokens - Buffer.byteLength(SYSTEM) - 256);
@@ -124,7 +131,7 @@ export class MemoryKeeper {
           agentId: this.agentId, sessionId: this.agentId + ":memory:" + key,
           system: SYSTEM,
           prompt: JSON.stringify({ ...promptMemory(memory, memoryBytes), messages, toolResults }),
-          maxTokens, timeoutMs: 20_000,
+          maxTokens, timeoutMs: limits.timeoutMs,
           onOutcome: (outcome) => { seen.outcome = outcome; },
         });
         if (this.stop.signal.aborted) return;

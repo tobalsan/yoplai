@@ -8,6 +8,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { vi } from "vitest";
 import { startDurableTestGateway, type RealTestModel } from "../../test-utils/durable-gateway.js";
+import { keeperLimits } from "../keeper.js";
 import type { DurableModelsFactory } from "../models.js";
 import { InputEntry } from "../state.js";
 import { durableStorePath } from "../store-path.js";
@@ -22,7 +23,7 @@ export type RequestRow = {
 type KeeperRow = { at: string; estimate: number; cap: number; usage?: Counts; result?: "ok" | "failed" };
 type Padding = { id: string; chars: number };
 export type Drive = { opening: Padding[]; ledger: Padding[]; steps: number[] };
-export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number };
+export type Budget = { contextWindow: number; maxTokens: number; ceiling: number; tail: number; keeperMaxTokens: number };
 export type Run = {
   budget: Budget; requests: RequestRow[]; keeper: KeeperRow[]; answers: Record<string, string>;
   steps: number[]; stepRequests: { step: number; turn: string; request: number }[];
@@ -145,7 +146,7 @@ async function resolveBudget(ref: string, realModel: RealTestModel): Promise<Bud
   const settings = createMainCompactionSettings(models)(agent).modelOverrides[ref];
   if (!model || !settings) throw new Error(`Model not found in offline registry: ${ref}`);
   return { contextWindow: model.contextWindow, maxTokens: model.maxTokens,
-    ceiling: model.contextWindow - settings.reserveTokens, tail: settings.keepRecentTokens };
+    ceiling: model.contextWindow - settings.reserveTokens, tail: settings.keepRecentTokens, keeperMaxTokens: keeperLimits(model).maxTokens };
 }
 
 export async function preflight(ref: string, variant: "cheap" | "full" | "baseline") {
@@ -391,7 +392,7 @@ export function projection(pairs: { model: string; full: boolean; cut: Run; base
   const lines = pairs.map(({ model, full, cut, baseline }) => `${model}${full ? " --full" : ""}: cut ${total(cut)} + baseline ${total(baseline)} = ${total(cut) + total(baseline)} tokens`);
   // Batches group complete public turns: reserve one capped completion per scripted turn per run,
   // including catch-up, using one token per input byte plus system/framing room.
-  const allowance = pairs.flatMap(({ cut, baseline }) => baseline ? [cut, baseline] : [cut]).reduce((sum, run) => sum + Object.keys(run.answers).length * 23_000, 0);
+  const allowance = pairs.flatMap(({ cut, baseline }) => baseline ? [cut, baseline] : [cut]).reduce((sum, run) => sum + Object.keys(run.answers).length * (21_000 + run.budget.keeperMaxTokens), 0);
   const main = pairs.reduce((sum, { cut, baseline }) => sum + total(cut) + total(baseline), 0);
   return [...lines, `Keeper allowance: ${allowance} tokens`, `Total: ${main + allowance} tokens`].join("\n");
 }

@@ -110,7 +110,7 @@ export async function report(dir: string, model: string, cut: Run, baseline: Run
       "Cheap cuts do not test the production 20k tail or 16k-character summary budget at scale. At 150k the tail is ~4× larger and the same summary takes ~7× less of the ceiling.",
     "OpenCode Go's Anthropic route does not use pi-ai Anthropic message threads; direct Anthropic may behave differently.",
     "Cold proxy: post-cut cacheRead ≤ P (first request input + cacheRead + cacheWrite). Requests are grouped through the next cut; exclude the idle-gap request. Pi normalizes missing cache fields to zero; without any positive cache usage the proxy is unmeasurable.",
-    "Keeper calls use separate completions. Both runs have a 20,000-byte transcript/memory prompt budget and a 2,000-token output cap.",
+    "Keeper calls use separate completions. Both runs have a 20,000-byte transcript/memory prompt limit. Keeper calls allow up to 2,000 output tokens and 20 seconds, or 6,000 tokens and 60 seconds for reasoning models.",
     "", "## Pass bars", "",
     `- Recall (≤10 points below baseline): ${baseline ? `${verdict((b - a) <= 0.1 + Number.EPSILON)} (${pct(a)}% vs ${pct(b)}%; Δ ${pct(a - b)} points)` : `not compared (${pct(a)}% cut)`}`,
     `- Side effects (exactly one per step): ${verdict(sideEffects)}`,
