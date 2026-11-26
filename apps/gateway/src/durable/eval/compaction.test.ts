@@ -6,7 +6,17 @@ import { emptyMemory, renderMemory } from "../memory.js";
 import { pair, prepare, requirePaid, settings } from "./entry.js";
 import { cold, originDistances, report, sources } from "./report.js";
 import { idleGap, keeperCompletions, projection, scenarioIssues, type RequestRow } from "./runner.js";
-import { facts, FULL, HAIKU, IDLE_MS, score } from "./scenario.js";
+import { facts, filler, FULL, HAIKU, IDLE_MS, score } from "./scenario.js";
+
+it("generates seeded, exact-length filler from complete sentences", () => {
+  for (const chars of [0, 127, 2_000, 4_000, 20_013]) {
+    const text = filler(chars, 19);
+    expect(text).toHaveLength(chars);
+    expect(filler(chars, 19)).toBe(text);
+    if (chars) expect(text.trimEnd()).toMatch(/^[A-Z][a-z ]+\.( [A-Z][a-z ]+\.)*$/);
+  }
+  expect(filler(4_000, 19)).not.toBe(filler(4_000, 20));
+});
 
 it("drives cheap and full compaction scenarios through the gateway with Faux", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "compaction-eval-report-"));

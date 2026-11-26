@@ -34,14 +34,33 @@ export function score(fact: Fact, answer: string, expected: string) {
   return values[0] === expected && !("stale" in fact && answer.includes(fact.stale));
 }
 
-// Varied invented prose rather than a single repeated token.
+const clippings = [
+  "The librarian tucked a folded map into the back of the atlas.",
+  "A blue bench stood beside the ticket window at the old station.",
+  "The bookbinder left a stack of plain covers on the workbench.",
+  "A brass hook held the curtain open beside the shop doorway.",
+  "Afternoon light fell across the tiled steps of the reading room.",
+  "The gallery opened early so visitors could sketch the chairs.",
+  "A striped scarf hung on the wooden peg nearest the front door.",
+  "The tailor moved the small mirror closer to the fitting room.",
+  "The corner shop displayed a new set of cups in the window.",
+  "The tram stopped beside the plaza where the stone fountain stood.",
+  "A clerk laid the spare notebooks beside the register.",
+  "The carpenter set a low stool near the window to dry.",
+];
+
 export function filler(chars: number, seed: number) {
-  const words = "orchard lantern cedar lagoon copper planet basket marble canvas willow teapot pebble meadow ribbon garden summer walnut amber kettle harbor linen saddle clover velvet acorn almond silver winter barley lichen tender chalk coral basin creek cradle petal feather thistle pine rust shell opal fern".split(" ");
   let state = seed;
-  return Array.from({ length: Math.ceil(chars / 4) }, () => {
+  let text = "";
+  while (text.length < chars) {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return words[(state >>> 16) % words.length];
-  }).join(" ").slice(0, chars);
+    const sentence = clippings[(state >>> 16) % clippings.length]!;
+    const next = text ? " " + sentence : sentence;
+    if (text.length + next.length > chars) break;
+    text += next;
+  }
+  // Fill the remainder without truncating a sentence.
+  return text.padEnd(chars);
 }
 
 export function scenario() {
