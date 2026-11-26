@@ -61,6 +61,63 @@ it("remembers public messages on the first keeper tick and returns topics to the
   }
 }, 20_000);
 
+it.each([
+  { scenario: "after the first batch fails", priorCommit: false, firstFailure: true },
+  { scenario: "before the first keeper call", priorCommit: false, firstFailure: false },
+  { scenario: "after a batch fails with a saved cursor", priorCommit: true, firstFailure: true },
+])("recovers unread keeper turns across restart $scenario", async ({ priorCommit, firstFailure }) => {
+  const onBatch = vi.fn();
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: firstFailure ? 1 : 2, onBatch } });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const complete = vi.spyOn(MaintenanceCompletion, "complete");
+  const send = async (text: string, clientSendId: string) => {
+    expect((await gateway.send("local", text, { clientSendId })).status).toBe(200);
+  };
+  try {
+    gateway.script("Shelf noted.", "Clipping noted.");
+    if (priorCommit) {
+      complete.mockResolvedValueOnce('{"topics":[]}');
+      await send("Label the shelf.", "shelf");
+      await vi.waitFor(() => expect(onBatch.mock.calls).toEqual([["committed"]]));
+    }
+    if (firstFailure) complete.mockResolvedValueOnce('```json\n[{"topics":[]}\n```\n{"topics":[]}');
+    await send("Note the clipping.", "note");
+    const preRestartCalls = Number(priorCommit) + Number(firstFailure);
+    if (firstFailure) await vi.waitFor(() => expect(onBatch).toHaveBeenLastCalledWith("failed"));
+    expect(complete).toHaveBeenCalledTimes(preRestartCalls);
+    const before: FeedWindow = await (await gateway.request("local", feed)).json();
+    const ref = before.items.find(({ text }) => text === "Note the clipping.")?.id;
+    expect(ref).toMatch(/^m_\d+$/);
+    await gateway.restart();
+    expect(complete).toHaveBeenCalledTimes(preRestartCalls);
+
+    complete.mockImplementationOnce(async ({ prompt }) => {
+      const { messages }: { messages: { id: string }[] } = JSON.parse(prompt);
+      return JSON.stringify({ topics: [
+        { kind: "digest", title: "Filed clipping", note: "The clipping was filed.", refs: messages.filter(({ id }) => id === ref).map(({ id }) => id) },
+      ] });
+    }).mockResolvedValue('{"topics":[]}');
+    gateway.script("Filed.", ...(!firstFailure ? ["Moved."] : []), { tool: "topics_get", id: "restarted-topics" }, "Topics read.");
+    await send("File the clipping.", "file");
+    if (!firstFailure) await send("Move the folder.", "move");
+    await vi.waitFor(() => expect(onBatch).toHaveBeenCalledTimes(preRestartCalls + 1));
+    expect(onBatch).toHaveBeenLastCalledWith("committed");
+    await send("What do you remember?", "read-memory");
+
+    const { messages }: { messages: { role: string; text: string }[] } = JSON.parse(complete.mock.calls[preRestartCalls]![0].prompt);
+    expect({
+      users: messages.filter(({ role }) => role === "user").map(({ text }) => text),
+      memory: toolValue(gateway, "restarted-topics"),
+    }).toMatchObject({
+      users: ["Note the clipping.", "File the clipping.", ...(!firstFailure ? ["Move the folder."] : [])],
+      memory: { topics: [{ title: "Filed clipping", note: "The clipping was filed.", refs: [ref] }] },
+    });
+  } finally {
+    await gateway.close();
+    complete.mockRestore();
+  }
+}, 20_000);
+
 it("commits topics from a fenced keeper reply", async () => {
   const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 2 } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");

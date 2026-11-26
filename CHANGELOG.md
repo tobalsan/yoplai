@@ -49,6 +49,7 @@ Breaking changes are marked **⚠ BREAKING**.
 ### Fixed
 
 - Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.
+- Durable memory keeper includes earlier stored turns on the next scheduled tick after a gateway restart, even if no memory batch has yet advanced the cursor.
 - Durable memory keeper warnings report the failure kind and, for rejected replies, structural details instead of raw values or parser and schema error text. The separate maintenance completion warning reports the failure kind without the provider’s error text.
 - Durable compaction eval uses a fixed Faux API identifier so projected token totals are repeatable.
 - Durable memory keeper accepts a single fenced JSON payload or top-level JSON object surrounded by prose, including prose with balanced non-JSON braces. It retries competing JSON payloads, fences with bodies that do not parse as JSON, unclosed fences, and unbalanced bare containers without advancing the memory cursor. Its prompt describes the input and asks for JSON only. When the provider refuses a batch, the keeper skips that batch with a warning and continues with the next one instead of resending it forever.

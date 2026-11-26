@@ -154,7 +154,6 @@ function promptMemory({ topics, plan }: ReturnType<typeof emptyMemory>, maxBytes
 
 type Audience = {
   conversationId: ConversationId;
-  first: EntryId;
   last: EntryId;
   pending: number;
   due: number;
@@ -175,9 +174,9 @@ export class MemoryKeeper {
     private readonly options: KeeperOptions = {},
   ) {}
 
-  noteTurn(key: string, conversationId: ConversationId, first: EntryId, last: EntryId) {
+  noteTurn(key: string, conversationId: ConversationId, last: EntryId) {
     if (this.stop.signal.aborted) return;
-    const audience = this.audiences.get(key) ?? { conversationId, first, last, pending: 0, due: 0, running: false };
+    const audience = this.audiences.get(key) ?? { conversationId, last, pending: 0, due: 0, running: false };
     audience.last = last;
     audience.pending++;
     audience.due = Date.now() + (this.options.idleMs ?? IDLE_MS);
@@ -193,7 +192,7 @@ export class MemoryKeeper {
       audience.timer = undefined;
       audience.pending = 0;
       audience.running = true;
-      void this.tick(key, audience.conversationId, audience.first, audience.last).finally(() => {
+      void this.tick(key, audience.conversationId, audience.last).finally(() => {
         audience.running = false;
         this.schedule(key, audience);
       });
@@ -201,7 +200,7 @@ export class MemoryKeeper {
     audience.timer.unref();
   }
 
-  private async tick(key: string, id: ConversationId, first: EntryId, last: EntryId) {
+  private async tick(key: string, id: ConversationId, last: EntryId) {
     let phase = "read";
     // Used to build diagnostics without logging model data or error messages.
     let seen: { outcome?: MaintenanceOutcome; reply?: string; parsed?: unknown } = {};
@@ -219,8 +218,9 @@ export class MemoryKeeper {
       const promptBytes = Math.min(MAX_PROMPT_BYTES, contextTokens - maxTokens - Buffer.byteLength(SYSTEM) - 256);
       if (promptBytes < 512) throw new Error("Maintenance context is too small for memory");
       const memoryBytes = Math.floor(promptBytes / 3);
-      // Only scan completed runs. Later admissions may already be generating a draft.
-      const min = memory.through === null ? first : (memory.through + 1) as EntryId;
+      // With no cursor, read from the start of stored history, including runs before a restart.
+      // Stop at the last completed run; later admissions may be generating a draft.
+      const min = memory.through === null ? undefined : (memory.through + 1) as EntryId;
       for await (const { messages, toolResults, through } of this.feed.memoryBatches(conversation, min, last, promptBytes - memoryBytes)) {
         if (messages.length < 2 || this.stop.signal.aborted) return;
 
