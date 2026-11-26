@@ -98,7 +98,8 @@ The child uses the agent's configured model and reasoning.
 The gateway checks `X-GitHub-Delivery`, `webhook-id`, and `Idempotency-Key` in
 that order. A stable ID deduplicates within the agent and route in Durable
 mode, including after restart. An eligible retry after a route changes hands
-stays with the original admission. Deliveries with no ID each get a fresh UUID. See the
+stays with the original admission. Each delivery without a stable ID runs
+independently. See the
 [GitHub docs](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header),
 [Standard Webhooks spec](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md#webhook-headers-sending-metadata-to-consumers),
 and [Probo docs](https://www.probo.com/docs/developers/api/webhooks/delivery-and-recovery#http-headers).
@@ -214,10 +215,10 @@ Gate failures **fail open**: missing files, spawn errors, non-zero exits,
 signals, and timeouts log an error with agent, webhook, reason and stderr tail,
 then run the agent with the per-request session and no abort. Empty or non-JSON
 output also wakes with no scope or abort. Gates are killed when the webhooks
-extension stops. The HTTP response stays immediate and keeps the
-`{ ok, requestId }` shape. When the owner is eligible for Durable mode, a
-stable delivery header yields `webhook:<encoded route>:<encoded delivery id>`.
-Other deliveries return a fresh UUID. The gate's `WEBHOOK_REQUEST_ID` is always a fresh UUID.
+extension stops. The HTTP response returns `{ ok: true, requestId }` immediately
+with a fresh UUID on every accepted delivery, including retries. The gate sees
+that UUID as `WEBHOOK_REQUEST_ID`. Durable uses the stable delivery ID
+internally for deduplication.
 
 Invalid YAML, unknown keys, invalid values, or a script path escaping the
 workspace log an error naming the prompt file and do **not** run the agent.

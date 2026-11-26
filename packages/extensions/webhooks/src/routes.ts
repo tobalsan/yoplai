@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { webhookDeliveryKey } from "@yoplai/shared";
 import type {
   AgentConfig,
   ExtensionContext,
@@ -474,7 +473,6 @@ export function registerWebhookRoutes(app: Hono): void {
     const deliveryId = ["x-github-delivery", "webhook-id", "idempotency-key"].map((name) => headers[name]).find(Boolean);
     const ownerUserId = webhookConfig.credentialMode === "owner" ? webhookConfig.ownerUserId : undefined;
     const durableOwner = current.ctx.getConfig().extensions?.multiUser?.enabled ? ownerUserId : "local";
-    const stableAck = deliveryId && durableOwner && await current.ctx.canSubmitWebhookInput?.(agentId, durableOwner).catch(() => false);
     const originUrl = c.req.url;
     const timestamp = new Date().toISOString();
 
@@ -494,6 +492,6 @@ export function registerWebhookRoutes(app: Hono): void {
       durableOwner,
     });
 
-    return c.json({ ok: true, requestId: stableAck && deliveryId ? webhookDeliveryKey(webhookName, deliveryId) : requestId });
+    return c.json({ ok: true, requestId });
   });
 }

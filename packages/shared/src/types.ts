@@ -1560,10 +1560,6 @@ export type WebhookInput = {
   text: string;
 };
 
-export function webhookDeliveryKey(name: string, deliveryId: string): string {
-  return `webhook:${encodeURIComponent(name)}:${encodeURIComponent(deliveryId)}`;
-}
-
 export type JobTickInput = {
   agentId: string;
   owner: string;
@@ -1822,8 +1818,6 @@ export interface ExtensionContext {
   getDeliverySink(id: string): DeliverySink | undefined;
   registerChannelOwnerResolver?(surface: ChannelSurface, resolver: ChannelOwnerResolver): () => void;
   submitChannelInput?(input: ChannelInput): Promise<ChannelAdmission>;
-  /** Check the delivery ID acknowledgement before starting the webhook gate. */
-  canSubmitWebhookInput?(agentId: string, owner: string): Promise<boolean>;
   /** Admit a webhook into its owner's Durable child when eligible. */
   submitWebhookInput?(input: WebhookInput): Promise<WebhookAdmission>;
   /** Run one scheduled tick in its owner's Durable child when eligible. */

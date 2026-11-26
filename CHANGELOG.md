@@ -11,7 +11,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
-- Eligible webhooks and scheduled jobs run in private Durable child conversations seeded from the owner's Main. Main shows one digest per delivery or tick, including after retries and restarts.
+- Eligible webhooks and scheduled jobs run in private Durable child conversations seeded from the owner's Main. Main shows one digest per delivery or tick, including after retries and restarts. Webhook requests receive an immediate acknowledgement with a fresh UUID.
 
 - Create private Durable threads through the gateway API, either empty or forked from Main. Each thread has its own transcript and context budget. Closing archives it and records a digest. Reopen it or look it up with `session_history`.
 - Add an opt-in Durable Main compaction eval to compare recall, tool side effects, and cache usage against a no-cut baseline, with a free Faux projection.

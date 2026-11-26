@@ -12,7 +12,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, webhookDeliveryKey, type AgentConfig, type FeedWindow, type FullHistoryMessage,
+  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
   type ChannelAdmission, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
@@ -277,7 +277,7 @@ export class DurableHost {
   }
 
   async submitWebhook(input: WebhookInput): Promise<WebhookAdmission> {
-    const key = webhookDeliveryKey(input.name, input.deliveryId ?? input.requestId);
+    const key = `webhook:${encodeURIComponent(input.name)}:${encodeURIComponent(input.deliveryId ?? input.requestId)}`;
     const child = await this.admitChild({
       key, owner: input.owner, kind: "webhook", name: input.name, text: input.text, deliveryId: input.deliveryId,
     });

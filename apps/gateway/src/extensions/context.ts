@@ -105,10 +105,7 @@ export function bindExtensionContext(context: ExtensionContext, extension: Pick<
 
 export type GatewayExtensionContext = ExtensionContext & {
   connectChannelInput: (submit: (input: ChannelInput) => Promise<ChannelAdmission>) => void;
-  connectWebhookInput: (
-    submit: (input: WebhookInput) => Promise<WebhookAdmission>,
-    eligible: NonNullable<ExtensionContext["canSubmitWebhookInput"]>,
-  ) => void;
+  connectWebhookInput: (submit: (input: WebhookInput) => Promise<WebhookAdmission>) => void;
   connectJobTick: (run: (input: JobTickInput) => Promise<JobTickResult>) => void;
   resolveChannelOwner: (surface: ChannelSurface, input: ChannelOwnerRequest) => ReturnType<ChannelOwnerResolver>;
 };
@@ -120,7 +117,6 @@ export function createExtensionContext(_resolvedConfig: GatewayConfig): GatewayE
   const deliverySinks = new Map<string, { sink: DeliverySink }>();
   const ownerResolvers = new Map<ChannelSurface, ChannelOwnerResolver>();
   let submitChannelInput: ((input: ChannelInput) => Promise<ChannelAdmission>) | undefined;
-  let canSubmitWebhookInput: ExtensionContext["canSubmitWebhookInput"];
   let submitWebhookInput: ((input: WebhookInput) => Promise<WebhookAdmission>) | undefined;
   let runJobTick: ((input: JobTickInput) => Promise<JobTickResult>) | undefined;
   const deliveryOffers = new Map<string, DeliveryOfferProvider>();
@@ -133,13 +129,7 @@ export function createExtensionContext(_resolvedConfig: GatewayConfig): GatewayE
     async submitChannelInput(input) {
       return submitChannelInput ? submitChannelInput(input) : { status: "not_durable" };
     },
-    connectWebhookInput(submit, eligible) {
-      submitWebhookInput = submit;
-      canSubmitWebhookInput = eligible;
-    },
-    async canSubmitWebhookInput(agentId, owner) {
-      return canSubmitWebhookInput ? canSubmitWebhookInput(agentId, owner) : false;
-    },
+    connectWebhookInput(submit) { submitWebhookInput = submit; },
     async submitWebhookInput(input) {
       return submitWebhookInput ? submitWebhookInput(input) : { status: "not_durable" };
     },

@@ -44,7 +44,7 @@ export class DurableWeb {
     channels.connectWebhookInput(async (input) => {
       const agent = await this.backgroundAgent(input.agentId, input.owner);
       return agent ? (await this.host(agent)).submitWebhook(input) : { status: "not_durable" };
-    }, async (agentId, owner) => !!await this.backgroundAgent(agentId, owner));
+    });
     channels.connectJobTick(async (input) => {
       const agent = await this.backgroundAgent(input.agentId, input.owner);
       return agent ? (await this.host(agent)).runJobTick(input) : { status: "not_durable" };

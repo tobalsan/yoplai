@@ -12,6 +12,7 @@ function latch() {
 }
 
 const feed = "/api/agents/pilot/feed";
+const WEBHOOK_ACK_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const tick: JobTickInput = {
   agentId: "pilot", owner: "local", jobId: "orchard", jobName: "Orchard inventory",
   tickTime: 1_790_000_000_000, prompt: "Count the pear crates.",
@@ -108,6 +109,37 @@ async function webhookGateway(options: Parameters<typeof startDurableTestGateway
   };
 }
 
+it("acknowledges a webhook with a fresh UUID while Durable admission is pending", async () => {
+  const gateway = await webhookGateway();
+  let checkingDurableMode = false;
+  const allowDurableModeRead = latch();
+  const readFile = fs.readFile;
+  const delayedRead = vi.spyOn(fs, "readFile").mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
+    if (String(args[0]).endsWith("/durable-mode.json")) {
+      checkingDurableMode = true;
+      await allowDurableModeRead.promise;
+    }
+    return readFile(...args);
+  });
+  let status: number | undefined;
+  const response = gateway.hook("dispatch", { "x-github-delivery": "slow-admission" }).then((ack) => {
+    status = ack.status;
+    return ack;
+  });
+  try {
+    await vi.waitFor(() => expect(checkingDurableMode).toBe(true));
+    await vi.waitFor(() => expect(status).toBe(200));
+    expect(await (await response).json()).toEqual({ ok: true, requestId: expect.stringMatching(WEBHOOK_ACK_UUID) });
+    allowDurableModeRead.release();
+    await vi.waitFor(() => expect(gateway.callCount()).toBe(1));
+  } finally {
+    allowDurableModeRead.release();
+    delayedRead.mockRestore();
+    await response.catch(() => undefined);
+    await gateway.close();
+  }
+});
+
 it("admits real webhook deliveries in seeded children and dedupes by delivery id", async () => {
   const gateway = await webhookGateway({
     extraYaml: `toolDeferral: { enabled: false }
@@ -129,10 +161,13 @@ webhooks:
     const response = await gateway.hook("dispatch", headers, payload);
     expect(response.status).toBe(200);
     const first = await response.json();
+    expect(first).toEqual({ ok: true, requestId: expect.stringMatching(WEBHOOK_ACK_UUID) });
     await vi.waitFor(async () => expect(await read()).toMatchObject([
       { sender: "dispatch", text: "dispatch completed: First event handled." },
     ]));
-    expect(await (await gateway.hook("dispatch", headers, payload)).json()).toEqual(first);
+    const replay = await (await gateway.hook("dispatch", headers, payload)).json();
+    expect(replay).toEqual({ ok: true, requestId: expect.stringMatching(WEBHOOK_ACK_UUID) });
+    expect(replay.requestId).not.toBe(first.requestId);
     expect(await (await gateway.hook("dispatch", { "webhook-id": "another" }, payload)).json()).not.toEqual(first);
     await vi.waitFor(async () => expect(await read()).toHaveLength(2));
     const noId = await (await gateway.hook("dispatch", {}, payload)).json();
@@ -328,12 +363,12 @@ webhooks:
     await gateway.configure("fixture", routes(gateway.accountId("alice")));
     gateway.script("Alice's dispatch checked.", "Bob's dispatch checked.");
     const headers = { "x-github-delivery": "first" };
-    const first = await (await gateway.hook("dispatch", headers)).json();
+    expect((await gateway.hook("dispatch", headers)).status).toBe(200);
     await vi.waitFor(async () => expect(await read("alice")).toMatchObject([{ text: "dispatch completed: Alice's dispatch checked." }]));
     expect(await read("bob")).toEqual([]);
 
     await gateway.configure("fixture", routes(gateway.accountId("bob")));
-    expect(await (await gateway.hook("dispatch", headers)).json()).toEqual(first);
+    expect((await gateway.hook("dispatch", headers)).status).toBe(200);
     expect((await gateway.hook("dispatch", { "x-github-delivery": "second" })).status).toBe(200);
     await vi.waitFor(async () => expect(await read("bob")).toMatchObject([{ text: "dispatch completed: Bob's dispatch checked." }]));
     expect(await read("alice")).toHaveLength(1);
@@ -351,10 +386,8 @@ it("keeps webhook identities distinct when a route name or delivery id contains 
     prompt: "Check the south plot"` });
   try {
     gateway.script("North plot checked.", "South plot checked.");
-    const first = await (await gateway.hook("a:b", { "webhook-id": "c" })).json();
-    const second = await (await gateway.hook("a", { "webhook-id": "b:c" })).json();
-    expect(first).toEqual({ ok: true, requestId: "webhook:a%3Ab:c" });
-    expect(second).toEqual({ ok: true, requestId: "webhook:a:b%3Ac" });
+    expect((await gateway.hook("a:b", { "webhook-id": "c" })).status).toBe(200);
+    expect((await gateway.hook("a", { "webhook-id": "b:c" })).status).toBe(200);
     await vi.waitFor(async () => {
       const { items }: FeedWindow = await (await gateway.request("local", feed)).json();
       expect(items.map((item) => item.role === "user" && item.sender).sort()).toEqual(["a", "a:b"]);
@@ -375,7 +408,7 @@ it("dispatches webhooks through the legacy session with Durable mode off", async
     const [firstAck, secondAck] = await Promise.all([first.json(), second.json()]);
     expect(firstAck.requestId).not.toBe(secondAck.requestId);
     for (const { requestId } of [firstAck, secondAck]) {
-      expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(requestId).toMatch(WEBHOOK_ACK_UUID);
       await vi.waitFor(async () => {
         expect(await gateway.history("local", "?sessionKey=" + encodeURIComponent("webhook:pilot:dispatch:" + requestId)))
           .toMatchObject({ messages: expect.arrayContaining([expect.objectContaining({ role: "assistant", content: "Legacy webhook answer." })]) });
@@ -620,11 +653,11 @@ it("repairs a webhook digest on delivery replay when the child already settled",
   try {
     gateway.script("One webhook reaction.");
     const headers = { "webhook-id": "retry-digest" };
-    const first = await (await gateway.hook("dispatch", headers)).json();
+    expect((await gateway.hook("dispatch", headers)).status).toBe(200);
     await failedWrite.promise;
     const read = async () => (await (await gateway.request("local", feed)).json() as FeedWindow).items;
     expect(await read()).toEqual([]);
-    expect(await (await gateway.hook("dispatch", headers)).json()).toEqual(first);
+    expect((await gateway.hook("dispatch", headers)).status).toBe(200);
     await vi.waitFor(async () => expect(await read()).toMatchObject([
       { role: "user", surface: "webhook", text: "dispatch completed: One webhook reaction." },
     ]));
