@@ -65,7 +65,7 @@ function* bareObjects(text: string) {
       closers.push(char === "{" ? "}" : "]");
     } else if (char === "}" || char === "]") {
       if (closers.pop() !== char) throw new SyntaxError("Unbalanced keeper reply");
-      if (!closers.length && text[start] === "{") yield text.slice(start, i + 1);
+      if (!closers.length && text[start] === "{") yield { body: text.slice(start, i + 1), fenced: false };
     }
   }
   if (closers.length) throw new SyntaxError("Unbalanced keeper reply");
@@ -79,7 +79,7 @@ function* replyCandidates(text: string) {
       yield* bareObjects(text.slice(offset, fence.index));
       bodyStart = fence.index + fence[0].length;
     } else if (!fence[1]?.trim()) {
-      yield text.slice(bodyStart, fence.index);
+      yield { body: text.slice(bodyStart, fence.index), fenced: true };
       offset = fence.index + fence[0].length;
       bodyStart = undefined;
     }
@@ -94,11 +94,12 @@ function replyJson(reply: string): unknown {
     return JSON.parse(text.replace(WHOLE_FENCE, "$1"));
   } catch (error) {
     let parsed: unknown;
-    for (const candidate of replyCandidates(text)) {
+    for (const { body, fenced } of replyCandidates(text)) {
       let value: unknown;
       try {
-        value = JSON.parse(candidate);
-      } catch {
+        value = JSON.parse(body);
+      } catch (error) {
+        if (fenced) throw error;
         // A balanced span such as {clipping} can be prose, not payload.
         continue;
       }

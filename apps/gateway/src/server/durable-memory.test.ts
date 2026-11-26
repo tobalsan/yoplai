@@ -183,6 +183,8 @@ it("commits a keeper update from one fenced JSON block inside prose", async () =
 it.each([
   { name: "a bare update before a fenced update", reply: '{"topics":[{"kind":"open","title":"Clipping","note":"File it."}]}\n```json\n{"topics":[]}\n```', outcome: "failed" },
   { name: "a fenced update before a bare update", reply: '```json\n{"topics":[]}\n```\n{"topics":[]}', outcome: "failed" },
+  { name: "a fenced truncated array before a bare update", reply: '```json\n[{"topics":[]}\n```\n{"topics":[]}', outcome: "failed" },
+  { name: "a bare update before a fenced unterminated string", reply: '{"topics":[]}\n```json\n{"topics":"clipping\n```', outcome: "failed" },
   { name: "two bare updates", reply: 'Updates: {"topics":[]} {"topics":[]}', outcome: "failed" },
   { name: "an object inside a truncated array", reply: '[{"topics":[]}', outcome: "failed" },
   { name: "an unterminated fence before a bare update", reply: 'Update:\n```json\n{"topics":[]}', outcome: "failed" },
