@@ -30,6 +30,23 @@ it("drives cheap and full compaction scenarios through the gateway with Faux", a
       expect(cut.stepRequests.map(({ request }) => request < cut.cuts[1]!)).toEqual([true, true, false]);
       expect(Object.keys(cut.origins).sort()).toEqual(facts.map(({ id }) => id).sort());
       expect(baseline.steps).toEqual([1, 2, 3]);
+      for (const run of [cut, baseline]) {
+        for (const { step, request } of run.stepRequests) {
+          const result = run.requests[request + 1]?.messages.find(message =>
+            message.role === "toolResult" && message.toolName === "record_eval_step" && message.toolCallId === `step-${step}`);
+          const status = step === 3 ? "Step 3 recorded. All steps done." : `Step ${step} recorded in the ledger. Next: step ${step + 1}.`;
+          if (result?.role !== "toolResult") throw new Error(`Expected result for ledger step ${step}`);
+          expect(result.isError).toBe(false);
+          const [block] = result.content;
+          if (block?.type !== "text") throw new Error(`Expected text for ledger step ${step}`);
+          const { text } = block;
+          if (step === 3) expect(text).toBe(status);
+          else {
+            expect(text.startsWith(`${status}\n--- attached step log (no action needed) ---\n`)).toBe(true);
+            expect(text).toHaveLength(run.drive.steps[step - 1]!);
+          }
+        }
+      }
       expect(cut.answers["topic-1"]).toContain("Ice");
       expect(cut.keeper.length).toBeGreaterThan(0);
       expect(sources(cut, "probe-0", facts[1]), JSON.stringify(cut.requests.filter(row => row.turn === "probe-0").at(-1)?.messages.filter(m => m.role === "toolResult" && m.toolName.includes("history")))).toContain("session_history");

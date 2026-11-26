@@ -61,11 +61,11 @@ export function scenario() {
   const kiln = `Kiln seal: ${facts[2].value}\n` + filler(2_000, 19);
   const digests = ["Belfry digest: chimes varnished.", "Aquarium digest: spare filter delivered.", "Folio digest: blank dividers filed."];
   const relevance = ["New topic: why does the Moon show phases? Answer in one sentence.", "New topic: why does ice float? Answer in one sentence."];
-  const ledger = "Call record_eval_step once each for steps 1, 2, and 3 in that order. Call only one step per tool round; wait for its result before proceeding. Do not repeat a completed step. Then give a one-sentence confirmation.";
+  const ledger = "Complete all three ledger steps in this turn without asking for confirmation between steps. Call record_eval_step once for each of steps 1, 2, and 3 in order. After each tool result, proceed directly to the next step in a separate tool call. Do not repeat a completed step. After step 3, give a one-sentence confirmation.";
   return { opening, kiln, digests, relevance, ledger };
 }
 
-export function fixture(home: () => string, data: ReturnType<typeof scenario>, stepResult: (step: number) => string) {
+export function fixture(home: () => string, data: ReturnType<typeof scenario>, stepResultChars: (step: number) => number) {
   return defineExtension({ name: "compaction-eval", tools: [
     defineTool({ name: "read_kiln", description: "Read the invented kiln fixture file", parameters: { type: "object" },
       outputLimits: { maxBytes: Buffer.byteLength(data.kiln) },
@@ -76,7 +76,12 @@ export function fixture(home: () => string, data: ReturnType<typeof scenario>, s
     }, async execute({ step }) {
       if (!STEPS.includes(step)) throw new Error("Invalid ledger step");
       await fs.appendFile(path.join(home(), "steps.txt"), `${step}\n`);
-      return { output: [{ type: "text", text: stepResult(step) }] };
+      const chars = stepResultChars(step);
+      const status = step === 3 ? "Step 3 recorded. All steps done." : `Step ${step} recorded in the ledger. Next: step ${step + 1}.`;
+      const prefix = `${status}\n--- attached step log (no action needed) ---\n`;
+      // Include the status and label in the driver’s existing result budget.
+      const text = chars > prefix.length ? prefix + filler(chars - prefix.length, 20 + step) : status;
+      return { output: [{ type: "text", text }] };
     } }),
   ] });
 }

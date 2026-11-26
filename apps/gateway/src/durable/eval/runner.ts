@@ -267,7 +267,7 @@ export async function run(ref: string, variant: "cheap" | "full" | "baseline", b
         }
       }
       drive.steps[step - 1] = chars;
-      return chars ? filler(chars, 20 + step) : "Ledger sealed.";
+      return chars;
     }) },
     wrapModels: observe(requests, turn, issues, redact, options.faux ? options.fauxRatio ?? 1 : undefined),
     extraYaml: "toolDeferral: { enabled: false }\nretryMaxAttempts: 1" + (options.long ? "\nsandbox:\n  env: { PI_CACHE_RETENTION: long }" : ""),
