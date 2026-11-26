@@ -114,7 +114,8 @@ it("commits topics from a fenced keeper reply", async () => {
 }, 20_000);
 
 it("commits a keeper update from one fenced JSON block inside prose", async () => {
-  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
+  const onBatch = vi.fn();
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1, onBatch } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
   // Recorded Haiku reply r2-h4k04-08 (invented eval data): prose, one fenced block, then notes.
   const reply = [
@@ -159,9 +160,9 @@ it("commits a keeper update from one fenced JSON block inside prose", async () =
     for (let index = 0; index < 5; index++) {
       gateway.script("Noted.");
       expect((await gateway.send("local", "File clipping " + index, { clientSendId: "clipping-" + index })).status).toBe(200);
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(index + 1));
-      if (index === 2) await vi.waitFor(() => expect(failures()).toHaveLength(1));
+      await vi.waitFor(() => expect(onBatch).toHaveBeenCalledTimes(index + 1));
     }
+    expect(onBatch.mock.calls).toEqual([["committed"], ["committed"], ["failed"], ["committed"], ["committed"]]);
     // The recorded reply was committed: the next batch starts after it and sees the updated topic.
     expect(users(2)).toEqual(["File clipping 2"]);
     expect(prompt(2).topics.find(({ id }) => id === "t_2")?.note).toContain("Invented-text clippings continue to be filed on request");
@@ -179,8 +180,48 @@ it("commits a keeper update from one fenced JSON block inside prose", async () =
   }
 }, 20_000);
 
+it.each([
+  { name: "a bare update before a fenced update", reply: '{"topics":[{"kind":"open","title":"Clipping","note":"File it."}]}\n```json\n{"topics":[]}\n```', outcome: "failed" },
+  { name: "a fenced update before a bare update", reply: '```json\n{"topics":[]}\n```\n{"topics":[]}', outcome: "failed" },
+  { name: "two bare updates", reply: 'Updates: {"topics":[]} {"topics":[]}', outcome: "failed" },
+  { name: "an object inside a truncated array", reply: '[{"topics":[]}', outcome: "failed" },
+  { name: "an unterminated fence before a bare update", reply: 'Update:\n```json\n{"topics":[]}', outcome: "failed" },
+  { name: "a bare update after a prose brace pair", reply: 'Update for {clipping}: {"topics":[]}', outcome: "committed" },
+  { name: "a bare update with escaped quotes and nested delimiters", reply: 'Update: ' + JSON.stringify({ topics: [{ kind: "digest", title: "Clipping", note: 'Keep the text `"} [ {"` and the slash \\.' }] }) + ' (filed)', outcome: "committed" },
+])("handles keeper reply extraction: $name", async ({ reply, outcome }) => {
+  const onBatch = vi.fn();
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1, onBatch } });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const complete = vi.spyOn(MaintenanceCompletion, "complete").mockResolvedValueOnce(reply).mockResolvedValue('{"topics":[]}');
+  const warn = vi.spyOn(await import("../logging.js"), "logWarn");
+  try {
+    gateway.script("Noted.", "Filed.");
+    expect((await gateway.send("local", "Note the clipping.", { clientSendId: "note" })).status).toBe(200);
+    await vi.waitFor(() => expect(onBatch).toHaveBeenCalledTimes(1));
+    expect((await gateway.send("local", "File the clipping.", { clientSendId: "file" })).status).toBe(200);
+    await vi.waitFor(() => expect(onBatch).toHaveBeenCalledTimes(2));
+
+    const { messages }: { messages: { role: string; text: string }[] } = JSON.parse(complete.mock.calls[1]![0].prompt);
+    expect({
+      outcomes: onBatch.mock.calls,
+      users: messages.filter(({ role }) => role === "user").map(({ text }) => text),
+    }).toEqual({
+      outcomes: [[outcome], ["committed"]],
+      users: outcome === "failed" ? ["Note the clipping.", "File the clipping."] : ["File the clipping."],
+    });
+    const failures = warn.mock.calls.filter(([message]) => message === "Durable memory keeper failed");
+    expect(failures).toHaveLength(outcome === "failed" ? 1 : 0);
+    if (outcome === "failed") expect(failures[0]?.[1]).toMatchObject({ failureKind: "parse" });
+  } finally {
+    await gateway.close();
+    warn.mockRestore();
+    complete.mockRestore();
+  }
+}, 20_000);
+
 it("asks for JSON only and retries a keeper reply that holds no JSON", async () => {
-  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1 } });
+  const onBatch = vi.fn();
+  const gateway = await startDurableTestGateway({ keeper: { idleMs: 60_000, turns: 1, onBatch } });
   const { MaintenanceCompletion } = await import("../maintenance/completion.js");
   // Recorded Haiku reply h4-k04 (invented eval data): the model declines in prose and returns no JSON.
   const reply = [
@@ -195,9 +236,9 @@ it("asks for JSON only and retries a keeper reply that holds no JSON", async () 
     for (let index = 0; index < 2; index++) {
       gateway.script("Noted.");
       expect((await gateway.send("local", "File clipping " + index, { clientSendId: "clipping-" + index })).status).toBe(200);
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(index + 1));
-      await vi.waitFor(() => expect(failures()).toHaveLength(1));
+      await vi.waitFor(() => expect(onBatch).toHaveBeenCalledTimes(index + 1));
     }
+    expect(onBatch.mock.calls).toEqual([["failed"], ["committed"]]);
     expect(failures()[0]?.[1]).toMatchObject({ failureKind: "parse", replyChars: reply.length, fenced: false, prosePrefixed: true });
     // Not committed: the same messages are sent again.
     const { messages }: { messages: { role: string; text: string }[] } = JSON.parse(complete.mock.calls[1]![0].prompt);

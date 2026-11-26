@@ -48,18 +48,65 @@ function replyShape(value: unknown, depth = 0): string {
 }
 
 const WHOLE_FENCE = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```$/i;
-const FENCE_BLOCK = /^[ \t]*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*$/gim;
+const FENCE_LINE = /^[ \t]*```([^`\r\n]*)\r?$/gm;
 
-/** A reply that is not JSON may hold exactly one fenced block or, with no fence, one object inside prose. */
+function* bareObjects(text: string) {
+  const quoted = /"(?:[^"\\\r\n]|\\[^\r\n])*"/y;
+  const closers: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      quoted.lastIndex = i;
+      if (quoted.test(text)) i = quoted.lastIndex - 1;
+      else if (closers.length) throw new SyntaxError("Unterminated keeper reply string");
+    } else if (char === "{" || char === "[") {
+      if (!closers.length) start = i;
+      closers.push(char === "{" ? "}" : "]");
+    } else if (char === "}" || char === "]") {
+      if (closers.pop() !== char) throw new SyntaxError("Unbalanced keeper reply");
+      if (!closers.length && text[start] === "{") yield text.slice(start, i + 1);
+    }
+  }
+  if (closers.length) throw new SyntaxError("Unbalanced keeper reply");
+}
+
+function* replyCandidates(text: string) {
+  let offset = 0;
+  let bodyStart: number | undefined;
+  for (const fence of text.matchAll(FENCE_LINE)) {
+    if (bodyStart === undefined) {
+      yield* bareObjects(text.slice(offset, fence.index));
+      bodyStart = fence.index + fence[0].length;
+    } else if (!fence[1]?.trim()) {
+      yield text.slice(bodyStart, fence.index);
+      offset = fence.index + fence[0].length;
+      bodyStart = undefined;
+    }
+  }
+  if (bodyStart !== undefined) throw new SyntaxError("Unterminated keeper reply fence");
+  yield* bareObjects(text.slice(offset));
+}
+
 function replyJson(reply: string): unknown {
   const text = reply.trim();
   try {
     return JSON.parse(text.replace(WHOLE_FENCE, "$1"));
   } catch (error) {
-    const blocks = [...text.matchAll(FENCE_BLOCK)];
-    if (blocks.length === 1) return JSON.parse(blocks[0]![1]!);
-    if (!text.includes("```")) return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-    throw error;
+    let parsed: unknown;
+    for (const candidate of replyCandidates(text)) {
+      let value: unknown;
+      try {
+        value = JSON.parse(candidate);
+      } catch {
+        // A balanced span such as {clipping} can be prose, not payload.
+        continue;
+      }
+      if (parsed !== undefined) throw new SyntaxError("Multiple keeper reply candidates");
+      parsed = value;
+    }
+    if (parsed === undefined) throw error;
+    return parsed;
   }
 }
 
