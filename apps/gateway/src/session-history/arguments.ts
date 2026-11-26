@@ -21,6 +21,10 @@ export function invalidInput(message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code: "invalid_input" });
 }
 
+export function invalidResult(error: string) {
+  return { isError: true, code: "invalid_input", error };
+}
+
 export function parseDate(value: string | undefined, name: string): number | undefined {
   if (!value) return undefined;
   const time = Date.parse(value);

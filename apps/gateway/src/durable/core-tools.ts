@@ -3,6 +3,7 @@ import { executeAgentUpdateInstructions, executeSharedUpdateSystemFile, instruct
 import { captureSendFile } from "../mcp-apps/capture.js";
 import { executeGenerateImage, generateImageTool } from "../media/generate-tool.js";
 import { ContainerFileOutputAdapter } from "../sdk/container/file-output.js";
+import { legacyHistoryTool, runLegacyHistory } from "../session-history/legacy.js";
 import { executeSkillSave, skillSaveTool } from "../skills/tools.js";
 import type { mainPrincipal } from "./principal.js";
 
@@ -16,8 +17,12 @@ const sendFile = {
   },
 };
 
-export function durableCoreTools(config: GatewayConfig) {
-  return [sendFile, skillSaveTool, ...instructionTools, ...(config.imageGeneration?.enabled ? [generateImageTool] : [])];
+export function durableCoreTools(config: GatewayConfig, legacyHistoryEnabled = false) {
+  return [
+    sendFile, skillSaveTool, ...instructionTools,
+    ...(config.imageGeneration?.enabled ? [generateImageTool] : []),
+    ...(legacyHistoryEnabled ? [legacyHistoryTool] : []),
+  ];
 }
 
 export async function executeDurableCoreTool(
@@ -40,6 +45,9 @@ export async function executeDurableCoreTool(
       await captureSendFile(identity, args, { fileId, filename, mimeType, size, ...(input.title === undefined ? {} : { title: input.title }) });
       return "File sent to user";
     }
+    case "legacy_history":
+      signal?.throwIfAborted();
+      return runLegacyHistory(args, identity);
     case "skill_save":
       return executeSkillSave(args, { userId: principal.userId });
     case "agent_update_instructions":

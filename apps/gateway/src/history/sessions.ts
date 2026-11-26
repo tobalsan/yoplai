@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { WebCompletion } from "@yoplai/shared";
@@ -127,6 +128,10 @@ export async function readSessionFile(
     fs.readFile(params.filePath, "utf8"),
     fs.stat(params.filePath),
   ]);
+  return readSessionContents(params, raw, stat.birthtimeMs);
+}
+
+async function readSessionContents(params: SessionFileParams, raw: string, birthtimeMs: number, privateHistory = false) {
   const messages: SearchMessage[] = [];
   let firstUserMessage = "";
   let title: string | undefined;
@@ -135,7 +140,7 @@ export async function readSessionFile(
   let projectId: string | null = null;
   let messageCount = 0;
   let lastWebCompletion: WebCompletion | undefined;
-  let lastActivity = params.createdAt || stat.birthtimeMs;
+  let lastActivity = params.createdAt || birthtimeMs;
 
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -167,6 +172,10 @@ export async function readSessionFile(
         continue;
       }
       if (entry.type !== "history") continue;
+      if (privateHistory && (
+        (typeof entry.agentId === "string" && entry.agentId !== params.agentId) ||
+        (typeof entry.sessionId === "string" && entry.sessionId !== params.sessionId)
+      )) return null;
       if (entry.role !== "user" && entry.role !== "assistant") continue;
       const text = textFromContent(entry.content);
       if (!text) continue;
@@ -186,7 +195,7 @@ export async function readSessionFile(
     summary: {
       agentId: params.agentId,
       sessionId: params.sessionId,
-      createdAt: params.createdAt || stat.birthtimeMs,
+      createdAt: params.createdAt || birthtimeMs,
       lastActivity,
       messageCount,
       pinned,
@@ -198,12 +207,6 @@ export async function readSessionFile(
       ...(lastWebCompletion ? { lastWebCompletion } : {}),
     },
   };
-}
-
-export async function summarizeSessionFile(
-  params: SessionFileParams
-): Promise<SessionSummary | null> {
-  return (await readSessionFile(params))?.summary ?? null;
 }
 
 /** Current project of one session read from disk without writing; null when untagged or missing. */
@@ -246,11 +249,11 @@ export async function readSessionProjectId(
  * Owners come from persisted history entries (so removed agents resolve); `fallbackAgentIds`
  * parse legacy files. `onlyAgentIds` restricts the result to those owners.
  */
-async function listSessionSummaries(
+async function listSessionFiles(
   userId: string | undefined,
   fallbackAgentIds: string[],
-  onlyAgentIds?: string[]
-): Promise<SessionSummary[]> {
+  { onlyAgentIds, privateHistory = false }: { onlyAgentIds?: string[]; privateHistory?: boolean } = {},
+) {
   const dir = getUserHistoryDir(userId, CONFIG_DIR);
   let files: string[] = [];
   try {
@@ -258,10 +261,25 @@ async function listSessionSummaries(
   } catch {
     return [];
   }
+  const flags = privateHistory ? constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK : constants.O_RDONLY;
   const items = await Promise.all(
     files.map(async (file) => {
       if (!file.endsWith(".jsonl")) return null;
-      const raw = await fs.readFile(path.join(dir, file), "utf8").catch(() => "");
+      const filePath = path.join(dir, file);
+      const handle = await fs.open(filePath, flags).catch(() => null);
+      if (!handle) return null;
+      let raw: string;
+      let birthtimeMs: number;
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) return null;
+        birthtimeMs = stat.birthtimeMs;
+        raw = await handle.readFile("utf8");
+      } catch {
+        return null;
+      } finally {
+        await handle.close();
+      }
       const parsed = parseSessionFileName(file, fallbackAgentIds, readPersistedOwner(raw));
       if (
         !parsed ||
@@ -271,16 +289,13 @@ async function listSessionSummaries(
       ) {
         return null;
       }
-      return summarizeSessionFile({
-        filePath: path.join(dir, file),
-        ...parsed,
-        userId,
-      });
+      const result = await readSessionContents({ filePath, ...parsed, userId }, raw, birthtimeMs, privateHistory);
+      return result && { summary: result.summary, filePath, raw };
     })
   );
   return items
-    .filter((item): item is SessionSummary => item !== null)
-    .sort((a, b) => b.lastActivity - a.lastActivity);
+    .filter((item) => item !== null)
+    .sort((a, b) => b.summary.lastActivity - a.summary.lastActivity);
 }
 
 /** Interactive sessions of the given agent(s) for one user. */
@@ -289,7 +304,7 @@ export async function listAgentSessionSummaries(
   userId?: string
 ): Promise<SessionSummary[]> {
   const ids = Array.isArray(agentId) ? agentId : [agentId];
-  return listSessionSummaries(userId, ids, ids);
+  return (await listSessionFiles(userId, ids, { onlyAgentIds: ids })).map(({ summary }) => summary);
 }
 
 /** Interactive sessions of every owner, including removed agents; `configuredAgentIds` parse legacy files. */
@@ -297,5 +312,10 @@ export async function listAllSessionSummaries(
   userId: string | undefined,
   configuredAgentIds: string[]
 ): Promise<SessionSummary[]> {
-  return listSessionSummaries(userId, configuredAgentIds);
+  return (await listSessionFiles(userId, configuredAgentIds)).map(({ summary }) => summary);
+}
+
+/** A transcript and its access metadata must come from the same canonical file snapshot. */
+export function listAllSessionFiles(userId: string | undefined, configuredAgentIds: string[]) {
+  return listSessionFiles(userId, configuredAgentIds, { privateHistory: true });
 }
