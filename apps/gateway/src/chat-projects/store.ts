@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
@@ -47,6 +48,10 @@ export class ChatProjectStore {
     const projects = await Promise.all(ids.filter(isSafeChatProjectId).map((id) => this.get(id)));
     return projects.filter((project): project is ChatProject => project !== null)
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  }
+
+  exists(id: string): boolean {
+    return existsSync(this.file(id));
   }
 
   async get(id: string): Promise<ChatProject | null> {

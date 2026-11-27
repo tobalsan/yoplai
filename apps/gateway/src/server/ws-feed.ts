@@ -1,13 +1,21 @@
 import { WebSocket } from "ws";
 import type { FeedWindow, WsFeedMessage } from "@yoplai/shared";
-import type { DurableHost } from "../durable/host.js";
 import { feedDelta } from "../durable/feed-delta.js";
 
-type FeedDataFrame = Exclude<WsFeedMessage, { type: "feed_end" }>;
+type FeedScope = { agentId: string } | { roomId: string };
+type FeedDataFrame = Exclude<WsFeedMessage<FeedScope>, { type: "feed_end" }>;
+type FeedEndReason = "forbidden" | "unavailable";
+
+export type FeedWatch = {
+  mayRead: () => boolean | Promise<boolean>;
+  watch: (
+    signal: AbortSignal, publish: (window: FeedWindow, snapshot: boolean) => void, forbid: () => void,
+  ) => Promise<FeedEndReason>;
+};
 
 export class WsFeed {
   private readonly controller = new AbortController();
-  private host?: DurableHost;
+  private source?: FeedWatch;
   private previous?: FeedWindow;
   private pending?: { window: FeedWindow; snapshot: boolean };
   private busy = false;
@@ -16,8 +24,7 @@ export class WsFeed {
 
   constructor(
     private readonly ws: WebSocket,
-    private readonly agentId: string,
-    private readonly principal: string,
+    private readonly scope: FeedScope,
     private readonly credentialActive: () => boolean,
     private readonly checkSession: () => Promise<"active" | "invalid" | "forbidden">,
     private readonly closeInvalidCredential: () => void,
@@ -25,20 +32,20 @@ export class WsFeed {
     private readonly feedSendComplete?: () => Promise<void>,
   ) {}
 
-  async start(open: () => Promise<DurableHost | undefined>, limit: number) {
+  async start(open: () => Promise<FeedWatch | undefined>, missingMessage: string) {
     try {
-      this.host = await open();
+      this.source = await open();
       if (!this.active()) return;
-      if (!this.host) {
-        this.ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
+      if (!this.source) {
+        this.ws.send(JSON.stringify({ type: "error", message: missingMessage }));
         this.stop();
         return;
       }
       if (!await this.recheck()) return;
-      const reason = await this.host.watchFeed(this.principal, this.principal, limit, this.controller.signal, (window, snapshot) => {
+      const reason = await this.source.watch(this.controller.signal, (window, snapshot) => {
         this.pending = { window, snapshot: snapshot || this.sending || this.pending?.snapshot === true };
         this.flush();
-      });
+      }, () => this.end("forbidden"));
       if (reason === "forbidden" || await this.recheck()) this.end(reason);
     } catch {
       if (await this.recheck()) this.end("unavailable");
@@ -60,7 +67,7 @@ export class WsFeed {
       this.closeInvalidCredential();
       return false;
     }
-    const allowed = session === "active" && (!this.host || await this.host.mayReadFeed(this.principal, this.principal));
+    const allowed = session === "active" && (!this.source || await this.source.mayRead());
     if (!this.active()) return false;
     if (!allowed) this.end("forbidden");
     return allowed;
@@ -70,11 +77,12 @@ export class WsFeed {
     return !this.controller.signal.aborted && this.ws.readyState === WebSocket.OPEN && this.credentialActive();
   }
 
-  private end(reason: "forbidden" | "unavailable") {
-    if (this.active()) {
-      this.ws.send(JSON.stringify({ type: "feed_end", agentId: this.agentId, reason } satisfies WsFeedMessage));
-    }
+  private end(reason: FeedEndReason) {
+    const active = this.active();
     this.stop();
+    if (active) {
+      this.ws.send(JSON.stringify({ type: "feed_end", ...this.scope, reason } satisfies WsFeedMessage<FeedScope>));
+    }
   }
 
   private flush() {
@@ -84,7 +92,7 @@ export class WsFeed {
   }
 
   private async send() {
-    if (!await this.recheck() || !this.pending) {
+    if (!await this.recheck() || !this.active() || !this.pending) {
       this.stop();
       return;
     }
@@ -98,7 +106,7 @@ export class WsFeed {
       return;
     }
 
-    const base = { agentId: this.agentId, seq: ++this.seq, hasBefore: window.hasBefore, live: window.live };
+    const base = { ...this.scope, seq: ++this.seq, hasBefore: window.hasBefore, live: window.live };
     const frame: FeedDataFrame = delta ? { ...base, type: "feed_delta", ...delta }
       : { ...base, type: "feed_snapshot", items: window.items };
     this.previous = window;

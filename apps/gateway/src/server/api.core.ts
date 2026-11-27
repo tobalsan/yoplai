@@ -108,6 +108,9 @@ import { createMainAgentRoutes } from "../main-agent/routes.js";
 import { createDurableModeRoutes } from "../durable-mode/routes.js";
 import { createSidebarOrderRoutes } from "../durable-mode/sidebar-order.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
+import { feedWindowQuery } from "./feed-query.js";
+import { createRoomRoutes } from "../rooms/routes.js";
+import type { RoomStore } from "../rooms/store.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
 import { createSkillRoutes } from "../skills/routes.js";
 import { getSkillContext, resolveSkillActor } from "../skills/context.js";
@@ -636,7 +639,18 @@ api.route("/", createSidebarOrderRoutes({
   getVisibleAgentIds: async (c) => (await getVisibleAgents(c)).map((agent) => agent.id),
 }));
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
-api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
+api.route("/", createRoomRoutes({
+  getUserId: getRequestUserId,
+  getRooms: (c) => (c.env as { rooms: RoomStore }).rooms,
+  isMultiUser: () => isExtensionLoaded("multiUser"),
+  getSender: async (c) => durableWebSender(await getRequestAuthContext(c)),
+  canAccessAgent: async (c, agentId) => !!getAgent(agentId) && await callerHasAgentAccess(c, agentId),
+}));
+api.route("/", createChatProjectRoutes({
+  getUserId: getRequestUserId,
+  getAgentIds: () => loadConfig().agents.map((agent) => agent.id),
+  deleteRoom: (c, id, ownerUserId) => (c.env as { rooms?: RoomStore } | undefined)?.rooms?.deleteRoom(id, ownerUserId),
+}));
 api.route("/", createSkillRoutes({
   getContext: getSkillContext,
   tokens: new ImportTokenStore(CONFIG_DIR),
@@ -1717,14 +1731,9 @@ api.get("/agents/:id/memory", (c) => durableRoute(c, async (open, principal) => 
 }));
 
 api.get("/agents/:id/feed", (c) => durableRoute(c, async (open, principal) => {
-  const limit = Number(c.req.query("limit") ?? 50);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
-    return c.json({ error: "Feed limit must be between 1 and 200" }, 400);
-  }
-  const selectors = (["before", "after", "around"] as const).flatMap((direction) =>
-    (c.req.queries(direction) ?? []).map((id) => ({ direction, id })));
-  if (selectors.length > 1) return c.json({ error: "Use a single feed selector" }, 400);
-  const result = await (await open()).feedWindow(principal, principal, limit, selectors[0], c.req.query("thread"));
+  const query = feedWindowQuery(c.req);
+  if ("error" in query) return c.json(query, 400);
+  const result = await (await open()).feedWindow(principal, principal, query.limit, query.selector, c.req.query("thread"));
   if (result.forbidden) return c.json({ error: "Agent access denied" }, 403);
   return result.window ? c.json(result.window) : c.json({ error: "Message not found" }, 404);
 }));

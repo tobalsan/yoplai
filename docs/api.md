@@ -424,6 +424,53 @@ route. Forked messages keep their original IDs. Stop a running thread with
 `/abort` with the thread's `sessionId`. Thread chat uses HTTP. Main keeps its
 own WebSocket events, compatibility history, and channel delivery.
 
+## Rooms
+
+A room uses an existing chat project ID. The owner's first request for that
+room creates its record. The owner and current members can read the full message
+history. Chat project files, notes, and instructions retain owner-only access.
+Single-user mode uses `local` as the owner. Rooms are available independently of
+the Durable mode preference.
+
+| Request | Body | Success (200) |
+| --- | --- | --- |
+| `GET /api/rooms` | | `{ items: [{ id, name, role, ownerUserId }] }` |
+| `GET /api/rooms/:roomId` | | `{ id, name, role, ownerUserId, members, agents }` |
+| `POST /api/rooms/:roomId/members` | `{ userId }` | `{ ok: true }` |
+| `DELETE /api/rooms/:roomId/members/:userId` | | `{ ok: true }` |
+| `POST /api/rooms/:roomId/agents` | `{ agentId }` | `{ ok: true }` |
+| `DELETE /api/rooms/:roomId/agents/:agentId` | | `{ ok: true }` |
+| `POST /api/rooms/:roomId/messages` | `{ clientSendId, message }` | `{ id, seq, duplicate }` |
+| `GET /api/rooms/:roomId/feed` | | `FeedWindow` |
+| `GET /api/rooms/:roomId/feed/messages/:messageId` | | `FeedDetail` |
+
+Lists include rooms with records. Names come from the owner's project. The
+caller role is `owner` or `member`. The detail lists member user IDs and agent
+IDs. Missing and inaccessible rooms return 404. Management is owner-only and
+returns 403 for members. Adding an ineligible user, adding a member in
+single-user mode, removing the owner, and registering or removing an unavailable
+agent return 400. Agent registrations are stored for future use.
+
+Sends accept a string message and a client ID of 1–128 letters, digits, dashes
+or underscores. Attachments and stop commands are unsupported. Reusing a
+client ID in the same room as the same author returns the original ID and
+sequence with `duplicate: true`.
+
+Feed windows are ordered by increasing sequence. The default limit is 50 and the
+allowed range is 1–200. Supply at most one of `before`, `after`, or `around`
+with an `r_<seq>` anchor. A missing anchor or detail ID returns 404. Items expose
+`id`, `role: "user"`, `text`, `timestamp` (Unix milliseconds), `sender`
+(display name), and `surface: "web"`. Window `live` is null and details add
+empty `reasoning` and `toolCalls` arrays.
+
+Send `{ "type": "subscribeRoomFeed", "roomId": "orchard", "limit": 50 }` to
+`/ws`. The subscription uses the same snapshot and delta rules as the agent
+feed, with `roomId` as the feed identifier. It replaces the current feed
+subscription. Send `unsubscribeFeed` to stop. An inaccessible room returns
+a WebSocket `error`. Removing a member or deleting a project ends the affected
+watches with `feed_end` and `reason: "forbidden"`. Project deletion also
+removes its room data.
+
 ## Authentication
 
 Single-user mode has no Yoplai user boundary; keep it private. Multi-user extension guards `/api/*` and `/ws` using Better Auth cookie session or bearer API key. Both resolve same request auth context and agent/team access checks.

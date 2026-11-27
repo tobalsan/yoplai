@@ -1,3 +1,4 @@
+import { RoomStore } from "../rooms/store.js";
 import { ownsExtensionCatalogPath } from "./extension-catalog-policy.js";
 import { createInstructionWriter } from "../desktop/agent-instructions.js";
 import { createAgentRoutes } from "../desktop/agent-create.js";
@@ -310,8 +311,8 @@ app.all("/api/*", async (c) => {
 
   // The socket peer reaches the inner API only through this binding. The remote link routes use it for rate limits.
   const peerAddress = (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming?.socket?.remoteAddress;
-  const { durableWeb, opsMetrics } = (c.env as { durableWeb?: DurableWeb; opsMetrics?: OpsMetrics } | undefined) ?? {};
-  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress, durableWeb, opsMetrics });
+  const { durableWeb, opsMetrics, rooms } = (c.env as { durableWeb?: DurableWeb; opsMetrics?: OpsMetrics; rooms?: RoomStore } | undefined) ?? {};
+  return (getCurrentInnerApi() ?? api).fetch(request, { multiUserAuthContext: authContext, multiUserBearerVerified, peerAddress, durableWeb, opsMetrics, rooms });
 });
 
 app.all("/hooks/*", async (c) => {
@@ -420,8 +421,9 @@ export function startServer(
 
   const opsMetrics = new OpsMetrics();
   const durableWeb = new DurableWeb(runtime, opsMetrics, durableOptions, durableOptions?.channelContext);
+  const rooms = new RoomStore(CONFIG_DIR);
   const server = serve({
-    fetch: (request, env) => app.fetch(request, { ...env, durableWeb, opsMetrics }),
+    fetch: (request, env) => app.fetch(request, { ...env, durableWeb, opsMetrics, rooms }),
     port: resolvedPort,
     hostname: resolvedHost,
   });
@@ -495,7 +497,8 @@ export function startServer(
     canAccessAgent,
     getExtensionRuntime: currentExtensionRuntime,
   };
-  new WsBroker({ ...brokerOptions, durableWeb }).attach(server as import("http").Server, wsAuthAdapter);
+  new WsBroker({ ...brokerOptions, durableWeb, rooms }).attach(server as import("http").Server, wsAuthAdapter);
+  server.once("close", () => rooms.close());
   server.once("close", startDeviceLinks());
 
   setupGracefulShutdown(server);
