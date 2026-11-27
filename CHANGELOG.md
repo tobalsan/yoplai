@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Mention an agent in a shared room to get a public reply. Agents follow messages in room order, and newly added agents receive a handoff of prior discussion.
+
 - Find pre-Durable chats under **Older chats** in Cmd+K, open them read-only, and continue with their context in a new private thread.
 
 - Share a chat project’s room through the gateway API. Owners manage members and registered agents, and members can post, page through history, and watch live messages.

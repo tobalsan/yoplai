@@ -60,7 +60,7 @@ export function createRoomRoutes(deps: {
   }, true));
 
   async function changeAgent(c: Context, rooms: RoomStore, room: RoomSummary, agentId: unknown, add: boolean) {
-    if (typeof agentId !== "string" || !await deps.canAccessAgent(c, agentId)) {
+    if (typeof agentId !== "string" || (add && !await deps.canAccessAgent(c, agentId))) {
       return c.json({ error: "Accessible agent required" }, 400);
     }
     if (rooms.roleOf(room.id, room.ownerUserId) !== "owner") return notFound(c);

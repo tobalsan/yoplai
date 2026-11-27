@@ -420,8 +420,8 @@ export function startServer(
   if (resolvedPort !== 0) process.env.YOPLAI_GATEWAY_PORT = String(resolvedPort);
 
   const opsMetrics = new OpsMetrics();
-  const durableWeb = new DurableWeb(runtime, opsMetrics, durableOptions, durableOptions?.channelContext);
   const rooms = new RoomStore(CONFIG_DIR);
+  const durableWeb = new DurableWeb(runtime, opsMetrics, durableOptions, durableOptions?.channelContext, rooms);
   const server = serve({
     fetch: (request, env) => app.fetch(request, { ...env, durableWeb, opsMetrics, rooms }),
     port: resolvedPort,
@@ -452,7 +452,7 @@ export function startServer(
   );
   server.once("close", stopApps);
   server.once("close", () => {
-    void durableWeb.close().catch((error) => logError("Durable host shutdown failed", error));
+    void durableWeb.close().catch((error) => logError("Durable host shutdown failed", error)).finally(() => rooms.close());
   });
 
   if (webDist) {
@@ -498,14 +498,13 @@ export function startServer(
     getExtensionRuntime: currentExtensionRuntime,
   };
   new WsBroker({ ...brokerOptions, durableWeb, rooms }).attach(server as import("http").Server, wsAuthAdapter);
-  server.once("close", () => rooms.close());
   server.once("close", startDeviceLinks());
 
   setupGracefulShutdown(server);
 
   void startConfiguredInternalSocket(config, resolveHomeDir());
 
-  return Object.assign(server, { durableWeb });
+  return Object.assign(server, { durableWeb, rooms });
 }
 
 export { app };

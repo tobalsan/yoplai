@@ -491,20 +491,34 @@ Lists include rooms with records. Names come from the owner's project. The
 caller role is `owner` or `member`. The detail lists member user IDs and agent
 IDs. Missing and inaccessible rooms return 404. Management is owner-only and
 returns 403 for members. Adding an ineligible user, adding a member in
-single-user mode, removing the owner, and registering or removing an unavailable
-agent return 400. Agent registrations are stored for future use.
+single-user mode, removing the owner, and adding an unavailable agent return
+400. An owner can remove a registered agent after losing access to it.
 
 Sends accept a string message and a client ID of 1–128 letters, digits, dashes
 or underscores. Attachments and stop commands are unsupported. Reusing a
 client ID in the same room as the same author returns the original ID and
 sequence with `duplicate: true`.
 
+Mention a registered agent with `@<agentId>`. A word character immediately
+before the `@` prevents a match. Letters, digits, underscores and hyphens
+belong to the ID, so `@scout.notes` mentions `scout`. Matching ignores case
+unless registered IDs differ only by case, in which case the spelling must
+match exactly. Only members' messages can start a run by mentioning an agent.
+Untagged messages contribute context in room order, including during a turn.
+Added agents receive a handoff of earlier room history and begin to see new
+messages. Removing an agent withdraws its queued room inputs and aborts its run.
+Room turns use Durable for active, non-sandboxed agents regardless of account
+preferences.
+
 Feed windows are ordered by increasing sequence. The default limit is 50 and the
 allowed range is 1–200. Supply at most one of `before`, `after`, or `around`
-with an `r_<seq>` anchor. A missing anchor or detail ID returns 404. Items expose
-`id`, `role: "user"`, `text`, `timestamp` (Unix milliseconds), `sender`
-(display name), and `surface: "web"`. Window `live` is null and details add
-empty `reasoning` and `toolCalls` arrays.
+with an `r_<seq>` anchor. A missing anchor or detail ID returns 404. All items
+have `id`, `text`, and `timestamp` (Unix milliseconds). Member messages have
+`role: "user"`, the display name in `sender`, and `surface: "web"`. Public agent
+answers appear once with `role: "assistant"`, the agent name in `sender`, and
+`toolCallCount: 0`. Thread digests have `role: "user"` and
+`sender: "Thread digest"`. Window `live` is null and details add empty
+`reasoning` and `toolCalls` arrays.
 
 Send `{ "type": "subscribeRoomFeed", "roomId": "orchard", "limit": 50 }` to
 `/ws`. The subscription uses the same snapshot and delta rules as the agent

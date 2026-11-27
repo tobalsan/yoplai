@@ -18,12 +18,13 @@ const turnPlanInstructions = [
 export async function durableInstructions(
   agent: AgentConfig,
   config: GatewayConfig,
-  principal: ReturnType<typeof mainPrincipal>,
+  principal: Omit<ReturnType<typeof mainPrincipal>, "conversationFiles"> &
+    Partial<Pick<ReturnType<typeof mainPrincipal>, "conversationFiles">> & { room?: boolean },
   runtime: ExtensionRuntime,
   deferralSummary?: string,
 ) {
   const workspaceDir = resolveWorkspaceDir(agent.workspaceDir ?? agent.workspace);
-  const firstRun = await ensureWorkspaceFiles(workspaceDir);
+  const firstRun = !principal.room && await ensureWorkspaceFiles(workspaceDir);
   const [files, contributions] = await Promise.all([
     resolveSystemFiles({ workspaceDir, systemFiles: agent.system_files }),
     runtime.getPromptContributions(agent, config, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) }),
@@ -33,9 +34,9 @@ export async function durableInstructions(
     ...files.map(({ content }) => content),
     firstRun && FIRST_RUN_BOOTSTRAP_PROMPT,
     ...contributions,
-    selfImprovementPrompt(agent),
-    `Conversation files: ${principal.conversationFiles.runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
-    agent.codemode && codemodeGuidance(),
+    !principal.room && selfImprovementPrompt(agent),
+    principal.conversationFiles && `Conversation files: ${principal.conversationFiles.runtimePath}. Download and edit files here; use send_file to share the result with the user.`,
+    !principal.room && agent.codemode && codemodeGuidance(),
     deferralSummary,
     principal.sessionId === DURABLE_MAIN_SESSION_ID && turnPlanInstructions,
     "User messages carry a [from <name> via web] header.",

@@ -5,13 +5,13 @@ import { renderToolSignature } from "@earendil-works/pi-codemode";
 import { createToolDeferralCatalog } from "@yoplai/shared/tool-deferral";
 import type { ExtensionAgentTool, McpAppViewReference } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
-import { durableModeFor } from "../durable-mode/resolve.js";
+import { durableAgentEligible, durableModeFor } from "../durable-mode/resolve.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { executeExtensionAgentTool, getExtensionAgentTools } from "../extensions/tools.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
 import { durableCoreTools, executeDurableCoreTool } from "./core-tools.js";
 import { durableExtensionEnv } from "./env.js";
-import { mainPrincipal } from "./principal.js";
+import { mainIdentity, mainPrincipal } from "./principal.js";
 import { claimToolDescriptor, defineGatewayTool } from "./tool-definition.js";
 import { TURN_PLAN } from "./turn-plan.js";
 
@@ -27,17 +27,23 @@ export function createDurableTools(
   sessionRef: (id: ConversationId) => string,
   isBackground: (id: ConversationId) => boolean,
   isPersonal: (id: ConversationId) => boolean,
+  roomMembership: (id: ConversationId) => boolean | undefined,
   onInterrupted: () => void,
   sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
 ) {
   async function authority(id: ConversationId) {
     const owner = ownerOf(id);
     const agent = getAgent(agentId);
-    if (owner === undefined || !agent || !await durableModeFor(owner === "local" ? undefined : owner, agent)) {
+    const room = roomMembership(id);
+    if (owner === undefined || !agent || (room === undefined
+      ? !await durableModeFor(owner === "local" ? undefined : owner, agent)
+      : !room || !durableAgentEligible(agent))) {
       throw new DurableAccessDenied();
     }
     const config = loadConfig();
-    const principal = { ...mainPrincipal(agentId, owner, config, isBackground(id)), sessionId: sessionRef(id) };
+    const principal = room
+      ? { ...mainIdentity("local", config), sessionId: sessionRef(id), room: true as const }
+      : { ...mainPrincipal(agentId, owner, config, isBackground(id)), sessionId: sessionRef(id), room: false as const };
     if (principal.background) {
       await requireActorExecution(agentId, config, principal.userId, principal).catch(() => { throw new DurableAccessDenied(); });
     }
@@ -51,7 +57,9 @@ export function createDurableTools(
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
     const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update", TURN_PLAN]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
-      ...descriptors.filter(({ extensionId }) => runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
+      ...descriptors.filter(({ extensionId, name }) =>
+        (!principal.room || name !== "session_history") &&
+        runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
         .map((tool) => ({
           ...tool,
           kind: "extension" as const,
@@ -59,7 +67,8 @@ export function createDurableTools(
             ? tool.description + " Older chats from before Durable are in legacy_history."
             : tool.description,
         })),
-      ...durableCoreTools(config, legacyHistoryEnabled).map((tool) => ({ ...tool, kind: "core" as const, extensionId: "core", core: true })),
+      ...(principal.room ? [] : durableCoreTools(config, legacyHistoryEnabled))
+        .map((tool) => ({ ...tool, kind: "core" as const, extensionId: "core", core: true })),
     ];
     return all.map(({ name, description, parameters, outputSchema, extensionId, kind, core, namespace, extensionDescription }) => claimToolDescriptor(
       { name, description, parameters, outputSchema, extensionId, kind, core, namespace, extensionDescription }, names,
@@ -71,9 +80,9 @@ export function createDurableTools(
   const registered = new Map<string, Registered[]>();
 
   async function extensions(id: ConversationId) {
-    const { agent } = await authority(id);
+    const { agent, principal } = await authority(id);
     const descriptors = await describe(id);
-    const catalog = createToolDeferralCatalog(descriptors, agent.toolDeferral, { codemode: agent.codemode });
+    const catalog = createToolDeferralCatalog(descriptors, agent.toolDeferral, { codemode: !principal.room && agent.codemode });
     const groups = new Map<string, { namespace: ToolNamespace; tools: Registered[] }>();
     for (const tool of descriptors) {
       const meta = catalog.tools.get(tool.name);
@@ -97,7 +106,7 @@ export function createDurableTools(
           const { agent, config, principal, legacyHistoryEnabled } = await authority(api.conversationId);
           const { kind, canonicalName, extensionId } = tool;
           if (kind === "core") {
-            if (canonicalName === "legacy_history" && !legacyHistoryEnabled) {
+            if (principal.room || (canonicalName === "legacy_history" && !legacyHistoryEnabled)) {
               return { isError: true, error: "Tool is no longer available." };
             }
             return executeDurableCoreTool(canonicalName, args, config, principal, agent.id, api.callId, context.abortSignal);
@@ -136,9 +145,10 @@ export function createDurableTools(
     name: "yoplai-tool-permission",
     hooks: [hook(ToolTask, {
       async beforeTool(call, api, context) {
+        if (roomMembership(api.conversationId) === false) return { block: "Room agent membership changed." };
         const { agent, config, principal } = await authority(api.conversationId);
         await requireActorExecution(agent.id, config, principal.userId, principal);
-        if ((call.name === "codemode" && !agent.codemode) || (call.name === "tool_search" && agent.toolDeferral?.enabled === false)) {
+        if ((call.name === "codemode" && (principal.room || !agent.codemode)) || (call.name === "tool_search" && agent.toolDeferral?.enabled === false)) {
           return { block: "Tool is no longer available." };
         }
         const descriptor = (await selectedDescriptors(api, context)).find(({ name }) => name === call.name);
@@ -155,7 +165,7 @@ export function createDurableTools(
         const unloaded = result.diagnostics?.some(({ code }) => code === "tool_unavailable");
         const descriptors = await selectedDescriptors(api, context);
         const descriptor = descriptors.find(({ name }) => name === call.name);
-        const owner = ownerOf(api.conversationId);
+        const owner = roomMembership(api.conversationId) === undefined ? ownerOf(api.conversationId) : undefined;
         const userId = owner === "local" ? undefined : owner;
         const view = descriptor && !result.isError && owner !== undefined && getMcpAppView({ agentId, sessionId: sessionRef(api.conversationId), userId }, call.id);
         const hidden = descriptor?.extensionId === "taskLifecycle";

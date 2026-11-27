@@ -3,25 +3,29 @@ import type { AgentConfig, ChannelCommand } from "@yoplai/shared";
 import { CONFIG_DIR, getAgent, loadConfig } from "../config/index.js";
 import type { GatewayExtensionContext } from "../extensions/context.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
-import { durableModeFor } from "../durable-mode/resolve.js";
+import { durableAgentEligible, durableModeFor } from "../durable-mode/resolve.js";
 import { logError } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
 import type { DurableHostOptions } from "./host.js";
 import { durableStorePath } from "./store-path.js";
 import { DeliveryWorker, mayUseChannel } from "./delivery.js";
+import type { RoomEvent, RoomStore } from "../rooms/store.js";
 
 export class DurableWeb {
   private readonly hosts = new Map<string, ReturnType<typeof import("./host.js").DurableHost.open>>();
   private closing?: Promise<void>;
   private recovering?: Promise<void>;
   private readonly delivery?: DeliveryWorker;
+  private readonly unsubscribeRooms?: () => void;
 
   constructor(
     private readonly runtime: ExtensionRuntime,
     private readonly metrics: OpsMetrics,
     private readonly options: DurableHostOptions = {},
     channels?: GatewayExtensionContext,
+    private readonly rooms?: RoomStore,
   ) {
+    this.unsubscribeRooms = rooms?.onEvent((event) => this.onRoomEvent(event));
     if (!channels) return;
     this.delivery = new DeliveryWorker(async (signal) => {
       for (const opening of this.hosts.values()) {
@@ -59,6 +63,29 @@ export class DurableWeb {
     });
   }
 
+  private onRoomEvent(event: RoomEvent) {
+    if (!this.rooms || this.closing || event.type === "memberRemoved") return;
+    const { roomId } = event;
+    const wake = (agentId: string, host: ReturnType<DurableWeb["host"]> | undefined) => {
+      void host?.then((opened) => opened.wakeRoom(roomId)).catch((error: unknown) => {
+        logError("Could not open Durable room agent", error, { agentId, roomId });
+      });
+    };
+    if (event.type === "roomDeleted") {
+      for (const [agentId, host] of this.hosts) wake(agentId, host);
+      return;
+    }
+    if (event.type === "agentRemoved") {
+      wake(event.agentId, this.hosts.get(event.agentId));
+      return;
+    }
+    const agentIds = event.type === "agentAdded" ? [event.agentId] : this.rooms.agentsForRoom(roomId);
+    for (const agentId of agentIds) {
+      const agent = getAgent(agentId);
+      if (durableAgentEligible(agent)) wake(agentId, this.host(agent));
+    }
+  }
+
   private async backgroundAgent(agentId: string, owner: string) {
     if (this.closing) throw new Error("Gateway is shutting down.");
     const config = loadConfig();
@@ -80,7 +107,7 @@ export class DurableWeb {
     if (!host) {
       host = import("./host.js").then(({ DurableHost }) => DurableHost.open(CONFIG_DIR, agent, this.runtime, this.metrics, {
         ...this.options, wakeDelivery: this.options.deliveryFixture?.suppressWake ? undefined : this.delivery?.wake,
-      }));
+      }, this.rooms));
       this.hosts.set(agent.id, host);
       void host.catch(() => this.hosts.delete(agent.id));
     }
@@ -92,13 +119,14 @@ export class DurableWeb {
   }
 
   private async openExisting(agents: readonly AgentConfig[]) {
-    await Promise.all(agents.filter((agent) => !agent.sandbox?.enabled).map(async (agent) => {
+    await Promise.all(agents.filter(durableAgentEligible).map(async (agent) => {
       try {
         const store = await fs.stat(durableStorePath(CONFIG_DIR, agent.id)).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;
         });
         // Shutdown can begin while the filesystem check is pending.
-        if (store?.isFile() && !this.closing) await this.host(agent);
+        const hasRoomEvents = this.rooms?.roomsForAgent(agent.id).some(({ roomId }) => this.rooms!.lastSeq(roomId) > 0);
+        if ((store?.isFile() || hasRoomEvents) && !this.closing) await this.host(agent);
       } catch (error) {
         logError("Could not resume Durable agent", error, { agentId: agent.id });
       }
@@ -126,6 +154,7 @@ export class DurableWeb {
   }
 
   private async closeHosts() {
+    this.unsubscribeRooms?.();
     await this.delivery?.close();
     await Promise.all([...this.hosts.values()].map(async (opening) => {
       const host = await opening.catch(() => undefined);
