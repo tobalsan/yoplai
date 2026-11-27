@@ -57,7 +57,7 @@ export type StreamCallbacks = {
   ) => void;
   onDeviceApprovalResolved?: (resolved: WsDeviceApprovalResolved) => void;
   onDone: (meta?: DoneMeta) => void;
-  onError: (error: string) => void;
+  onError: (error: string, code?: string) => void;
 };
 
 export type StreamMessageOptions = {
@@ -250,7 +250,7 @@ export function streamMessage(
   sessionKey: string,
   onText: (text: string) => void,
   onDone: (meta?: DoneMeta) => void,
-  onError: (error: string) => void,
+  onError: StreamCallbacks["onError"],
   callbacks?: Partial<StreamCallbacks>,
   options?: StreamMessageOptions
 ): () => void {
@@ -301,6 +301,7 @@ export function streamMessage(
       }
       closeApprovals();
       terminated = true;
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
       onError(message);
     };
     socket.onmessage = (e) => {
@@ -309,6 +310,7 @@ export function streamMessage(
       if (event.type === "done" || event.type === "error" || event.type === "turn_exists") {
         terminated = true;
         closeApprovals();
+        socket.close();
       }
       if (event.type === "turn_exists") {
         callbacks?.onTurnExists?.();

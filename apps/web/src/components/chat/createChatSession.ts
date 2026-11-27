@@ -86,6 +86,7 @@ type SendRequest = {
   text: string;
   turnId?: string;
   onTaggedError?: () => void;
+  onRejected?: () => void;
   // The composer captures this before restore/compaction; later selections belong to the next send.
   pendingFiles: readonly PendingFile[];
 };
@@ -1328,7 +1329,7 @@ export function createChatSession(input: ChatSessionInput) {
   const restoreArchived = () => restoreSession("Failed to restore session.");
 
   const performSend = async (
-    { text, pendingFiles, turnId, onTaggedError }: SendRequest,
+    { text, pendingFiles, turnId, onTaggedError, onRejected }: SendRequest,
     resolve: (result: SendResult) => void,
     beforeSubmit?: () => void,
   ): Promise<void> => {
@@ -1374,6 +1375,10 @@ export function createChatSession(input: ChatSessionInput) {
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
     const isDurableSend = durableMain();
+    const reportDurableError = (error: string, code?: string) => {
+      input.onDurableError?.(error);
+      if (code === "send_rejected") onRejected?.();
+    };
     const streamOptions = {
       ...(isDurableSend ? { retryOnDisconnect: true } : {}),
       ...(turnId ? { turnId } : {}),
@@ -1417,8 +1422,8 @@ export function createChatSession(input: ChatSessionInput) {
 
     resolve({ kind: "sent" });
 
-    // If streaming in queue mode, send message without interrupting current stream
-    if (isStreaming() && queueMode === "queue") {
+    // Main follow-ups have their own send result regardless of the classic queue mode.
+    if (isStreaming() && (isDurableSend || queueMode === "queue")) {
       let queuedText = "";
       let queuedThinking = "";
       const queuedFiles: FileBlock[] = [];
@@ -1571,13 +1576,13 @@ export function createChatSession(input: ChatSessionInput) {
 
           if (queueCleanup) queueCleanup();
         },
-        (error) => {
+        (error, code) => {
           if (!isCurrentQueuedStream()) {
             if (queueCleanup) queueCleanup();
             return;
           }
           if (isDurableSend) {
-            input.onDurableError?.(error);
+            reportDurableError(error, code);
             queueCleanup?.();
             return;
           }
@@ -1797,7 +1802,7 @@ export function createChatSession(input: ChatSessionInput) {
           cleanup = null;
         });
       },
-      (error) => {
+      (error, code) => {
         if (!isCurrentDirectStream()) return;
         if (turnId) {
           onTaggedError?.();
@@ -1808,7 +1813,7 @@ export function createChatSession(input: ChatSessionInput) {
           return;
         }
         if (isDurableSend) {
-          input.onDurableError?.(error);
+          reportDurableError(error, code);
           resetStreamingState();
           cleanup = null;
           return;

@@ -1,10 +1,138 @@
 import { once } from "node:events";
+import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
+import type { FileAttachment } from "@yoplai/shared";
 import { describe, expect, it, vi } from "vitest";
 import { startDurableTestGateway } from "../test-utils/durable-gateway.js";
 
 describe("Durable web Main", () => {
+  it.each(["http", "ws"] as const)("delivers a web image to Main over %s and lists its filename", async (transport) => {
+    const gateway = await startDurableTestGateway();
+    try {
+      const inbound = path.join(gateway.home, "media", "inbound");
+      await fs.mkdir(inbound, { recursive: true });
+      const image = path.join(inbound, "upload.png");
+      const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP1sAAAAASUVORK5CYII=";
+      await fs.writeFile(image, Buffer.from(pixel, "base64"));
+      const options = {
+        clientSendId: "leaf-image",
+        attachments: [{ path: image, mimeType: "image/png", filename: "leaf.png" }],
+      };
+      if (transport === "ws") {
+        const sender = await gateway.send("local", "Identify this leaf.", options, "ws");
+        await vi.waitFor(() => expect(sender.events.some((event) => event.type === "done" || event.type === "error")).toBe(true));
+        expect(sender.events).toContainEqual(expect.objectContaining({ type: "done" }));
+      } else {
+        const response = await gateway.send("local", "Identify this leaf.", options);
+        expect(response.status, await response.text()).toBe(200);
+      }
+      const prompt = gateway.requests[0]?.messages.filter(({ role }) => role === "user").at(-1);
+      expect(prompt?.content).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "text", text: expect.stringContaining("Identify this leaf.") }),
+        { type: "image", mimeType: "image/png", data: pixel },
+      ]));
+
+      await fs.unlink(image);
+      const retry = await gateway.send("local", "Identify this leaf.", options, "ws");
+      await vi.waitFor(() => expect(retry.events.some((event) => event.type === "done" || event.type === "error")).toBe(true));
+      expect(retry.events).toContainEqual(expect.objectContaining({ type: "done" }));
+      expect(gateway.callCount()).toBe(1);
+      const feed = await gateway.request("local", "/api/agents/pilot/feed");
+      expect((await feed.json()).items).toMatchObject([
+        { role: "user", text: "Identify this leaf.\n\nAttachments: leaf.png" },
+        { role: "assistant", text: "The seedlings are ready." },
+      ]);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("sends a file-only Main message with extracted text and a path for a failed extraction", async () => {
+    const gateway = await startDurableTestGateway();
+    try {
+      const inbound = path.join(gateway.home, "media", "inbound");
+      await fs.mkdir(inbound, { recursive: true });
+      const notes = path.join(inbound, "orchard.txt");
+      const broken = path.join(inbound, "inventory.pdf");
+      await fs.writeFile(notes, "The east row has seventeen saplings.");
+      await fs.writeFile(broken, "This is not a valid PDF.");
+      const response = await gateway.send("local", "Attached file(s).", {
+        clientSendId: "orchard-files",
+        attachments: [
+          { path: notes, mimeType: "text/plain" },
+          { path: broken, mimeType: "application/pdf" },
+        ],
+      });
+      expect(response.status, await response.text()).toBe(200);
+      const prompt = gateway.requests[0]?.messages.filter(({ role }) => role === "user").at(-1)?.content;
+      expect(JSON.stringify(prompt)).toContain("The east row has seventeen saplings.");
+      expect(JSON.stringify(prompt)).toContain("Path: " + await fs.realpath(broken));
+      const feed = await gateway.request("local", "/api/agents/pilot/feed");
+      expect((await feed.json()).items[0]).toMatchObject({
+        role: "user", text: "Attached file(s).\n\nAttachments: orchard.txt, inventory.pdf",
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("refuses invalid Main attachments on both transports before saving or running the send", async () => {
+    const gateway = await startDurableTestGateway();
+    try {
+      await fs.mkdir(path.join(gateway.home, "media", "inbound"), { recursive: true });
+      const outside = path.join(gateway.home, "outside.txt");
+      await fs.writeFile(outside, "Fixture outside the inbound directory.");
+      for (const [attachments, reason] of [
+        [[{}], "Attachments must be an array of files with a path and MIME type."],
+        [{ path: outside }, "Attachments must be an array of files with a path and MIME type."],
+        [[{ path: outside, mimeType: "text/plain" }], "Attachment is missing or outside the inbound media directory."],
+      ] satisfies [unknown, string][]) {
+        const options = { clientSendId: "invalid-attachment", attachments: attachments as FileAttachment[] };
+        const response = await gateway.send("local", "Check these files.", options);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: reason });
+        const sender = await gateway.send("local", "Check these files.", options, "ws");
+        await vi.waitFor(() => expect(sender.events).toEqual([
+          { type: "error", code: "send_rejected", message: reason, userMessage: reason },
+        ]));
+      }
+      const feed = await gateway.request("local", "/api/agents/pilot/feed");
+      expect(await feed.json()).toMatchObject({ items: [], live: null });
+      expect(gateway.callCount()).toBe(0);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("reports unknown and forbidden Main agents as rejected sends over WebSocket", async () => {
+    const gateway = await startDurableTestGateway({ multiUser: true });
+    try {
+      const visibility = await gateway.request("alice", "/api/admin/forks/pilot/visibility", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ public: false }),
+      });
+      expect(visibility.status).toBe(200);
+      expect((await gateway.request("bob", "/api/agents/pilot/feed")).status).toBe(403);
+      const unknown = await gateway.socket("alice");
+      const denied = await gateway.socket("bob");
+      unknown.send({ type: "send", agentId: "missing", message: "Check the orchard.", clientSendId: "unknown-agent" });
+      denied.send({ type: "send", agentId: "pilot", message: "Check the orchard.", clientSendId: "forbidden-agent" });
+      await vi.waitFor(() => {
+        expect(unknown.events).toEqual([
+          { type: "error", code: "send_rejected", message: "Agent not found", userMessage: "Agent not found" },
+        ]);
+        expect(denied.events).toEqual([
+          { type: "error", code: "send_rejected", message: "Forbidden", userMessage: "Forbidden" },
+        ]);
+      });
+      expect(gateway.callCount()).toBe(0);
+      expect(await gateway.history("alice")).toMatchObject({ messages: [] });
+    } finally {
+      await gateway.close();
+    }
+  });
+
   it("answers and saves Main through a provider configured in models.json", async () => {
     const provider = createServer(async (req, res) => {
       const firstEndpoint = req.url === "/v1/chat/completions" && req.headers["x-provider-test"] === "first-endpoint";

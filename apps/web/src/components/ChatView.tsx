@@ -984,7 +984,8 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
     session.flushFinished();
 
     if (impersonationStatus()?.active) return;
-    const text = input().trim();
+    const draftText = input();
+    const text = draftText.trim();
     const stoppingMain = main && text === "/stop";
     if (!stoppingMain && ((main && submittingDurableDraft) || loading() || uploadingFiles())) return;
     const currentPendingFiles = pendingFiles();
@@ -1030,12 +1031,30 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
       setDurableSendError("");
       jumpToLatest();
     }
+    const draftScope = main ? currentSession() : undefined;
+    let rejected = false;
+    const restoreDraft = () => {
+      if (draftScope !== currentSession()) return;
+      rejected = true;
+      setUploadError("");
+      if (!input()) {
+        setInput(draftText);
+        resizeTextarea();
+      }
+      if (hasFiles) addPendingFiles(currentPendingFiles.map(({ file }) => file));
+    };
     try {
-      const result = await session.send({ text: message.text, pendingFiles: currentPendingFiles });
-      if (result.kind === "sent") {
+      const result = await session.send({
+        text: message.text,
+        pendingFiles: currentPendingFiles,
+        onRejected: main ? restoreDraft : undefined,
+      });
+      if (result.kind === "sent" && (!main || draftScope === currentSession())) {
         message.sent();
-        setInput("");
-        if (textareaRef) textareaRef.style.height = "auto";
+        if (!rejected && (!main || input() === draftText)) {
+          setInput("");
+          if (textareaRef) textareaRef.style.height = "auto";
+        }
         if (!main) scrollToBottom(true);
       }
     } finally {

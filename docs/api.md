@@ -256,14 +256,19 @@ for active non-sandboxed agents when `sessionId` is absent or equals
 `durable-main`. Logical keys such as `main` and `web-*` all resolve to that
 Main. An explicit legacy session id uses the legacy runner. Ordinary sends
 without a `clientSendId` also use the legacy runner. Main rejects project and
-desktop turn ids and attachments.
+desktop turn IDs. Main sends on either transport and HTTP private thread sends accept an `attachments` array
+with the `path`, `mimeType`, `filename` and `size` fields returned by
+`/api/media/upload`. Only `path` and `mimeType` are required. The feed shows
+the filenames, and the model receives images, extracted document text, or file
+paths. Uploads have a 25 MB limit.
 
 Both the agent list and agent detail include `durable: true` when Durable mode applies
 to that agent for the caller. Otherwise it omits the field.
 The send endpoint still waits for settlement and returns `payloads` and `meta`
 with `sessionId` and `durationMs`. A failed or withheld reply returns an error
 status with `{ error }`. The socket receives ordered public `text` across tool
-rounds, then `done` or `error`. If a provider retry replaces text the socket
+rounds, then `done` or `error`. Main send refusals carry `code: "send_rejected"`
+and a readable `userMessage`. If a provider retry replaces text the socket
 already sent, the send ends with `error` and history shows the stored reply.
 A Main WebSocket subscription receives the owner's `active_turn` snapshots
 and `history_updated` events for Main and their threads. Main events carry

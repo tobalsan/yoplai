@@ -1979,6 +1979,99 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
+  it("restores a refused Main draft and uploads the same file on retry", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const file = new File(["Orchard notes"], "orchard.txt", { type: "text/plain" });
+    uploadFilesMock.mockResolvedValue([{ path: "/media/upload.txt", filename: file.name, mimeType: file.type }]);
+    const { container, dispose } = renderView();
+    try {
+      await tick();
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      const send = () => container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+      const pendingFile = () => queryByRole(container, "button", { name: "Remove orchard.txt" });
+      fireEvent.input(composer, { target: { value: "  Check the orchard.  " } });
+      composer.dispatchEvent(createFileDragEvent("drop", [file]));
+      expect(pendingFile()).not.toBeNull();
+      send();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      expect(composer.value).toBe("");
+      expect(pendingFile()).toBeNull();
+
+      const reason = "Attachment is missing or outside the inbound media directory.";
+      streamMessageMock.mock.calls[0][5](reason, "send_rejected");
+      expect(composer.value).toBe("  Check the orchard.  ");
+      expect(pendingFile()).not.toBeNull();
+      expect(container.querySelector(".upload-error")?.textContent).toBe(reason);
+
+      send();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+      expect(uploadFilesMock).toHaveBeenNthCalledWith(2, [file], "agent-1");
+      streamMessageMock.mock.calls[1][4]();
+      expect(composer.value).toBe("");
+      expect(pendingFile()).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    { reason: "Forbidden", code: "send_rejected", nextText: "Next draft", restored: true },
+    { reason: "The provider failed after admission.", code: undefined, nextText: "", restored: false },
+  ])("keeps the right composer state when Main reports $reason", async ({ reason, code, nextText, restored }) => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const file = new File(["Orchard inventory"], "inventory.txt", { type: "text/plain" });
+    uploadFilesMock.mockResolvedValue([{ path: "/media/inventory.txt", filename: file.name, mimeType: file.type }]);
+    const { container, dispose } = renderView();
+    try {
+      await tick();
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      const pendingFile = () => queryByRole(container, "button", { name: "Remove inventory.txt" });
+      composer.dispatchEvent(createFileDragEvent("drop", [file]));
+      container.querySelector<HTMLButtonElement>(".send-btn")!.click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      expect(streamMessageMock.mock.calls[0][1]).toBe("Attached file(s).");
+      expect(pendingFile()).toBeNull();
+
+      if (nextText) fireEvent.input(composer, { target: { value: nextText } });
+      streamMessageMock.mock.calls[0][5](reason, code);
+      expect(composer.value).toBe(nextText);
+      expect(!!pendingFile()).toBe(restored);
+      expect(container.querySelector(".upload-error")?.textContent).toBe(reason);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("restores a refused Main attachment after a newer send in interrupt mode", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true, queueMode: "interrupt" });
+    const file = new File(["Orchard notes"], "concurrent.txt", { type: "text/plain" });
+    uploadFilesMock.mockResolvedValue([{ path: "/media/concurrent.txt", filename: file.name, mimeType: file.type }]);
+    let rejectFirstSend: (() => void) | undefined;
+    streamMessageMock.mockImplementationOnce((_id, _message, _key, _onText, _onDone, onError) => {
+      rejectFirstSend = () => onError("Forbidden", "send_rejected");
+      return () => { rejectFirstSend = undefined; };
+    });
+    const { container, dispose } = renderView();
+    try {
+      await tick();
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      fireEvent.input(composer, { target: { value: "First send" } });
+      composer.dispatchEvent(createFileDragEvent("drop", [file]));
+      fireEvent.keyDown(composer, { key: "Enter" });
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(1));
+      fireEvent.input(composer, { target: { value: "Second send" } });
+      fireEvent.keyDown(composer, { key: "Enter" });
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+
+      rejectFirstSend?.();
+      expect(composer.value).toBe("First send");
+      expect(queryByRole(container, "button", { name: "Remove concurrent.txt" })).not.toBeNull();
+      expect(container.querySelector(".upload-error")?.textContent).toBe("Forbidden");
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps a failed Durable Main turn visible after the chat reloads history", async () => {
     fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
     const { container, dispose } = renderView();

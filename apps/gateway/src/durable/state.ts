@@ -2,13 +2,19 @@ import { defineDoc, defineEntry, type ConversationId, type EntryId, type Submiss
 import type { ChannelActor, ChannelRoute, FileAttachment, RunFailureKind } from "@yoplai/shared";
 import type { WebSender } from "./contract.js";
 
-type WebInput = { timestamp: number; sender: WebSender; surface?: "web"; route: { surface: "web"; user: string }; text: string };
-type ChannelEntry = Pick<WebInput, "timestamp" | "text"> & {
+type WebInput = {
+  timestamp: number;
+  sender: WebSender;
+  surface?: "web";
+  route: { surface: "web"; user: string };
+  text: string;
+  attachments?: { filename: string; mimeType: FileAttachment["mimeType"] }[];
+};
+type ChannelEntry = Pick<WebInput, "timestamp" | "text" | "attachments"> & {
   surface: ChannelActor["surface"];
   actor: ChannelActor;
   owner: string;
   route: ChannelRoute;
-  attachments?: { filename: string; mimeType: FileAttachment["mimeType"] }[];
 };
 
 export type BackgroundChild = {

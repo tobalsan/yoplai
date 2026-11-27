@@ -1,5 +1,6 @@
 import type { IncomingMessage, Server } from "node:http";
 import { WebSocket, WebSocketServer, type VerifyClientCallbackAsync } from "ws";
+import { DURABLE_MAIN_SESSION_ID } from "@yoplai/shared";
 import type {
   AgentStatusChangeEvent,
   AgentStreamEvent,
@@ -11,9 +12,9 @@ import { agentEventBus, runAgent } from "../agents/index.js";
 import { getSessionEntry } from "../sessions/index.js";
 import { getSession, isLiveSessionHiddenFrom } from "../agents/sessions.js";
 import type { ExtensionRuntime } from "../extensions/runtime.js";
-import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
+import { DurableAttachmentError, durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
-import { durableModeFor } from "../durable-mode/resolve.js";
+import { durableModeEnabledFor, durableModeFor } from "../durable-mode/resolve.js";
 import { canUseRooms } from "../rooms/access.js";
 import type { RoomStore } from "../rooms/store.js";
 import { watchRoomFeed } from "../rooms/watch.js";
@@ -428,36 +429,48 @@ export class WsBroker {
     let finish: (() => void) | undefined;
     let queued = false;
     const failed = "Yoplai could not complete the turn.";
+    const rejectSend = (message: string) => this.send(ws, { type: "error", code: "send_rejected", message, userMessage: message });
     try {
+      const agent = getAgent(msg.agentId);
+      const userId = authContext?.session.userId;
+      const stop = isDurableStopCommand(msg.message);
+      const mayTargetMain = (stop || msg.clientSendId !== undefined) && targetsDurableMain(!!this.options.durableWeb, msg.sessionId);
+      // An unavailable agent cannot be used to resolve the caller's Main preference.
+      const refuse = async (message: string, code?: string) => {
+        if (mayTargetMain && (msg.sessionId === DURABLE_MAIN_SESSION_ID ||
+          (!agent?.sandbox?.enabled && await durableModeEnabledFor(userId)))) {
+          rejectSend(message);
+        } else {
+          this.send(ws, { type: "error", ...(code && { code }), message });
+        }
+      };
       const allowTurnId = tagged && request !== undefined && (await import("../desktop/guard.js")).desktopSocketAllowed(
         request, authAdapter.isMultiUserEnabled(), () => loadConfig().ui?.port ?? 3000
       );
       if (tagged && !allowTurnId) {
-        this.send(ws, { type: "error", code: "invalid_turn", message: "Only desktop chat accepts a turn ID." });
+        await refuse("Only desktop chat accepts a turn ID.", "invalid_turn");
         return;
       }
 
-      const agent = getAgent(msg.agentId);
       if (!agent || !isAgentActive(msg.agentId)) {
-        this.send(ws, { type: "error", message: "Agent not found" });
+        await refuse("Agent not found");
         return;
       }
       if (!(await authAdapter.canAccessAgent(authContext, msg.agentId))) {
-        this.send(ws, { type: "error", message: "Forbidden" });
+        await refuse("Forbidden");
         return;
       }
 
-      const stop = isDurableStopCommand(msg.message);
-      if (this.options.durableWeb && (stop || msg.clientSendId !== undefined) && targetsDurableMain(await durableModeFor(authContext?.session.userId, agent), msg.sessionId)) {
+      if (this.options.durableWeb && mayTargetMain && await durableModeFor(userId, agent)) {
         const parsed = parseDurableWebSend(msg);
         if (!parsed.ok) {
-          this.send(ws, { type: "error", message: parsed.error });
+          rejectSend(parsed.error);
           return;
         }
         if ("stop" in parsed) {
           const host = await this.options.durableWeb.host(agent);
-          const result = await host.stop(authContext?.session.userId ?? "local");
-          if ("forbidden" in result) this.send(ws, { type: "error", message: "Forbidden" });
+          const result = await host.stop(userId ?? "local");
+          if ("forbidden" in result) rejectSend("Forbidden");
           else this.send(ws, { type: "done", meta: { durationMs: 0, stopStatus: result.status } });
           return;
         }
@@ -519,6 +532,10 @@ export class WsBroker {
       queued = result?.meta.queued === true;
     } catch (err) {
       if (terminalEventSent) return;
+      if (err instanceof DurableAttachmentError) {
+        rejectSend(err.message);
+        return;
+      }
       this.send(ws, {
         type: "error",
         message: tagged ? failed : err instanceof Error ? err.message : String(err),
