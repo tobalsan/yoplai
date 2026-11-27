@@ -119,6 +119,8 @@ export type SessionSummary = {
 export type SessionSearchResult = SessionSummary & {
   match: "title" | "content";
   snippet?: string;
+  legacy?: boolean;
+  messageIndex?: number;
 };
 
 // History view mode

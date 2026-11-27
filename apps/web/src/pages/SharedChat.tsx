@@ -1,11 +1,8 @@
 import { useParams } from "@solidjs/router";
-import { Show, createMemo, createResource, createSignal } from "solid-js";
+import { Show, createResource, createSignal } from "solid-js";
 import { fetchSharedChat } from "../api/chat-shares";
-import { ChatTranscript, type ChatTranscriptSession } from "../components/chat/ChatTranscript";
-import { createAppViews } from "../components/chat/appViews";
-import { fullMessagesToSimpleView } from "../components/chat/chat-history";
+import { ReadOnlyTranscript } from "../components/chat/ReadOnlyTranscript";
 import chatViewStyles from "../components/chat/ChatView.css?inline";
-import { showToast } from "../lib/toast";
 
 export function SharedChat() {
   const params = useParams<{ token: string }>();
@@ -17,43 +14,6 @@ export function SharedChat() {
       return null;
     });
   });
-  const messages = () => chat()?.messages ?? [];
-  const simple = createMemo(() => fullMessagesToSimpleView(messages()));
-  const session: ChatTranscriptSession = {
-    appSessionId: () => null,
-    simpleMessages: simple,
-    fullMessages: messages,
-    streamingBlocks: () => [],
-    streamingText: () => "",
-    streamingThinking: () => "",
-    streamingToolCalls: () => [],
-    streamingFiles: () => [],
-    streamingTextAt: () => null,
-    streamingStartedAt: () => null,
-    isStreaming: () => false,
-    streamingFinished: () => false,
-    showInterrupted: () => false,
-    activeTools: () => [],
-    historyCursor: () => undefined,
-    loadingEarlier: () => false,
-    historyError: () => "",
-    compactStatusForCurrentSession: () => undefined,
-    copyTurnFor: () => undefined,
-    shouldAnimate: () => false,
-    loadEarlierHistory: async () => {},
-  };
-  const appViews = createAppViews(() => null, () => []);
-  const copyCode = async (event: MouseEvent) => {
-    if (!(event.target instanceof Element)) return;
-    const button = event.target.closest<HTMLButtonElement>("button[data-copy-code]");
-    if (!button) return;
-    try {
-      await navigator.clipboard.writeText(JSON.parse(button.dataset.copyCode!) as string);
-      showToast("Code copied", "success");
-    } catch {
-      showToast("Could not copy code. Try again.", "error");
-    }
-  };
   return <div class="chat-view hero-sent shared-chat">
     <style>{chatViewStyles}</style>
     <main class="chat-main">
@@ -65,11 +25,7 @@ export function SharedChat() {
               <h1>{current().title}</h1>
               <span>{current().agentName}</span>
             </header>
-            <div class="chat-body">
-              <div class="messages" onClick={(event) => void copyCode(event)}>
-                <ChatTranscript agentId={current().agentId} session={session} viewMode={() => "simple"} appViews={appViews} readOnly />
-              </div>
-            </div>
+            <ReadOnlyTranscript agentId={current().agentId} messages={current().messages} />
           </>}
         </Show>
       </Show>

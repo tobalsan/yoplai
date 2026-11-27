@@ -47,7 +47,7 @@ export type SimpleSummaryMessage = {
   timestamp: number;
 };
 
-export type SimpleViewMessage = Message | SimpleToolMessage | SimpleThinkingMessage | SimpleSummaryMessage;
+export type SimpleViewMessage = (Message | SimpleToolMessage | SimpleThinkingMessage | SimpleSummaryMessage) & { historyIndex?: number };
 
 const COMPACT_SUMMARY_PREFIX = "[COMPACTED CONTEXT SUMMARY]";
 
@@ -147,10 +147,10 @@ export function fullMessagesToSimpleView(
     messages.filter((message): message is FullToolResultMessage => message.role === "toolResult")
       .map((message) => [message.toolCallId, message])
   );
-  for (const message of messages) {
+  for (const [historyIndex, message] of messages.entries()) {
     const summary = compactSummary(message);
     if (summary !== undefined) {
-      simple.push({ id: crypto.randomUUID(), role: "compaction", content: summary, timestamp: message.timestamp });
+      simple.push({ historyIndex, id: crypto.randomUUID(), role: "compaction", content: summary, timestamp: message.timestamp });
       continue;
     }
     if (message.role === "toolResult" || message.role === "system") continue;
@@ -163,6 +163,7 @@ export function fullMessagesToSimpleView(
         .map((block) => block.text)
         .join("\n");
       simple.push({
+        historyIndex,
         id: crypto.randomUUID(),
         role: "user",
         content: text,
@@ -177,6 +178,7 @@ export function fullMessagesToSimpleView(
     for (const block of message.content) {
       if (block.type === "text" && block.text.trim() && !isNoReply(block.text)) {
         simple.push({
+          historyIndex,
           id: crypto.randomUUID(),
           role: "assistant",
           content: block.text,
@@ -185,6 +187,7 @@ export function fullMessagesToSimpleView(
         });
       } else if (block.type === "thinking" && block.thinking.trim()) {
         simple.push({
+          historyIndex,
           id: crypto.randomUUID(),
           role: "thinking",
           content: block.thinking,
@@ -193,6 +196,7 @@ export function fullMessagesToSimpleView(
         });
       } else if (block.type === "toolCall") {
         simple.push({
+          historyIndex,
           id: block.id,
           parentToolCallId: block.parentToolCallId,
           result: results.get(block.id),
@@ -205,6 +209,7 @@ export function fullMessagesToSimpleView(
         });
       } else if (block.type === "file") {
         simple.push({
+          historyIndex,
           id: crypto.randomUUID(),
           role: "assistant",
           content: "",

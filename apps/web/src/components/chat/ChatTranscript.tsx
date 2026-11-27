@@ -65,7 +65,7 @@ function messageItem<T>(segment: ActivitySegment<T>): T | undefined {
 }
 
 
-export function ChatTranscript(props: { agentId: string; gateway?: string; gatewayPending?: boolean; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews; readOnly?: boolean; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
+export function ChatTranscript(props: { agentId: string; gateway?: string; gatewayPending?: boolean; session: ChatTranscriptSession; viewMode: Accessor<HistoryViewMode>; appViews: AppViews; readOnly?: boolean; highlightHistoryIndex?: number; onUserMessage?: (viewKey: string, text: string) => Promise<void> }) {
   const { simpleMessages, fullMessages, streamingBlocks: liveBlocks, streamingText, streamingThinking, streamingToolCalls, streamingFiles, streamingTextAt, streamingStartedAt, isStreaming, streamingFinished, showInterrupted, activeTools, historyCursor, loadingEarlier, historyError, compactStatusForCurrentSession, copyTurnFor, shouldAnimate, loadEarlierHistory } = props.session;
   const streamingBlocks = createMemo(() => liveBlocks().filter((block) => block.type !== "toolCall" || !block.view || !props.appViews.isLiveDuplicate(block.id)));
   const viewMode = props.viewMode;
@@ -182,6 +182,7 @@ export function ChatTranscript(props: { agentId: string; gateway?: string; gatew
                             <div
                               class={`message ${item().role}${skipAnim ? " no-anim" : ""}`}
                               classList={{
+                                "legacy-message-highlight": props.highlightHistoryIndex !== undefined && item().historyIndex === props.highlightHistoryIndex,
                                 "system-message": !!item().meta?.failure,
                                 "tool-interrupted": item().meta?.failure?.kind === "tool_interrupted",
                               }}

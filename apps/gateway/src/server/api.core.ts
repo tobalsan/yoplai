@@ -90,8 +90,11 @@ import {
   parseSessionFileName,
   sessionIdIsInteractive,
   readSessionFile,
+  type DurableSearchScope,
 } from "../history/sessions.js";
 import { matchSession } from "../history/session-search.js";
+import { parseHistoryJsonl } from "../history/legacy-transcript.js";
+import { ownLegacySessions } from "../session-history/legacy.js";
 import { CONFIG_DIR } from "../config/index.js";
 import { CredentialStore } from "../credentials/store.js";
 import { createConnectionRoutes } from "../credentials/routes.js";
@@ -912,10 +915,15 @@ api.get("/agents/status", async (c) => {
 });
 
 // Shared sidebar scope: filename ownership, visible agents, interactive sessions and archive state.
-async function listSidebarSessions(c: Context, includeArchived = false) {
-  const userId = await getRequestUserId(c);
+async function listSidebarSessions(
+  agents: AgentConfig[], userId: string | undefined,
+  { includeArchived = false, durable, query }: {
+    includeArchived?: boolean;
+    durable?: DurableSearchScope;
+    query?: string;
+  } = {},
+) {
   const historyDir = getUserHistoryDir(userId, CONFIG_DIR);
-  const agents = await getVisibleAgents(c);
   const agentIds = agents.map((agent) => agent.id);
   let entries: Array<{ dir: string; file: string }> = [];
   try {
@@ -929,19 +937,16 @@ async function listSidebarSessions(c: Context, includeArchived = false) {
   const items = await Promise.all(
     entries.map(async ({ dir, file }) => {
       const parsed = parseSessionFileName(file, agentIds);
-      if (!parsed || !sessionIdIsInteractive(parsed.sessionId)) return null;
+      if (!parsed || durable?.owners.has(parsed.agentId) || !sessionIdIsInteractive(parsed.sessionId)) return null;
       const agent = agents.find((item) => item.id === parsed.agentId);
       const session = await readSessionFile({
         filePath: path.join(dir, file),
         ...parsed,
         userId,
-      });
-      if (!session || (!includeArchived && session.summary.archived !== null)) return null;
+      }, { includeArchived, query, durable });
+      if (!session) return null;
       const avatar = resolveAvatarForApi(agent);
-      return {
-        ...session,
-        summary: { ...session.summary, ...(avatar ? { avatar } : {}) },
-      };
+      return { ...session, ...(avatar ? { avatar } : {}) };
     })
   );
 
@@ -950,19 +955,39 @@ async function listSidebarSessions(c: Context, includeArchived = false) {
 
 // GET /api/agents/sessions - list past lead-agent sessions
 api.get("/agents/sessions", async (c) => {
-  const sessions = await listSidebarSessions(c, c.req.query("includeArchived") === "1");
-  return c.json({ items: sessions.map((session) => session.summary).sort((a, b) => b.lastActivity - a.lastActivity) });
+  const sessions = await listSidebarSessions(
+    await getVisibleAgents(c), await getRequestUserId(c), { includeArchived: c.req.query("includeArchived") === "1" },
+  );
+  return c.json({ items: sessions.sort((a, b) => b.lastActivity - a.lastActivity) });
 });
 
-// GET /api/agents/sessions/search - search the caller's sidebar history without an index.
+// GET /api/agents/sessions/search - search the caller's sidebar history.
 api.get("/agents/sessions/search", async (c) => {
   const query = c.req.query("q") ?? "";
   if (!query.trim()) return c.json({ items: [] });
-  const sessions = await listSidebarSessions(c);
-  const items = sessions.flatMap(({ summary, messages }) => {
-    const match = matchSession(summary.title || summary.firstUserMessage || summary.sessionId, messages, query);
-    return match ? [{ ...summary, ...match }] : [];
-  });
+  const userId = await getRequestUserId(c);
+  const agents = await getVisibleAgents(c);
+  const configured = getActiveAgents();
+  const durableIds = new Set((await Promise.all(configured.map(async (agent) =>
+    await durableModeFor(userId, agent) ? agent.id : undefined,
+  ))).filter((id) => id !== undefined));
+  const visibleDurableIds = agents.filter(({ id }) => durableIds.has(id)).map(({ id }) => id);
+  const [sessions, legacySessions] = await Promise.all([
+    listSidebarSessions(agents, userId, {
+      query, durable: durableIds.size ? { owners: durableIds, configured: configured.map(({ id }) => id) } : undefined,
+    }),
+    visibleDurableIds.length ? ownLegacySessions(visibleDurableIds, userId) : [],
+  ]);
+  const legacyHits = [];
+  for (const { summary, raw } of legacySessions) {
+    if (summary.archived !== null) continue;
+    const label = summary.title || summary.firstUserMessage || summary.sessionId;
+    const match = matchSession(label, [], query) ?? matchSession(label, parseHistoryJsonl(raw).messages, query);
+    if (!match) continue;
+    const avatar = resolveAvatarForApi(agents.find(({ id }) => id === summary.agentId));
+    legacyHits.push({ ...summary, ...match, ...(avatar ? { avatar } : {}), legacy: true });
+  }
+  const items = [...sessions, ...legacyHits];
   items.sort((a, b) => Number(b.match === "title") - Number(a.match === "title") || b.lastActivity - a.lastActivity);
   return c.json({ items: items.slice(0, 50) });
 });
@@ -1656,13 +1681,13 @@ api.post("/agents/:id/compact", async (c) => {
   }
 });
 
-async function durableRoute(c: Context, action: (open: () => Promise<DurableHost>, principal: string) => Promise<Response>) {
+async function durableRoute(c: Context, action: (open: () => Promise<DurableHost>, principal: string, userId?: string) => Promise<Response>) {
   const agent = getAgent(c.req.param("id") ?? "");
   const userId = await getRequestUserId(c);
   if (!agent || !await durableModeFor(userId, agent)) return c.json({ error: "Agent not found" }, 404);
   const open = () => (c.env as { durableWeb: DurableWeb }).durableWeb.host(agent);
   try {
-    return await action(open, userId ?? "local");
+    return await action(open, userId ?? "local", userId);
   } catch (error) {
     if (error instanceof ThreadError) return c.json({ error: error.message }, error.status);
     throw error;
@@ -1701,6 +1726,29 @@ api.post("/agents/:id/threads/:threadId/close", (c) => durableRoute(c, async (op
 
 api.post("/agents/:id/threads/:threadId/reopen", (c) => durableRoute(c, async (open, principal) =>
   c.json(await (await open()).reopenThread(principal, c.req.param("threadId")))));
+
+async function legacySessionRoute(c: Context, createThread: boolean) {
+  const agentId = c.req.param("id") ?? "";
+  // Aggregate names such as "sessions" can also be real agents and skip the outer guard.
+  if (!await callerHasAgentAccess(c, agentId)) return c.json({ error: "Agent access denied" }, 403);
+  return durableRoute(c, async (open, principal, userId) => {
+    const sessionId = c.req.param("sessionId");
+    if (!isSafeSessionId(sessionId)) return c.json({ error: "Invalid session id" }, 400);
+    const session = (await ownLegacySessions([agentId], userId)).find(({ summary }) => summary.sessionId === sessionId);
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const { summary, raw } = session;
+    const chat = {
+      agentId, sessionId, title: summary.title ?? "", archived: summary.archived !== null,
+      messages: parseHistoryJsonl(raw).messages,
+    };
+    return createThread
+      ? c.json(await (await open()).continueLegacySession(principal, chat), 201)
+      : c.json(chat);
+  });
+}
+
+api.get("/agents/:id/legacy-sessions/:sessionId", (c) => legacySessionRoute(c, false));
+api.post("/agents/:id/legacy-sessions/:sessionId/continue", (c) => legacySessionRoute(c, true));
 
 api.post("/agents/:id/stop", (c) => durableRoute(c, async (open, principal) => {
   const text = await c.req.text();

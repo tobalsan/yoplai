@@ -381,3 +381,60 @@ describe("session search", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 });
+
+it("walks current results and Older chats in order and opens the exact legacy anchor", async () => {
+  vi.useFakeTimers();
+  fetchMock.mockImplementation(async (request) => {
+    switch (String(request)) {
+      case "/api/agents/sessions/search?q=tiles":
+        return Response.json({ items: [
+          { agentId: "orchard", sessionId: "catalog", title: "Tiles in the catalog", legacy: true },
+          { agentId: "remote@studio", sessionId: "remote", title: "Linked tiles", legacy: true, messageIndex: 5 },
+          { agentId: "bench", sessionId: "live", title: "Live tiles" },
+          { agentId: "orchard", sessionId: "tile#plan%23", title: "Old samples", legacy: true, messageIndex: 0 },
+        ] });
+      case "/api/agents": return Response.json([{ id: "orchard" }]);
+      case "/api/agents/orchard": return Response.json({ id: "orchard", name: "Orchard", durable: true });
+      case "/api/agents/orchard/feed/search?q=tiles&limit=20":
+        return Response.json({ hits: [{ id: "m_3", role: "user", snippet: "Today's tiles", timestamp: 100 }] });
+      default: throw new Error("Unexpected request");
+    }
+  });
+  mount();
+  const search = async () => {
+    key("k");
+    typeQuery("tiles");
+    await vi.advanceTimersByTimeAsync(200);
+  };
+  const press = (key: string) => input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  const options = () => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+  const group = () => container.querySelector('[role="group"]');
+  const active = () => document.getElementById(input().getAttribute("aria-activedescendant") ?? "");
+
+  await search();
+  expect(group()?.textContent).toContain("Older chats");
+  expect(options().map((option) => option.querySelector(".session-search-title")?.textContent)).toEqual([
+    "Today's tiles", "Linked tiles", "Live tiles", "Tiles in the catalog", "Old samples",
+  ]);
+  expect(options().map((option) => group()?.contains(option))).toEqual([false, false, false, true, true]);
+  expect(active()).toBe(options()[0]);
+  for (const index of [1, 2, 3]) {
+    press("ArrowDown");
+    expect(active()).toBe(options()[index]);
+  }
+  press("Enter");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(location.pathname + location.search + location.hash).toBe("/chat/orchard?session=catalog");
+
+  await search();
+  press("ArrowUp");
+  expect(active()).toBe(options()[4]);
+  press("Enter");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(location.pathname + location.search + location.hash).toBe("/chat/orchard?session=tile%23plan%2523#legacy-message=0");
+
+  await search();
+  options()[1].click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(location.pathname + location.search + location.hash).toBe("/chat/remote%40studio?session=remote");
+});

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Find pre-Durable chats under **Older chats** in Cmd+K, open them read-only, and continue with their context in a new private thread.
+
 - Share a chat project’s room through the gateway API. Owners manage members and registered agents, and members can post, page through history, and watch live messages.
 
 - Opt in to an agents-only sidebar with a saved order, Main and thread tabs, and a Memory panel. Dashboard Chat opens Main alongside the dashboard. Turn checklists show step notes and attention warnings.

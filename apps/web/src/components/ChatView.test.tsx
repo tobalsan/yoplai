@@ -681,7 +681,7 @@ describe("ChatView abort handling", () => {
     routeState.new = "1";
     const { container, dispose } = renderView();
     try {
-      expect(setSearchParamsMock).toHaveBeenCalledOnce();
+      await waitFor(() => expect(setSearchParamsMock).toHaveBeenCalledOnce());
       await waitFor(() => expect(queryByTitle(container, "Dashboard dashboard")).not.toBeNull());
       const panel = queryByRole(container, "complementary")!;
       expect(queryByTitle(panel, "Dashboard dashboard")?.getAttribute("src")).toBe("/d/garden");
@@ -2841,6 +2841,75 @@ describe("ChatView abort handling", () => {
     const seam = queryByText(container, "Context compacted")!;
     expect(seam.getAttribute("aria-description")).toBe("Threshold · 2 older requests carried");
     expect(seam.compareDocumentPosition(queryByText(container, "Four pears")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it.each([
+    { agentId: "agent-1", routeId: "agent-1" },
+    { agentId: "agent-1@desk", routeId: "agent-1%40desk" },
+  ])("opens a local legacy bookmark read-only before continuing ($agentId)", async ({ agentId, routeId }) => {
+    let resolveAgent!: (value: { id: string; name: string; durable: true }) => void;
+    fetchAgentMock.mockImplementation(() => new Promise((resolve) => { resolveAgent = resolve; }));
+    setCapabilitiesForTests({ agents: [agentId] });
+    routeState.agentId = routeId;
+    routeState.session = "tile#plan%23";
+    history.replaceState(null, "", `/chat/${routeId}?session=tile%23plan%2523#legacy-message=3`);
+    const viewer = `/api/agents/${routeId}/legacy-sessions/tile%23plan%2523`;
+    let finishContinue!: (value: Response) => void;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === viewer) return Response.json({
+        agentId, sessionId: "tile#plan%23", title: "Tile samples", archived: true,
+        messages: [
+          { role: "system", content: [{ type: "text", text: "Internal note" }], timestamp: 1 },
+          { role: "user", content: [{ type: "text", text: "Check the tile stock." }], timestamp: 2 },
+          { role: "toolResult", content: [{ type: "text", text: "Shelf checked." }], timestamp: 3, toolCallId: "stock", toolName: "count" },
+          { role: "assistant", content: [{ type: "text", text: "Blue tiles are in stock." }], timestamp: 4 },
+          { role: "user", content: [{ type: "text", text: "Set them aside." }], timestamp: 4 },
+        ],
+      });
+      if (input === viewer + "/continue" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => { finishContinue = resolve; });
+      }
+      return Response.json({});
+    });
+    const scrolled: string[] = [];
+    vi.mocked(Element.prototype.scrollIntoView).mockImplementation(function (this: Element) {
+      scrolled.push(this.textContent ?? "");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = renderView();
+    await tick();
+    expect(subscribeToRealtimeMock).not.toHaveBeenCalled();
+    expect(subscribeToSessionMock).not.toHaveBeenCalled();
+    resolveAgent({ id: agentId, name: "Orchard", durable: true });
+    await waitFor(() => expect(queryByText(container, "Older chat, read-only")).not.toBeNull());
+    expect(queryByRole(container, "heading", { name: "Tile samples" })).not.toBeNull();
+    expect(queryByRole(container, "textbox")).toBeNull();
+    expect(queryByRole(container, "button", { name: "Send" })).toBeNull();
+    expect(streamMessageMock).not.toHaveBeenCalled();
+    expect(fetchFullHistoryMock).not.toHaveBeenCalled();
+    expect(fetchSimpleHistoryMock).not.toHaveBeenCalled();
+    expect(subscribeToRealtimeMock).not.toHaveBeenCalled();
+    expect(subscribeToSessionMock).not.toHaveBeenCalled();
+    expect(queryByText(container, "Check the tile stock.")).not.toBeNull();
+    const answer = queryByText(container, "Blue tiles are in stock.");
+    expect(answer?.closest(".legacy-message-highlight")).not.toBeNull();
+    expect(queryByText(container, "Set them aside.")?.closest(".legacy-message-highlight")).toBeNull();
+    await vi.waitFor(() => expect(scrolled).toEqual([expect.stringContaining("Blue tiles are in stock.")]));
+
+    const button = getByRole(container, "button", { name: "Continue" }) as HTMLButtonElement;
+    button.click();
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(fetchMock.mock.calls.filter(([url]) => url === viewer + "/continue")).toHaveLength(1);
+    finishContinue(new Response(null, { status: 503 }));
+    await waitFor(() => expect(queryByRole(container, "alert")?.textContent).toContain("Could not continue"));
+    expect(queryByText(container, "Blue tiles are in stock.")).not.toBeNull();
+    expect(button.disabled).toBe(false);
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    button.click();
+    finishContinue(Response.json({ id: "new private#thread" }, { status: 201 }));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith(`/chat/${routeId}?thread=new%20private%23thread`));
   });
 
   it("opens a linked Durable message, pages in both directions, and falls back on a missing hash", async () => {

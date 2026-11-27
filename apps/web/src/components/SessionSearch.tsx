@@ -1,12 +1,14 @@
 import {
   batch,
   createEffect,
+  createMemo,
   createSignal,
   createUniqueId,
   For,
   onCleanup,
   onMount,
   Show,
+  type Accessor,
 } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { stripBase } from "../lib/path";
@@ -63,6 +65,10 @@ export function SessionSearch() {
 type DurableHit = FeedHit & { agentId: string; agentName: string; avatar?: string };
 type SearchHit = SessionSearchResult | DurableHit;
 
+function isOlderChat(item: SearchHit): boolean {
+  return "sessionId" in item && item.legacy === true && !item.agentId.includes("@");
+}
+
 async function searchDurableChats(query: string, signal: AbortSignal, publish: (hits: DurableHit[]) => void) {
   const readAgents = async <T,>(suffix = ""): Promise<T> => {
     const response = await apiFetch(`${API_BASE}/agents${suffix}`, { signal });
@@ -89,6 +95,10 @@ function SearchPalette(props: { onClose: () => void }) {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal("");
   const [selected, setSelected] = createSignal(0);
+  const olderStart = createMemo(() => {
+    const index = items().findIndex(isOlderChat);
+    return index < 0 ? items().length : index;
+  });
   let movedSelection = false;
   onMount(() => {
     const previous = document.body.style.overflow;
@@ -101,7 +111,9 @@ function SearchPalette(props: { onClose: () => void }) {
     props.onClose();
     const chat = `/chat/${encodeURIComponent(item.agentId)}`;
     if ("sessionId" in item) {
-      navigate(`${chat}?session=${encodeURIComponent(item.sessionId)}`);
+      const anchor = isOlderChat(item) && item.messageIndex !== undefined
+        ? `#legacy-message=${item.messageIndex}` : "";
+      navigate(`${chat}?session=${encodeURIComponent(item.sessionId)}${anchor}`);
     } else {
       navigate(`${chat}#m=${encodeURIComponent(item.id)}`, { state: { feedSearch: Date.now() } });
     }
@@ -122,7 +134,11 @@ function SearchPalette(props: { onClose: () => void }) {
       const publish = () => {
         if (!current) return;
         const selectedHit = items()[selected()];
-        const next = [...durableHits, ...sessionHits];
+        const next = [
+          ...durableHits,
+          ...sessionHits.filter((hit) => !isOlderChat(hit)),
+          ...sessionHits.filter(isOlderChat),
+        ];
         batch(() => {
           setItems(next);
           setSelected(movedSelection ? Math.max(0, next.indexOf(selectedHit)) : 0);
@@ -151,6 +167,44 @@ function SearchPalette(props: { onClose: () => void }) {
       controller.abort();
     });
   });
+  const renderOption = (item: SearchHit, index: Accessor<number>) => (
+    <button
+      class="session-search-result"
+      id={`${listId}-${index()}`}
+      type="button"
+      role="option"
+      tabIndex={-1}
+      aria-selected={selected() === index()}
+      onClick={() => open(item)}
+    >
+      <span class="session-search-avatar" aria-hidden="true">
+        <AgentAvatarFill avatar={item.avatar} agentId={item.agentId} />
+      </span>
+      <span class="session-search-copy">
+        <span class="session-search-title">
+          <Highlight
+            text={"sessionId" in item ? item.title || item.firstUserMessage || item.sessionId : item.snippet}
+            query={query()}
+          />
+        </span>
+        <span class="session-search-meta">
+          {"sessionId" in item ? item.agentId : `${item.agentName} · ${item.role === "user" ? "User" : "Assistant"}`} ·{" "}
+          <time
+            title={new Date("sessionId" in item ? item.lastActivity : item.timestamp).toLocaleString()}
+          >
+            {relativeTime("sessionId" in item ? item.lastActivity : item.timestamp)}
+          </time>
+        </span>
+        <Show when={"sessionId" in item && item.snippet}>
+          {(snippet) => (
+            <span class="session-search-snippet">
+              <Highlight text={snippet()} query={query()} />
+            </span>
+          )}
+        </Show>
+      </span>
+    </button>
+  );
   return (
     <div class="session-search">
       <Modal title="Search chats" titleHidden onClose={props.onClose} size="lg">
@@ -208,46 +262,15 @@ function SearchPalette(props: { onClose: () => void }) {
             role="listbox"
             aria-label="Matching chats"
           >
-            <For each={items()}>
-              {(item, index) => (
-                <button
-                  class="session-search-result"
-                  id={`${listId}-${index()}`}
-                  type="button"
-                  role="option"
-                  tabIndex={-1}
-                  aria-selected={selected() === index()}
-                  onClick={() => open(item)}
-                >
-                  <span class="session-search-avatar" aria-hidden="true">
-                    <AgentAvatarFill avatar={item.avatar} agentId={item.agentId} />
-                  </span>
-                  <span class="session-search-copy">
-                    <span class="session-search-title">
-                      <Highlight
-                        text={"sessionId" in item ? item.title || item.firstUserMessage || item.sessionId : item.snippet}
-                        query={query()}
-                      />
-                    </span>
-                    <span class="session-search-meta">
-                      {"sessionId" in item ? item.agentId : `${item.agentName} · ${item.role === "user" ? "User" : "Assistant"}`} ·{" "}
-                      <time
-                        title={new Date("sessionId" in item ? item.lastActivity : item.timestamp).toLocaleString()}
-                      >
-                        {relativeTime("sessionId" in item ? item.lastActivity : item.timestamp)}
-                      </time>
-                    </span>
-                    <Show when={"sessionId" in item && item.snippet}>
-                      {(snippet) => (
-                        <span class="session-search-snippet">
-                          <Highlight text={snippet()} query={query()} />
-                        </span>
-                      )}
-                    </Show>
-                  </span>
-                </button>
-              )}
-            </For>
+            <For each={items().slice(0, olderStart())}>{renderOption}</For>
+            <Show when={olderStart() < items().length}>
+              <div role="group" aria-labelledby={`${listId}-older`}>
+                <h2 class="session-search-group-title" id={`${listId}-older`}>Older chats</h2>
+                <For each={items().slice(olderStart())}>
+                  {(item, index) => renderOption(item, () => olderStart() + index())}
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
       </Modal>
@@ -272,6 +295,7 @@ function SearchPalette(props: { onClose: () => void }) {
         border-top: 1px solid var(--border-subtle); scrollbar-width: thin;
         scrollbar-color: var(--scrollbar-thumb) transparent;
       }
+      .session-search-group-title { margin: 8px 12px 4px; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
       .session-search-result {
         display: flex; gap: 12px; width: 100%; min-height: 64px; padding: 12px;
         border: none; border-radius: 6px; background: transparent; color: var(--text-primary);
