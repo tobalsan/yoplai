@@ -12,7 +12,7 @@ import { z } from "zod";
 import { WebSocket } from "ws";
 import { writeTestAgent, writeTestV3Config } from "./v3-config.js";
 
-type TestUser = "local" | "alice" | "bob";
+type TestUser = "local" | "alice" | "bob" | "carol";
 type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
 type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
@@ -201,7 +201,7 @@ export async function startDurableTestGateway({
     await startAuth?.();
     await open();
     if (multiUser) {
-      for (const user of ["alice", "bob"] as const) {
+      for (const user of ["alice", "bob", "carol"] as const) {
         const response = await fetch(base + "/api/auth/sign-up/email", {
           method: "POST",
           headers: { "Content-Type": "application/json", Origin: "http://localhost:3000" },

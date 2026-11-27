@@ -23,6 +23,7 @@
 | `oauth/`                     | Encrypted per-agent extension OAuth connections |
 | `webhook-secrets.json`       | Webhook URL secrets                             |
 | `auth.db`                    | Multi-user Better Auth SQLite database          |
+| `rooms.sqlite`               | Gateway-wide chat room membership, agent registrations, and message log (SQLite WAL) |
 | `audit.db`                   | Gateway settings audit, created on first change; secret values redacted |
 | `projects.json`              | Project numeric ID counter                      |
 | `threadit/<agentId>/delivering/` | Threadit reply-in-flight markers, one file per board message |
@@ -42,6 +43,14 @@ mode uses the fixed key `main:local`. Main creation and its mapping commit
 together, before the separately committed input. Durable web history is
 projected directly from the store. Include it in stopped-gateway snapshots with
 the rest of the agent's data.
+
+## Chat rooms
+
+The gateway opens `rooms.sqlite` on room use. A room uses its owner's chat
+project ID. Project files, notes, and instructions stay in the owner's
+`chat-projects/<id>/` directory. The SQLite database holds the owner, member and
+agent IDs, and sequenced messages. Treat the database and its SQLite WAL
+sidecars as private conversation data.
 
 ## Project data
 

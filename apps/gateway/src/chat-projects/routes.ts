@@ -14,6 +14,7 @@ import { extractProjectFile } from "./extraction.js";
 export function createChatProjectRoutes(deps: {
   getUserId: (c: Context) => Promise<string | undefined>;
   getAgentIds: () => string[];
+  deleteRoom?: (c: Context, id: string, ownerUserId: string) => void;
 }) {
   const routes = new Hono();
   routes.get("/chat-projects", async (c) => {
@@ -126,7 +127,10 @@ export function createChatProjectRoutes(deps: {
     if (!isSafeChatProjectId(id)) return c.json({ error: "Invalid project id" }, 400);
     const userId = await deps.getUserId(c);
     const store = new ChatProjectStore(CONFIG_DIR, userId);
-    if (!await store.get(id)) return c.json({ error: "Project not found" }, 404);
+    if (!await store.get(id)) {
+      deps.deleteRoom?.(c, id, userId ?? "local");
+      return c.json({ error: "Project not found" }, 404);
+    }
     const dir = getUserHistoryDir(userId, CONFIG_DIR);
     const files = await fs.readdir(dir).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
@@ -155,6 +159,7 @@ export function createChatProjectRoutes(deps: {
       }
     }
     await store.delete(id);
+    deps.deleteRoom?.(c, id, userId ?? "local");
     return c.json({ ok: true });
   });
   return routes;

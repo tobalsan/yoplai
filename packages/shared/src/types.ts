@@ -2674,6 +2674,7 @@ export type WsUnsubscribeStatusMessage = {
 
 export type WsClientMessage =
   | { type: "subscribeFeed"; agentId: string; limit?: number }
+  | { type: "subscribeRoomFeed"; roomId: string; limit?: number }
   | { type: "unsubscribeFeed" }
   | WsSendMessage
   | WsSubscribeMessage
@@ -2812,14 +2813,18 @@ export type FeedWindow = {
   live: FeedLive | null;
 };
 
-type FeedFrame = Pick<FeedWindow, "hasBefore" | "live"> & { agentId: string; seq: number };
-export type WsFeedMessage =
+type FeedFrame = Pick<FeedWindow, "hasBefore" | "live"> & { seq: number };
+export type WsFeedMessage<Scope = { agentId: string }> = Scope & (
   | (FeedFrame & { type: "feed_snapshot"; items: FeedItem[] })
   | (FeedFrame & { type: "feed_delta"; upsert: FeedItem[]; dropBefore?: string })
-  | { type: "feed_end"; agentId: string; reason: "forbidden" | "unavailable" };
+  | { type: "feed_end"; reason: "forbidden" | "unavailable" }
+);
+
+export type WsRoomFeedMessage = WsFeedMessage<{ roomId: string }>;
 
 export type WsServerMessage =
   | WsFeedMessage
+  | WsRoomFeedMessage
   | StreamEvent
   | WsHistoryUpdatedEvent
   | WsSessionResetEvent

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Share a chat project’s room through the gateway API. Owners manage members and registered agents, and members can post, page through history, and watch live messages.
+
 - Opt in to an agents-only sidebar with a saved order, Main and thread tabs, and a Memory panel. Dashboard Chat opens Main alongside the dashboard. Turn checklists show step notes and attention warnings.
 
 - Send files in eligible Slack and Mattermost DMs, continue private Durable threads with 24-hour idle digests, and stop the active DM or thread turn from chat.

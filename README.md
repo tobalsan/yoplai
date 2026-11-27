@@ -276,6 +276,8 @@ and open finished traces at the final output; see [scheduler run monitoring](pac
 
 For coding-agent architecture and ownership, see [`docs/llms.md`](docs/llms.md).
 
+The [Rooms API](docs/api.md#rooms) lets project owners share a conversation with other gateway users. Project files, notes, and instructions stay private to the owner.
+
 Personal chat projects support reusable instructions and files on the project page. Upload documents or images, view the file list, and delete files there; agents receive small extracted documents directly and can read larger originals from the project files directory (read-only `/project-files` in sandboxes). Uploads have a 25MB limit; extraction failures retain the original file and show a reason. PDFs with a text layer have no page-count limit; extraction remains capped at 250,000 characters. OCR reads the first 30 scanned pages, with a neutral partial-text note when more are skipped. Chat and project uploads accept JSON and PowerPoint (`.pptx`, `.ppt`), alongside Markdown, text, CSV, PDF, Word, Excel and images.
 
 Files an agent sends in a project chat are saved to the project automatically, using the same upload limits and text extraction. Re-sending identical bytes with the same name deduplicates agent-added files across conversations; different content keeps a separate suffixed name. The tool reports whether the file was added, already present, or rejected by the project; chat delivery succeeds even when the project add fails.

@@ -14,6 +14,10 @@ import type { ExtensionRuntime } from "../extensions/runtime.js";
 import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain } from "../durable/contract.js";
 import type { DurableWeb } from "../durable/web.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
+import { canUseRooms } from "../rooms/access.js";
+import type { RoomStore } from "../rooms/store.js";
+import { watchRoomFeed } from "../rooms/watch.js";
+import { DEFAULT_FEED_LIMIT, INVALID_FEED_LIMIT, validFeedLimit } from "./feed-query.js";
 import { WsFeed } from "./ws-feed.js";
 import { normalizeRunRequest } from "./run-request.js";
 import { RelayWsBridge } from "../relay/ws.js";
@@ -63,7 +67,7 @@ export class WsBroker {
   private readonly deviceContexts = new Map<WebSocket, RequestAuthContext>();
   private authAdapter: WsBrokerAuthAdapter | undefined;
 
-  constructor(private readonly options: { recheckMs?: number; durableWeb?: DurableWeb; feedSendComplete?: () => Promise<void> } = {}) {}
+  constructor(private readonly options: { recheckMs?: number; durableWeb?: DurableWeb; rooms?: RoomStore; feedSendComplete?: () => Promise<void> } = {}) {}
   private readonly statusSubscribers = new Set<WebSocket>();
   /** Counts the subscribe and unsubscribe messages of each page socket. A late authorization checks it. */
   private readonly subscribeGenerations = new Map<WebSocket, number>();
@@ -240,27 +244,46 @@ export class WsBroker {
     if (!tagged && bridge.handle(raw)) return;
     const authContext = this.authContexts.get(ws) ?? null;
 
-    if (msg.type === "subscribeFeed") {
+    if (msg.type === "subscribeFeed" || msg.type === "subscribeRoomFeed") {
       this.feeds.get(ws)?.stop();
-      const limit = msg.limit === undefined ? 50 : msg.limit;
-      const agent = typeof msg.agentId === "string" ? getAgent(msg.agentId) : undefined;
-      const durableWeb = this.options.durableWeb;
+      const limit = msg.limit === undefined ? DEFAULT_FEED_LIMIT : msg.limit;
+      if (!validFeedLimit(limit)) {
+        this.send(ws, { type: "error", message: INVALID_FEED_LIMIT });
+        return;
+      }
+
       const userId = authContext?.session.userId;
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
-        this.send(ws, { type: "error", message: "Feed limit must be between 1 and 200" });
-      } else if (!agent || !durableWeb) {
-        this.send(ws, { type: "error", message: "Agent not found" });
+      const principal = userId ?? "local";
+      const headers = new Headers(request?.headers as Record<string, string> | undefined);
+      const checkSession = async () => authContext && !authContext.session.id.startsWith("apikey:") && authAdapter.recheckFeedSession
+        ? authAdapter.recheckFeedSession(headers, authContext)
+        : "active" as const;
+      const scope = msg.type === "subscribeRoomFeed" ? { roomId: msg.roomId } : { agentId: msg.agentId };
+      const feed = new WsFeed(ws, scope, () => this.socketActive(ws), checkSession,
+        () => this.closeInvalidCredential(ws), () => this.feeds.delete(ws), this.options.feedSendComplete);
+      this.feeds.set(ws, feed);
+
+      if (msg.type === "subscribeRoomFeed") {
+        const { rooms } = this.options;
+        const { roomId } = msg;
+        void feed.start(async () => {
+          if (!rooms || typeof roomId !== "string" || !await canUseRooms(userId, authAdapter.isMultiUserEnabled()) || !await rooms.resolve(roomId, principal)) return;
+          return {
+            mayRead: async () => await canUseRooms(userId, authAdapter.isMultiUserEnabled()) && rooms.mayAccess(roomId, principal),
+            watch: (signal, publish, forbid) => watchRoomFeed(rooms, roomId, principal, limit, signal, publish, forbid),
+          };
+        }, "Room not found");
       } else {
-        const headers = new Headers(request?.headers as Record<string, string> | undefined);
-        const checkSession = async () => authContext && !authContext.session.id.startsWith("apikey:") && authAdapter.recheckFeedSession
-          ? authAdapter.recheckFeedSession(headers, authContext)
-          : "active" as const;
-        const feed = new WsFeed(ws, agent.id, userId ?? "local", () => this.socketActive(ws),
-          checkSession, () => {
-            this.closeInvalidCredential(ws);
-          }, () => this.feeds.delete(ws), this.options.feedSendComplete);
-        this.feeds.set(ws, feed);
-        void feed.start(async () => await durableModeFor(userId, agent) ? durableWeb.host(agent) : undefined, limit);
+        const agent = typeof msg.agentId === "string" ? getAgent(msg.agentId) : undefined;
+        const { durableWeb } = this.options;
+        void feed.start(async () => {
+          if (!agent || !durableWeb || !await durableModeFor(userId, agent)) return;
+          const host = await durableWeb.host(agent);
+          return {
+            mayRead: () => host.mayReadFeed(principal, principal),
+            watch: (signal, publish) => host.watchFeed(principal, principal, limit, signal, publish),
+          };
+        }, "Agent not found");
       }
       return;
     }
