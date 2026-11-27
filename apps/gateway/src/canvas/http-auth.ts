@@ -1,14 +1,13 @@
 import type { DashboardActor } from "./policy.js";
 import { getAgent, loadConfig } from "../config/index.js";
-
 import { durableModeFor } from "../durable-mode/resolve.js";
 
 type Auth = { user?: { id?: string } };
 
 export async function resolveDashboardHttpActor(auth: unknown, agentId?: string): Promise<DashboardActor> {
-  const agent = agentId ? getAgent(agentId) : undefined;
+  const durableChat = (userId?: string) => agentId ? durableModeFor(userId, getAgent(agentId)) : false;
   if (!loadConfig().extensions?.multiUser?.enabled) {
-    return { userId: "local", eligible: true, hasAgentAccess: true, durableChat: await durableModeFor(undefined, agent) };
+    return { userId: "local", eligible: true, hasAgentAccess: true, durableChat: await durableChat() };
   }
   const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
   const runtime = getMultiUserRuntime();
@@ -19,7 +18,7 @@ export async function resolveDashboardHttpActor(auth: unknown, agentId?: string)
   const access = !!currentAuth && !!agentId && await hasAgentAccess(currentAuth, agentId);
   return {
     userId, eligible: !!account, superadmin: account?.role === "superadmin", hasAgentAccess: access,
-    durableChat: access && await durableModeFor(userId, agent),
+    durableChat: access && await durableChat(userId),
   };
 }
 

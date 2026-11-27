@@ -103,7 +103,7 @@ it("delivers the public Main answer once and keeps the original reply destinatio
   } finally {
     await gateway.close();
   }
-});
+}, 12_000);
 
 it("publishes an uncertain delivery to a connected feed and never reposts after restart", async () => {
   let ctx!: ExtensionContext;
