@@ -27,6 +27,7 @@ export function createDurableTools(
   sessionRef: (id: ConversationId) => string,
   isBackground: (id: ConversationId) => boolean,
   isPersonal: (id: ConversationId) => boolean,
+  deviceTurnToken: (id: ConversationId) => string | undefined,
   roomMembership: (id: ConversationId) => boolean | undefined,
   onInterrupted: () => void,
   sessionHistory: (id: ConversationId, args: unknown) => Promise<unknown>,
@@ -121,7 +122,7 @@ export function createDurableTools(
           const { found, result } = await executeExtensionAgentTool(
             agent, canonicalName, args, config, runtime, principal.sessionId, principal.userId,
             ({ label }) => api.output(label + "\n"), context.abortSignal,
-            { ...principal, env: durableExtensionEnv(agent, config), toolCallId: api.callId },
+            { ...principal, env: durableExtensionEnv(agent, config), toolCallId: api.callId, deviceTurnToken: deviceTurnToken(api.conversationId) },
           );
           return found ? result : { isError: true, error: "Tool is no longer available." };
         })),

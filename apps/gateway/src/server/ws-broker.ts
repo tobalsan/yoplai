@@ -468,10 +468,12 @@ export class WsBroker {
         this.durableSends.set(ws, pending);
         try {
           const host = await this.options.durableWeb.host(agent);
+          const token = "deviceTurnToken" in msg ? msg.deviceTurnToken : undefined;
+          const deviceTurnToken = typeof token === "string" && token.length <= 200 ? token : undefined;
           await host.submitWeb(durableWebSender(authContext), parsed.input, (event) => {
             if (event.type === "error" || event.type === "done") terminalEventSent = true;
             this.send(ws, event);
-          });
+          }, deviceTurnToken);
         } finally {
           pending.delete(key);
         }
