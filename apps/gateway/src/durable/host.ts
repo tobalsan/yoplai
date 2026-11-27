@@ -20,6 +20,8 @@ import { durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText, oneLine } from "../history/condense.js";
 import { buildHandoff } from "../history/handoff.js";
+import { legacyTranscript } from "../history/legacy-transcript.js";
+import { readToolLabels } from "../maintenance/tool-labels.js";
 import { historyPage } from "../history/page.js";
 import { logError, logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
@@ -376,11 +378,7 @@ export class DurableHost {
         const transcript = main ? handoffTranscript((await this.feed.read(main)).records) : [];
         const memory = await this.harness.snapshot(MemoryDoc, "user:" + owner, context);
         const memoryText = memory && renderMemory(memory, COMPACTION_MEMORY_CHARS);
-        // At four characters per token, reserve at most a quarter of the smaller model ceiling for the handoff.
-        const maxChars = Math.min(...[primary, fallback].flatMap((ref) => {
-          const model = ref && this.models.getModel(ref.provider, ref.modelId);
-          return model ? [compactionInputCeiling(model.contextWindow, model.maxTokens)] : [];
-        }));
+        const maxChars = this.handoffMaxChars(primary, fallback);
         const seed = buildHandoff({ transcript, memory: memoryText ? { text: memoryText } : undefined, maxChars }).text;
         // Durable accepts one submit per transaction. Persist the seed first and reuse it after a crash.
         await conversation.submit({
@@ -453,6 +451,43 @@ export class DurableHost {
   }
 
   async createThread(owner: string, options: { messageId?: string; title?: string; dashboardId?: string }) {
+    return this.createOwnedThread(owner, options);
+  }
+
+  async continueLegacySession(owner: string, legacy: { sessionId: string; title: string; archived: boolean; messages: FullHistoryMessage[] }) {
+    const agent = getAgent(this.agent.id);
+    if (!agent || !await this.mayReadFeed(owner, owner)) throw new ThreadError(404, "Agent not found");
+    const memory = await this.harness.snapshot(MemoryDoc, "user:" + owner, context);
+    const memoryText = memory && renderMemory(memory, COMPACTION_MEMORY_CHARS);
+    const fallback = agent.fallback_model;
+    const hint = "\n\nRead ids starting with legacy: using the legacy_history tool" +
+      (legacy.archived ? " with includeArchived: true." : ".");
+    const maxChars = this.handoffMaxChars(
+      { provider: agent.model.provider, modelId: agent.model.model },
+      fallback && { provider: fallback.provider, modelId: fallback.model },
+    ) - hint.length;
+    const seed = buildHandoff({
+      transcript: legacyTranscript(legacy.messages, { agentId: agent.id, sessionId: legacy.sessionId }),
+      memory: memoryText ? { text: memoryText } : undefined,
+      templates: await readToolLabels(),
+      maxChars,
+    }).text + hint;
+    const first = legacy.messages.find(({ role }) => role === "user");
+    const title = firstLine(legacy.title, 80) || (first && firstLine(messageText(first), 80)) || undefined;
+    return this.createOwnedThread(owner, { title }, seed);
+  }
+
+  private handoffMaxChars(...refs: ({ provider?: string; modelId: string } | undefined)[]) {
+    // At four characters per token, reserve at most a quarter of the smaller model ceiling for the handoff.
+    return Math.min(...refs.flatMap((ref) => {
+      const model = ref?.provider && this.models.getModel(ref.provider, ref.modelId);
+      return model ? [compactionInputCeiling(model.contextWindow, model.maxTokens)] : [];
+    }));
+  }
+
+  private async createOwnedThread(
+    owner: string, options: { messageId?: string; title?: string; dashboardId?: string }, seed?: string,
+  ) {
     if (!await this.mayReadFeed(owner, owner)) throw new ThreadError(404, "Agent not found");
     const id = randomUUID();
     const { title, dashboardId, messageId } = options;
@@ -468,8 +503,10 @@ export class DurableHost {
     const create: ConversationCreateOptions = {
       ownership: { kind: "ownerless" },
       init: async (tx, conversationId) => {
-        const map = await tx.doc(ThreadMap);
-        map.threads[id] = { ...metadata, conversationId };
+        if (seed === undefined) {
+          const map = await tx.doc(ThreadMap);
+          map.threads[id] = { ...metadata, conversationId };
+        }
         if (main) {
           const parent = await tx.doc(ReviewDoc, main.id);
           const child = await tx.doc(ReviewDoc, conversationId);
@@ -483,7 +520,18 @@ export class DurableHost {
     this.threadIds.set(conversation.id, id);
     this.owners.set(conversation.id, owner);
     await this.registerProviderSession(conversation.id);
-    return this.describeThread(id, { ...metadata, conversationId: conversation.id });
+    const thread = { ...metadata, conversationId: conversation.id };
+    if (seed !== undefined) {
+      // Publish the owner record only once the seed is committed, so first sends always see it.
+      await conversation.commit(async (tx) => {
+        await conversation.submit(tx, {
+          type: "write", requestId: "thread-seed:" + id,
+          entry: { kind: ThreadSeedEntry.kind, model: [{ role: "user", content: seed, timestamp: Date.now() }] },
+        });
+        (await tx.doc(ThreadMap)).threads[id] = { ...thread, seeded: true };
+      }, context);
+    }
+    return this.describeThread(id, thread);
   }
 
   private async requireThread(owner: string, id: string) {

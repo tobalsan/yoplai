@@ -233,7 +233,7 @@ export function SessionArchive() {
                         type="button"
                         onClick={() =>
                           navigate(
-                            `/chat/${session.agentId}?session=${session.sessionId}`
+                            `/chat/${encodeURIComponent(session.agentId)}?session=${encodeURIComponent(session.sessionId)}`
                           )
                         }
                       >

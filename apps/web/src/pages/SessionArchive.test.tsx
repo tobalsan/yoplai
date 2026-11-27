@@ -182,12 +182,12 @@ describe("SessionArchive", () => {
     expect(root.textContent).not.toContain("Delete me");
   });
 
-  it("navigates to chat view on Open", async () => {
+  it("opens an archived chat with an encoded session id", async () => {
     fetchAgentSessionsMock.mockResolvedValue({
       items: [
         {
           agentId: "delta",
-          sessionId: "s4",
+          sessionId: "tile#plan%23",
           createdAt: Date.now(),
           lastActivity: Date.now(),
           messageCount: 10,
@@ -205,7 +205,7 @@ describe("SessionArchive", () => {
     );
     expect(openButton).toBeTruthy();
     openButton!.click();
-    expect(navigateMock).toHaveBeenCalledWith("/chat/delta?session=s4");
+    expect(navigateMock).toHaveBeenCalledWith("/chat/delta?session=tile%23plan%2523");
   });
 
   it("refreshes list on chat-projects-changed event", async () => {

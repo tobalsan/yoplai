@@ -17,6 +17,8 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/api/agents/:id/history`  | Session history (`sessionKey`, `view`) |
 | GET    | `/api/agents/sessions` | Sidebar session summaries (`includeArchived=1` optional) |
 | GET    | `/api/agents/sessions/search?q=words` | Full-text search of the caller's interactive chats |
+| GET    | `/api/agents/:id/legacy-sessions/:sessionId` | Read an older chat in Durable mode |
+| POST   | `/api/agents/:id/legacy-sessions/:sessionId/continue` | Continue an older chat in a private Durable thread |
 | GET/PUT/DELETE | `/api/agents/:id/sessions/:sessionId/share` | Read/create/revoke an owner-only chat share link (multi-user only) |
 | GET    | `/api/shared-chats/:token` | Read a shared chat's persisted transcript (authenticated, multi-user only) |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
@@ -29,6 +31,12 @@ Exact request/response schemas in `packages/shared` and route source are authori
 
 Session search returns `{ items: [...] }`: sidebar summaries (including avatar)
 plus `match: "title" | "content"` and an optional `snippet` for content matches.
+Hits for local Durable agents have `legacy: true` and use the same private
+file reader as `legacy_history`. A content hit has a zero-based `messageIndex`
+when the same user or assistant message contains every query word. The index
+uses the full transcript's timestamp order and matches the tool's `#<index>`
+anchor. Title hits and terms found across messages or the label use the chat URL
+without a message anchor.
 The shown label is `title || firstUserMessage || sessionId`. Each query word is
 a case-insensitive substring that must occur in the label or user/assistant text,
 possibly across messages. Tool calls/results, thinking and system text do not
@@ -423,6 +431,27 @@ route. Forked messages keep their original IDs. Stop a running thread with
 `POST /api/agents/:id/stop` and `{ threadId, runId? }`, or send `/stop` or
 `/abort` with the thread's `sessionId`. Thread chat uses HTTP. Main keeps its
 own WebSocket events, compatibility history, and channel delivery.
+
+## Durable legacy chats
+
+Both routes use the authenticated caller's canonical JSONL history for the
+requested agent. URL-encode `:sessionId`, including any `#` or `%`. Both routes
+accept archived chats by ID, read the file without backfilling from Pi, and
+leave legacy files untouched.
+
+| Request | Success |
+| --- | --- |
+| `GET /api/agents/:id/legacy-sessions/:sessionId` | 200 with `{ agentId, sessionId, title, archived, messages }` |
+| `POST /api/agents/:id/legacy-sessions/:sessionId/continue` | 201 with the new [private thread](#durable-threads) |
+
+The GET returns the full persisted `FullHistoryMessage[]` in transcript order
+and a boolean `archived` flag. The POST takes no body and creates a thread whose
+first model request includes a handoff with the legacy transcript and available
+agent memory. The handoff points to `legacy_history` to recover older messages
+and includes the archive flag when needed.
+
+An unsafe session ID returns 400. Missing or foreign sessions and agents
+unavailable in Durable mode return 404. Agent access denial returns 403.
 
 ## Rooms
 

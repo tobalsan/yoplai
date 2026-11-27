@@ -1,7 +1,7 @@
 import { oneLine } from "./condense.js";
 
 export type SearchMessage = { role: string; content: unknown };
-export type SessionMatch = { match: "title" | "content"; snippet?: string };
+export type SessionMatch = { match: "title" | "content"; snippet?: string; messageIndex?: number };
 
 export function textFromContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
@@ -28,11 +28,9 @@ export function matchSession(
   if (!words.length) return null;
   const title = label.toLowerCase();
   if (words.every((word) => title.includes(word))) return { match: "title" };
-  const texts = messages
-    .filter(
-      (message) => message.role === "user" || message.role === "assistant"
-    )
-    .map((message) => textFromContent(message.content));
+  const texts = messages.map(({ role, content }) =>
+    role === "user" || role === "assistant" ? textFromContent(content) : ""
+  );
   if (
     !words.every(
       (word) =>
@@ -43,12 +41,14 @@ export function matchSession(
     return null;
   let best = "";
   let bestHits = 0;
-  for (const text of texts) {
+  let bestIndex = -1;
+  for (const [index, text] of texts.entries()) {
     const hits = words.filter((word) =>
       text.toLowerCase().includes(word)
     ).length;
     if (hits > bestHits) {
       best = text;
+      bestIndex = index;
       bestHits = hits;
     }
   }
@@ -61,6 +61,7 @@ export function matchSession(
   const end = Math.min(flat.length, start + 160);
   return {
     match: "content",
+    ...(bestHits === words.length && { messageIndex: bestIndex }),
     snippet: `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`,
   };
 }

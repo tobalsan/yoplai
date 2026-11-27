@@ -22,17 +22,17 @@ it("converts a legacy history file to a verbatim handoff with ordered public anc
   ]);
   const transcript = legacyTranscript(messages, {
     agentId: "tiles",
-    sessionId: "old-chat",
+    sessionId: "old#chat%23",
   });
   expect(transcript).toEqual([
     {
-      id: "legacy:tiles:old-chat#1",
+      id: "legacy:tiles:old%23chat%2523#1",
       role: "user",
       text: "Keep the blue tiles.\n[image sample.png]\n[file notes.txt]\nSecond line.",
       timestamp: 1000,
     },
     {
-      id: "legacy:tiles:old-chat#2",
+      id: "legacy:tiles:old%23chat%2523#2",
       role: "assistant",
       text: "Checking stock.",
       timestamp: 2000,
@@ -42,7 +42,7 @@ it("converts a legacy history file to a verbatim handoff with ordered public anc
           name: "read",
           arguments: { path: "stock.txt" },
           result: {
-            id: "legacy:tiles:old-chat#3",
+            id: "legacy:tiles:old%23chat%2523#3",
             text: "Found stock",
             isError: false,
           },
@@ -51,27 +51,27 @@ it("converts a legacy history file to a verbatim handoff with ordered public anc
       ],
     },
     {
-      id: "legacy:tiles:old-chat#4",
+      id: "legacy:tiles:old%23chat%2523#4",
       role: "assistant",
       text: "The blue tiles are in stock.",
       timestamp: 3000,
     },
   ]);
   expect(buildHandoff({ transcript }).text).toBe(`## Condensed steps
-[legacy:tiles:old-chat#2] → Read stock.txt (ok, 11 chars)
-[legacy:tiles:old-chat#2] → verify (no result)
+[legacy:tiles:old%23chat%2523#2] → Read stock.txt (ok, 11 chars)
+[legacy:tiles:old%23chat%2523#2] → verify (no result)
 
 ## Recent messages
-[legacy:tiles:old-chat#1] user · 1970-01-01T00:00:01.000Z
+[legacy:tiles:old%23chat%2523#1] user · 1970-01-01T00:00:01.000Z
 Keep the blue tiles.
 [image sample.png]
 [file notes.txt]
 Second line.
 
-[legacy:tiles:old-chat#2] assistant · 1970-01-01T00:00:02.000Z
+[legacy:tiles:old%23chat%2523#2] assistant · 1970-01-01T00:00:02.000Z
 Checking stock.
 
-[legacy:tiles:old-chat#4] assistant · 1970-01-01T00:00:03.000Z
+[legacy:tiles:old%23chat%2523#4] assistant · 1970-01-01T00:00:03.000Z
 The blue tiles are in stock.
 
 ## Omission notice

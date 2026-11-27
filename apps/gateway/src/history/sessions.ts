@@ -5,7 +5,8 @@ import type { WebCompletion } from "@yoplai/shared";
 import { getUserHistoryDir } from "@yoplai/extension-multi-user/isolation";
 import { CONFIG_DIR } from "../config/index.js";
 import { getSessionEntry } from "../sessions/index.js";
-import { textFromContent, type SearchMessage } from "./session-search.js";
+import { parseHistoryJsonl } from "./legacy-transcript.js";
+import { matchSession, textFromContent, type SearchMessage, type SessionMatch } from "./session-search.js";
 export { textFromContent } from "./session-search.js";
 
 export type SessionSummary = {
@@ -120,19 +121,45 @@ type SessionFileParams = {
   userId?: string;
 };
 
-/** Read canonical history once for both its sidebar summary and searchable text. */
+export type DurableSearchScope = { owners: ReadonlySet<string>; configured: string[] };
+
+/** Read one sidebar file for its summary and, if requested, its search result. */
 export async function readSessionFile(
-  params: SessionFileParams
-): Promise<{ summary: SessionSummary; messages: SearchMessage[] } | null> {
+  params: SessionFileParams,
+  { includeArchived, query, durable }: { includeArchived: boolean; query?: string; durable?: DurableSearchScope },
+): Promise<(SessionSummary & Partial<SessionMatch>) | null> {
   const [raw, stat] = await Promise.all([
     fs.readFile(params.filePath, "utf8"),
     fs.stat(params.filePath),
   ]);
-  return readSessionContents(params, raw, stat.birthtimeMs);
+  if (durable) {
+    // A longer hidden prefix may own the file. A valid persisted owner takes precedence.
+    const owner = parseSessionFileName(path.basename(params.filePath), durable.configured, readPersistedOwner(raw))?.agentId;
+    if (owner && durable.owners.has(owner)) return null;
+  }
+  const session = await readSessionContents(params, raw, stat.birthtimeMs, { excludeOwners: durable?.owners });
+  if (!session || (!includeArchived && session.summary.archived !== null)) return null;
+  const { summary, messages } = session;
+  if (query === undefined) return summary;
+  const match = matchSession(summary.title || summary.firstUserMessage || summary.sessionId, messages, query);
+  if (!match) return null;
+
+  const { messageIndex, ...hit } = match;
+  if (messageIndex === undefined) return { ...summary, ...hit };
+  // The sidebar picks the snippet in file order. Canonical anchors use timestamp order.
+  const target = messages[messageIndex];
+  const text = textFromContent(target.content);
+  const index = parseHistoryJsonl(raw).messages.findIndex((message) =>
+    message.role === target.role && message.timestamp === target.timestamp && textFromContent(message.content) === text,
+  );
+  return { ...summary, ...hit, ...(index >= 0 && { messageIndex: index }) };
 }
 
-async function readSessionContents(params: SessionFileParams, raw: string, birthtimeMs: number, privateHistory = false) {
-  const messages: SearchMessage[] = [];
+async function readSessionContents(
+  params: SessionFileParams, raw: string, birthtimeMs: number,
+  { privateHistory = false, excludeOwners }: { privateHistory?: boolean; excludeOwners?: ReadonlySet<string> } = {},
+) {
+  const messages: (SearchMessage & { timestamp?: number })[] = [];
   let firstUserMessage = "";
   let title: string | undefined;
   let pinned: number | null = null;
@@ -172,6 +199,7 @@ async function readSessionContents(params: SessionFileParams, raw: string, birth
         continue;
       }
       if (entry.type !== "history") continue;
+      if (typeof entry.agentId === "string" && excludeOwners?.has(entry.agentId)) return null;
       if (privateHistory && (
         (typeof entry.agentId === "string" && entry.agentId !== params.agentId) ||
         (typeof entry.sessionId === "string" && entry.sessionId !== params.sessionId)
@@ -179,7 +207,7 @@ async function readSessionContents(params: SessionFileParams, raw: string, birth
       if (entry.role !== "user" && entry.role !== "assistant") continue;
       const text = textFromContent(entry.content);
       if (!text) continue;
-      messages.push({ role: entry.role, content: entry.content });
+      messages.push({ role: entry.role, content: entry.content, timestamp });
       if (timestamp) lastActivity = Math.max(lastActivity, timestamp);
       messageCount += 1;
       if (entry.role === "user" && !firstUserMessage) firstUserMessage = text;
@@ -289,7 +317,7 @@ async function listSessionFiles(
       ) {
         return null;
       }
-      const result = await readSessionContents({ filePath, ...parsed, userId }, raw, birthtimeMs, privateHistory);
+      const result = await readSessionContents({ filePath, ...parsed, userId }, raw, birthtimeMs, { privateHistory });
       return result && { summary: result.summary, filePath, raw };
     })
   );

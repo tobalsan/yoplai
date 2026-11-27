@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getAgents } from "../config/index.js";
 import { condense, oneLine } from "../history/condense.js";
+import { legacySessionRef, parseLegacySessionRef } from "../history/legacy-session-ref.js";
 import { parseHistoryJsonl } from "../history/legacy-transcript.js";
 import { matchSession } from "../history/session-search.js";
 import { listAllSessionFiles } from "../history/sessions.js";
@@ -38,31 +39,18 @@ type Scope = { agentId: string; userId?: string };
 type Args = z.infer<typeof argsSchema>;
 type SessionFile = Awaited<ReturnType<typeof listAllSessionFiles>>[number];
 
-function sessionRef(agentId: string, sessionId: string): string {
-  return `legacy:${agentId}:${sessionId.replaceAll("%", "%25").replaceAll("#", "%23")}`;
-}
-
-function parseRef(agentId: string, ref: string) {
-  const prefix = `legacy:${agentId}:`;
-  if (!ref.startsWith(prefix)) return;
-  const match = /^([^#]+)(?:#(\d+))?$/.exec(ref.slice(prefix.length));
-  if (!match) return;
-  const sessionId = match[1].replace(/%25|%23/g, (escape) => escape === "%25" ? "%" : "#");
-  const index = match[2] === undefined ? undefined : Number(match[2]);
-  if (index !== undefined && !Number.isSafeInteger(index)) return;
-  return { sessionId, index };
-}
-
-async function ownSessions({ agentId, userId }: Scope): Promise<SessionFile[]> {
-  const configuredIds = [...new Set([agentId, ...getAgents().map((agent) => agent.id)])];
+export async function ownLegacySessions(agentIds: readonly string[], userId?: string): Promise<SessionFile[]> {
+  const configuredIds = [...new Set([...agentIds, ...getAgents().map((agent) => agent.id)])];
+  const requested = new Set(agentIds);
   const byId = new Map<string, SessionFile>();
   for (const file of await listAllSessionFiles(userId, configuredIds)) {
     const { summary, filePath } = file;
-    if (summary.agentId !== agentId) continue;
-    const previous = byId.get(summary.sessionId);
+    if (!requested.has(summary.agentId)) continue;
+    const key = JSON.stringify([summary.agentId, summary.sessionId]);
+    const previous = byId.get(key);
     if (!previous || summary.createdAt > previous.summary.createdAt ||
       (summary.createdAt === previous.summary.createdAt && filePath > previous.filePath)) {
-      byId.set(summary.sessionId, file);
+      byId.set(key, file);
     }
   }
   return [...byId.values()].sort((a, b) => b.summary.lastActivity - a.summary.lastActivity);
@@ -90,8 +78,8 @@ export async function runLegacyHistory(raw: unknown, { agentId, userId }: Scope)
   }
 
   const ref = args.action === "list" ? undefined : args.session;
-  const target = ref === undefined ? undefined : parseRef(agentId, ref);
-  const scoped = (await ownSessions({ agentId, userId })).filter(({ summary }) =>
+  const target = ref === undefined ? undefined : parseLegacySessionRef(agentId, ref);
+  const scoped = (await ownLegacySessions([agentId], userId)).filter(({ summary }) =>
     (args.includeArchived || summary.archived === null) &&
     (ref === undefined || summary.sessionId === target?.sessionId)
   );
@@ -117,7 +105,7 @@ function listSessions(sessions: SessionFile[], args: Args) {
   const lines = sessions.slice(offset, offset + limit).map(({ summary }) => {
     const label = oneLine(summary.title || summary.firstUserMessage);
     const title = label.length > 80 ? label.slice(0, 80) + "…" : label;
-    return `${sessionRef(summary.agentId, summary.sessionId)} · ${day(summary.lastActivity)} · ${summary.messageCount} msgs · ${title}`;
+    return `${legacySessionRef(summary.agentId, summary.sessionId)} · ${day(summary.lastActivity)} · ${summary.messageCount} msgs · ${title}`;
   });
   if (lines.length === 0) return "no sessions";
   if (offset + limit < sessions.length) lines.push(`more: list cursor=${offset + limit}`);
@@ -127,7 +115,7 @@ function listSessions(sessions: SessionFile[], args: Args) {
 function searchSessions(sessions: SessionFile[], query: string, limit: number): string {
   const lines: string[] = [];
   for (const { summary, raw } of sessions) {
-    const ref = sessionRef(summary.agentId, summary.sessionId);
+    const ref = legacySessionRef(summary.agentId, summary.sessionId);
     const label = summary.title || summary.firstUserMessage;
     if (matchSession(label, [], query)) {
       lines.push(`${ref} · ${oneLine(label).slice(0, 160)}`);
@@ -159,7 +147,7 @@ async function readSession({ summary, raw }: SessionFile, args: Args, index?: nu
   const around = args.around ?? (args.from === undefined && args.to === undefined ? index : undefined);
   const n = args.n ?? 5;
   return condense(messages, {
-    sessionId: sessionRef(summary.agentId, summary.sessionId),
+    sessionId: legacySessionRef(summary.agentId, summary.sessionId),
     templates: await readToolLabels(),
     from: around === undefined ? args.from : Math.max(0, around - n),
     to: around === undefined ? args.to : around + n,

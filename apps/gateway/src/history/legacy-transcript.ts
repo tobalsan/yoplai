@@ -1,5 +1,6 @@
 import type { FullHistoryMessage } from "@yoplai/shared";
 import { messageText, messageToolCalls } from "./condense.js";
+import { legacySessionRef } from "./legacy-session-ref.js";
 import type { ToolStep, TranscriptEntry } from "./transcript.js";
 
 export function orderMessagesByTimestamp<T extends { timestamp: number }>(
@@ -75,8 +76,8 @@ export function legacyTranscript(
   messages: FullHistoryMessage[],
   owner: { agentId: string; sessionId: string }
 ): TranscriptEntry[] {
-  const idAt = (index: number) =>
-    `legacy:${owner.agentId}:${owner.sessionId}#${index}`;
+  const ref = legacySessionRef(owner.agentId, owner.sessionId);
+  const idAt = (index: number) => `${ref}#${index}`;
   const results = new Map<string, NonNullable<ToolStep["result"]>>();
   for (const [index, message] of messages.entries()) {
     if (message.role === "toolResult") {

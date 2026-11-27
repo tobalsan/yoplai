@@ -23,6 +23,7 @@ import { createFeedWindow, FEED_PAGE_SIZE } from "./chat/feed-window";
 import { FeedTranscript, createFeedDetails, feedAppViewCalls } from "./chat/FeedTranscript";
 import { isExtensionFrameView } from "./chat/chat-history";
 import { captureFeedScroll, centerFeedMessage, clearFeedCentering } from "./chat/feed-scroll";
+import { LegacyChatViewer } from "./chat/LegacyChatViewer";
 import { ChatTranscript } from "./chat/ChatTranscript";
 import { DeviceApprovalCards } from "./chat/DeviceApprovalCards";
 import { DeviceSettingsControl } from "./chat/DeviceSettingsControl";
@@ -44,6 +45,8 @@ import {
   Show,
   on,
   untrack,
+  type Accessor,
+  type Resource,
 } from "solid-js";
 
 import { PageToolbar } from "./PageToolbar";
@@ -61,6 +64,7 @@ import {
 } from "../api";
 import { fetchChatProject } from "../api/chat-projects";
 import type {
+  Agent,
   HistoryViewMode,
   ThinkLevel,
 } from "../api/types";
@@ -133,6 +137,52 @@ type DropZone = "history" | "composer" | "attach";
 export { ThinkingLine } from "./chat/ChatBlocks";
 
 export function ChatView() {
+  const routeParams = useParams<{ agentId: string; view?: string }>();
+  const params = {
+    get agentId() { return decodeRouteParam(routeParams.agentId); },
+    get view() { return routeParams.view; },
+  };
+  const [agent, { mutate: setAgent, refetch: refetchAgent }] = createResource(() => params.agentId, fetchAgent);
+  createEffect(on(durableModeVersion, () => { void refetchAgent(); }, { defer: true }));
+  const [searchParams] = useSearchParams();
+  const explicitSessionId = () =>
+    typeof searchParams.session === "string" && searchParams.session.trim()
+      ? searchParams.session
+      : undefined;
+  const olderId = () => {
+    const id = searchParams.session;
+    return typeof id === "string" && id !== DURABLE_MAIN_SESSION_ID ? id : undefined;
+  };
+  const legacy = createMemo(() => {
+    const sessionId = olderId();
+    if (sessionId === undefined || agent.error) return;
+    const current = agent.latest;
+    if (current?.id === params.agentId && current.durable && !current.gateway) {
+      return { agentId: current.id, sessionId };
+    }
+  });
+  // Capabilities lists local IDs, including ones that look like linked agents.
+  // Only linked chats can start their live controller before agent details arrive.
+  const linked = () => params.agentId.includes("@") && !capabilities.agents.includes(params.agentId);
+  const ready = () => olderId() === undefined || linked() ||
+    (!agent.error && (!agent.loading || agent.latest?.id === params.agentId));
+  return (
+    <Show when={ready()} fallback={<p role="status">{agent.error ? "This chat is not available." : "Loading chat…"}</p>}>
+      <Show when={legacy()} keyed fallback={
+        <LiveChatView params={params} agent={agent} setAgent={setAgent} explicitSessionId={explicitSessionId} />
+      }>
+        {(chat) => <LegacyChatViewer agentId={chat.agentId} sessionId={chat.sessionId} />}
+      </Show>
+    </Show>
+  );
+}
+
+function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
+  params: { agentId: string; view?: string };
+  agent: Resource<Agent>;
+  setAgent: (agent: Agent) => void;
+  explicitSessionId: Accessor<string | undefined>;
+}) {
   const codeCopyTimers = new Map<HTMLButtonElement, ReturnType<typeof setTimeout>>();
   onCleanup(() => codeCopyTimers.forEach((timer) => clearTimeout(timer)));
   const handleCodeCopy = (event: MouseEvent) => {
@@ -157,16 +207,9 @@ export function ChatView() {
     }
   };
   void refreshToolLabels();
-  const routeParams = useParams<{ agentId: string; view?: string }>();
-  const params = {
-    get agentId() { return decodeRouteParam(routeParams.agentId); },
-    get view() { return routeParams.view; },
-  };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string; feedSearch?: number }>();
-  const [agent, { mutate: setAgent, refetch: refetchAgent }] = createResource(() => params.agentId, fetchAgent);
   const modeEnabled = useDurableMode();
-  createEffect(on(durableModeVersion, () => { void refetchAgent(); }, { defer: true }));
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [settingsDirty, setSettingsDirty] = createSignal(false);
   const [settingsSaving, setSettingsSaving] = createSignal(false);
@@ -235,10 +278,6 @@ export function ChatView() {
   );
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionKey = () => getSessionKey(params.agentId);
-  const explicitSessionId = () =>
-    typeof searchParams.session === "string" && searchParams.session.trim()
-      ? searchParams.session
-      : undefined;
   const durableMain = createMemo(() => agent()?.id === params.agentId && !agent()?.gateway &&
     targetsDurableMain(agent()?.durable === true, explicitSessionId()));
   const shell = createMemo(() => modeEnabled() && durableMain());
