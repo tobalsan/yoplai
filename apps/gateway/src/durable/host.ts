@@ -89,7 +89,14 @@ export type DurableHostOptions = {
   keeper?: KeeperOptions;
 };
 
-type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string; attachments?: FileAttachment[] } | ChannelInput;
+type Admission = {
+  surface: "web";
+  sender: WebSender;
+  text: string;
+  requestId: string;
+  attachments?: FileAttachment[];
+  deviceTurnToken?: string;
+} | ChannelInput;
 const CHANNEL_NO_LONGER_ELIGIBLE = Symbol("channel-no-longer-eligible");
 type ChildAdmission = Omit<BackgroundChild, "id"> & {
   key: string;
@@ -108,6 +115,7 @@ export class DurableHost {
   private readonly childKeys = new Map<ConversationId, string>();
   private readonly threadIds = new Map<ConversationId, string>();
   private readonly mainIds = new Set<ConversationId>();
+  private readonly deviceTurnTokens = new Map<ConversationId, string>();
   private readonly mainWaiters = new Map<string, Set<(id: ConversationId) => void>>();
   private readonly admissions = new Map<ConversationId, Promise<void>>();
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
@@ -217,6 +225,7 @@ export class DurableHost {
       (id) => host?.sessionRef(id) ?? DURABLE_MAIN_SESSION_ID,
       (id) => host?.childKeys.has(id) ?? false,
       (id) => host?.mainIds.has(id) === true || host?.threadIds.has(id) === true,
+      (id) => host?.deviceTurnTokens.get(id),
       (id) => host?.rooms?.mayRun(id),
       () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
         if (!host) throw new Error("Durable host is not open.");
@@ -336,14 +345,23 @@ export class DurableHost {
     sender: WebSender,
     { message, clientSendId, attachments, threadId }: DurableWebInput & { threadId?: string },
     onEvent?: (event: StreamEvent) => void,
+    deviceTurnToken?: string,
   ): Promise<RunAgentResult> {
     const thread = threadId === undefined ? undefined : await this.requireThread(sender.id, threadId);
     if (thread?.closed) throw new ThreadError(409, "Thread is closed");
     const conversation = thread ? await this.threadConversation(thread) : await this.openMain(sender.id);
     if (thread) await this.registerProviderSession(conversation.id);
-    const { submission, duplicate } = await this.admit(conversation, { surface: "web", sender, text: message, requestId: "web:" + clientSendId, attachments });
-    const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
-    return wait();
+    const { submission, duplicate } = await this.admit(conversation, {
+      surface: "web", sender, text: message, requestId: "web:" + clientSendId, attachments, deviceTurnToken,
+    });
+    try {
+      const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
+      return await wait();
+    } finally {
+      if (!duplicate && deviceTurnToken && this.deviceTurnTokens.get(conversation.id) === deviceTurnToken) {
+        this.deviceTurnTokens.delete(conversation.id);
+      }
+    }
   }
 
   async submitChannel(input: ChannelInput, eligible: () => Promise<boolean>): Promise<ChannelAdmission> {
@@ -904,6 +922,9 @@ export class DurableHost {
       const { submissionId, duplicate } = admission;
       const submission = await this.harness.submission(submissionId, context);
       if (!submission) throw new Error("Could not find the admitted Durable input.");
+      if (!duplicate && source.surface === "web" && source.deviceTurnToken && this.mainIds.has(id)) {
+        this.deviceTurnTokens.set(id, source.deviceTurnToken);
+      }
       return { submission, duplicate, hold };
     });
     const tail = admission.then(async ({ submission, duplicate, hold }) => {
