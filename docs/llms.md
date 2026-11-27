@@ -231,6 +231,8 @@ Minimal shape:
 
 `agents` entries are exact directories or glob patterns, including nested and brace globs. Every matched directory must contain a flat `agent.yaml`; inline agent objects in `yoplai.json` are not supported. Glob discovery ignores `.git` directories.
 
+`POST /api/agent-management/agents` accepts an optional `folder` for managed creation. The linked gateway form sends it only when **Choose folder** is checked. The gateway resolves `~` against its OS home, derives the agent ID from the folder name, and appends an exact discovery rule only if needed. It restores the prior `agents` value if publication fails and keeps the rule for same-request recovery after publication. Desktop onboarding rejects `folder`.
+
 Typical agent file:
 
 ```yaml

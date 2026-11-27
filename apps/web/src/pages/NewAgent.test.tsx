@@ -14,7 +14,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("protects the draft and creates with the selected gateway's model", async () => {
+// ALG-815 Testing Decisions, approved in Thinh's Groom GO, cover the form and its create request.
+it("protects the draft and creates with the selected gateway's model and optional folder", async () => {
   history.replaceState(null, "", "/agents/new");
   document.documentElement.setAttribute("data-yoplai-desktop", "");
   vi.stubGlobal("scrollTo", vi.fn());
@@ -66,9 +67,16 @@ it("protects the draft and creates with the selected gateway's model", async () 
   };
   await pickModel("openai", true);
   expect(create.disabled).toBe(false);
+  expect(queryByRole(document.body, "checkbox", { name: "Choose folder" })).toBeNull();
   expect(queryByRole(document.body, "radio", { name: "west" })).toBeNull();
   fireEvent.click(byRole("radio", "east"));
   await waitFor(() => expect(create.disabled).toBe(true));
+  fireEvent.click(byRole("checkbox", "Choose folder"));
+  fireEvent.input(byRole("textbox", "Agent folder"), { target: { value: "~/discarded" } });
+  fireEvent.click(byRole("radio", "This computer"));
+  expect(queryByRole(document.body, "checkbox", { name: "Choose folder" })).toBeNull();
+  fireEvent.click(byRole("radio", "east"));
+  expect((byRole("checkbox", "Choose folder") as HTMLInputElement).checked).toBe(false);
   await pickModel("anthropic", false);
   fireEvent.click(create);
   await waitFor(() => expect(writes).toHaveLength(1));
@@ -78,11 +86,25 @@ it("protects the draft and creates with the selected gateway's model", async () 
   expect(location.pathname).toBe("/agents/new");
   const screen = byRole("dialog", "Agent creation");
   expect(within(screen).getByRole("status").textContent).toContain("Crafting Garden Guide");
-  reply(Response.json({ message: "Could not create the agent." }, { status: 503 }));
-  expect(await findByRole(document.body, "alert")).toBeTruthy();
+  reply(Response.json({ message: "The discovery rules do not allow this agent." }, { status: 409 }));
+  expect((await findByRole(document.body, "alert")).textContent).toBe("The discovery rules do not allow this agent.");
   expect(queryByRole(document.body, "dialog", { name: "Agent creation" })).toBeNull();
+  expect(writes[0].body).not.toHaveProperty("folder");
+  fireEvent.click(byRole("checkbox", "Choose folder"));
+  const folder = byRole("textbox", "Agent folder");
+  expect((folder as HTMLInputElement).value).toBe("");
+  expect(create.disabled).toBe(true);
+  fireEvent.input(folder, { target: { value: "garden-guide" } });
+  fireEvent.click(create);
+  expect(writes).toHaveLength(1);
+  expect(byRole("alert", "").textContent).toContain("absolute folder path");
+  fireEvent.input(folder, { target: { value: "  ~/garden-guide  " } });
   fireEvent.click(create);
   await waitFor(() => expect(writes).toHaveLength(2));
+  reply(Response.json({ message: "The parent folder must already exist on the gateway." }, { status: 400 }));
+  expect((await findByRole(document.body, "alert")).textContent).toBe("The parent folder must already exist on the gateway.");
+  fireEvent.click(create);
+  await waitFor(() => expect(writes).toHaveLength(3));
   reply(Response.json({ id: "garden-guide" }, { status: 201 }));
   const finish = await findByRole(document.body, "heading", { name: "Garden Guide is ready." });
   expect(finish).toBeTruthy();
@@ -90,7 +112,8 @@ it("protects the draft and creates with the selected gateway's model", async () 
   await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy(), { timeout: 1800 });
   expect(location.pathname).toBe("/chat/garden-guide%40east");
   expect(writes[0]).toEqual({ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed", source: "owned" } }) });
-  expect(writes[1]).toEqual(writes[0]);
+  expect(writes[1]).toEqual({ path: writes[0].path, body: { ...(writes[0].body as object), folder: "~/garden-guide" } });
+  expect(writes[2]).toEqual(writes[1]);
 });
 
 it("submits and retries with the same UUID on plain HTTP", async () => {

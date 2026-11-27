@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import type { AddressInfo } from "node:net";
@@ -44,6 +45,23 @@ describe("agent management over HTTP", () => {
     method, headers: { Cookie: account.cookie, "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   const putMode = (account: Account, mode: string) => write("PUT", modePath, account, { mode });
+  const create = (body: Record<string, unknown>, account = member) => write("POST", "/api/agent-management/agents", account, {
+    name: "Folder Guide", avatar: 2, model, requestId: randomUUID(), ...body,
+  });
+
+  async function withDiscovery(agents: string | string[] | undefined, run: (configFile: string) => Promise<void>) {
+    const { getConfigPath, reloadConfig } = await import("../config/index.js");
+    const file = getConfigPath();
+    const before = await fs.readFile(file, "utf8");
+    try {
+      await fs.writeFile(file, JSON.stringify({ ...JSON.parse(before), agents }));
+      reloadConfig();
+      await run(file);
+    } finally {
+      await fs.writeFile(file, before);
+      reloadConfig();
+    }
+  }
 
   async function signUp(name: string): Promise<Account> {
     const response = await fetch(origin + "/api/auth/sign-up/email", {
@@ -233,6 +251,197 @@ describe("agent management over HTTP", () => {
     const reserved = await create("Sessions", "d4b7660d-c53c-4108-9f9e-142c00ffd6aa");
     expect(reserved.status).toBe(201);
     expect(await reserved.json()).toMatchObject({ id: "sessions-2" });
+  });
+
+  // ALG-815 Testing Decisions, approved in Thinh's Groom GO, cover managed-create HTTP.
+  it("creates at a custom folder and lists the agent when default discovery refuses creation", async () => {
+    await putMode(superadmin, "anyone");
+    const folder = path.join(home, "orchard-guide");
+    await withDiscovery("agents/shared", async (file) => {
+      const before = JSON.parse(await fs.readFile(file, "utf8"));
+      const defaultResult = await create({});
+      expect(defaultResult.status).toBe(409);
+      expect(await defaultResult.json()).toMatchObject({ error: "discovery_refused" });
+
+      const draft = { folder: folder + "/", requestId: randomUUID() };
+      const result = await create(draft);
+      expect(result.status).toBe(201);
+      expect(await result.json()).toEqual({ id: "orchard-guide", instructions: "template" });
+      expect(await (await get("/api/agents", member)).json()).toContainEqual(expect.objectContaining({ id: "orchard-guide" }));
+      expect(parse(await fs.readFile(path.join(folder, "agent.yaml"), "utf8"))).toMatchObject({ id: "orchard-guide", name: "Folder Guide" });
+      const retry = await create(draft);
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toEqual({ id: "orchard-guide", instructions: "template" });
+      expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ ...before, agents: ["agents/shared", folder] });
+    });
+  });
+
+  it("rejects invalid or occupied custom folders without editing discovery", async () => {
+    await putMode(superadmin, "anyone");
+    const { getMultiUserRuntime } = await import("@yoplai/extension-multi-user");
+    const release = getMultiUserRuntime()!.forks.reservePrivate("reserved-guide", other.id);
+    const parent = await fs.mkdtemp(path.join(home, "custom-"));
+    const occupied = path.join(parent, "occupied");
+    const fileTarget = path.join(parent, "ordinary-file");
+    const linkTarget = path.join(parent, "linked-folder");
+    const linkedParent = path.join(parent, "linked-parent");
+    await fs.mkdir(occupied);
+    await fs.writeFile(path.join(occupied, "keep.txt"), "keep me");
+    await fs.writeFile(fileTarget, "keep me too");
+    await fs.symlink(occupied, linkTarget, "dir");
+    await fs.symlink(path.join(home, "agents", "shared"), linkedParent, "dir");
+    try {
+      await withDiscovery(["agents/shared", path.join(parent, "Alias")], async (file) => {
+        const before = await fs.readFile(file, "utf8");
+        for (const [folder, status, error] of [
+          ["relative/guide", 400, "invalid_folder"],
+          [path.join(parent, "*", "guide"), 400, "invalid_folder"],
+          [path.join(parent, "Bad_ID"), 400, "invalid_folder"],
+          [path.join(parent, "sessions"), 400, "invalid_folder"],
+          [path.join(parent, "missing", "guide"), 400, "folder_parent_missing"],
+          [path.join(fileTarget, "guide"), 400, "folder_parent_missing"],
+          [occupied, 409, "folder_not_empty"],
+          [fileTarget, 409, "folder_not_empty"],
+          [linkTarget, 409, "folder_not_empty"],
+          [path.join(linkedParent, "nested-guide"), 409, "folder_inside_agent"],
+          [path.join(parent, "shared"), 409, "agent_id_used"],
+          [path.join(parent, "reserved-guide"), 409, "agent_id_used"],
+          [path.join(parent, "alias"), 409, "agent_id_used"],
+        ] as const) {
+          const result = await create({ folder });
+          expect.soft(result.status, folder).toBe(status);
+          expect.soft(await result.json(), folder).toMatchObject({ error, message: expect.any(String) });
+          expect.soft(await fs.readFile(file, "utf8"), folder).toBe(before);
+        }
+        expect(await fs.readdir(occupied)).toEqual(["keep.txt"]);
+        await expect(fs.stat(path.join(parent, "missing"))).rejects.toMatchObject({ code: "ENOENT" });
+        expect((await create({ folder: path.join(parent, "guide"), unknown: true })).status).toBe(400);
+      });
+    } finally {
+      release();
+    }
+  });
+
+  it("restores the original discovery rules when a custom folder cannot be published", async () => {
+    await putMode(superadmin, "anyone");
+    const folder = path.join(home, "failed-guide");
+    const rename = fs.rename;
+    const publication = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (path.basename(String(to)) === "failed-guide") throw new Error("Fixture publication failure");
+      return rename(from, to);
+    });
+    try {
+      for (const agents of [undefined, "agents/shared", ["agents/shared", "agents/status"]]) {
+        await withDiscovery(agents, async (file) => {
+          const before = JSON.parse(await fs.readFile(file, "utf8"));
+          const result = await create({ folder });
+          expect(result.status).toBe(500);
+          expect(await result.json()).toMatchObject({ error: "write_failed" });
+          expect.soft(JSON.parse(await fs.readFile(file, "utf8"))).toEqual(before);
+          await expect(fs.stat(folder)).rejects.toMatchObject({ code: "ENOENT" });
+        });
+      }
+    } finally {
+      publication.mockRestore();
+    }
+    await withDiscovery(["agents/shared", "run/*"], async (file) => {
+      const before = JSON.parse(await fs.readFile(file, "utf8"));
+      const result = await create({ folder });
+      expect(result.status).toBe(409);
+      expect(await result.json()).toMatchObject({ error: "discovery_refused" });
+      expect.soft(JSON.parse(await fs.readFile(file, "utf8"))).toEqual(before);
+      await expect(fs.stat(folder)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("expands ~/ and updates a private legacy config through its symlink", async () => {
+    await putMode(superadmin, "anyone");
+    const osHome = await fs.mkdtemp(path.join(home, "os-home-"));
+    const previousHome = process.env.HOME;
+    const standardConfig = path.join(home, "yoplai.json");
+    const legacyConfig = path.join(home, "aihub.json");
+    const configSource = path.join(await fs.mkdtemp(path.join(home, "config-source-")), "settings.json");
+    const initial = await fs.readFile(standardConfig, "utf8");
+    await fs.rename(standardConfig, configSource);
+    await fs.symlink(path.relative(home, configSource), legacyConfig);
+    vi.stubEnv("HOME", osHome);
+    try {
+      await withDiscovery(undefined, async (file) => {
+        expect(file).toBe(legacyConfig);
+        await fs.chmod(file, 0o600);
+        const before = JSON.parse(await fs.readFile(file, "utf8"));
+        const writeFile = fs.writeFile;
+        const staging = vi.spyOn(fs, "writeFile").mockImplementation(async (target, data, options) => {
+          if (path.basename(String(target)) === "agent.yaml") throw new Error("Fixture staging failure");
+          return writeFile(target, data, options);
+        });
+        try {
+          const failed = await create({ folder: "~/grove-guide/" });
+          expect(failed.status).toBe(500);
+          expect(await failed.json()).toMatchObject({ error: "write_failed" });
+          expect((await fs.lstat(legacyConfig)).isSymbolicLink()).toBe(true);
+          expect(JSON.parse(await fs.readFile(configSource, "utf8"))).toEqual(before);
+        } finally {
+          staging.mockRestore();
+        }
+        const result = await create({ folder: "~/grove-guide/" });
+        expect(result.status).toBe(201);
+        expect(await result.json()).toMatchObject({ id: "grove-guide" });
+        expect((await fs.lstat(legacyConfig)).isSymbolicLink()).toBe(true);
+        expect(JSON.parse(await fs.readFile(configSource, "utf8"))).toEqual({
+          ...before, agents: ["$YOPLAI_HOME/agents/*", "~/grove-guide"],
+        });
+        expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+        await expect(fs.stat(standardConfig)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(parse(await fs.readFile(path.join(osHome, "grove-guide", "agent.yaml"), "utf8"))).toMatchObject({ id: "grove-guide" });
+      });
+    } finally {
+      vi.stubEnv("HOME", previousHome);
+      await fs.unlink(legacyConfig);
+      await fs.writeFile(standardConfig, initial);
+    }
+  });
+
+  it("publishes into a covered empty directory without changing discovery", async () => {
+    await putMode(superadmin, "anyone");
+    const parent = await fs.mkdtemp(path.join(home, "covered-"));
+    for (const [agents, folder] of [
+      [undefined, path.join(home, "agents", "default-guide")],
+      [["agents/shared", path.join(parent, "*")], path.join(parent, "covered-guide")],
+    ] as const) {
+      await withDiscovery(agents && [...agents], async (file) => {
+        const before = await fs.readFile(file, "utf8");
+        await fs.mkdir(folder);
+        const result = await create({ folder });
+        expect(result.status).toBe(201);
+        expect(await result.json()).toMatchObject({ id: path.basename(folder) });
+        expect(await fs.readFile(file, "utf8")).toBe(before);
+      });
+    }
+  });
+
+  it("keeps the discovery rule after a reload failure and recovers the same custom agent", async () => {
+    await putMode(superadmin, "anyone");
+    const folder = path.join(home, "recovery-guide");
+    const draft = { folder, requestId: randomUUID() };
+    const reload = await import("../extensions/reload.js");
+    const failure = vi.spyOn(reload, "reloadAfterExtensionWrite").mockRejectedValueOnce(new Error("Fixture reload failure"));
+    try {
+      await withDiscovery(["agents/shared"], async (file) => {
+        const failed = await create(draft);
+        expect(failed.status).toBe(500);
+        expect(await failed.json()).toMatchObject({ error: "reload_failed" });
+        expect(JSON.parse(await fs.readFile(file, "utf8")).agents).toEqual(["agents/shared", folder]);
+        expect((await create(draft, other)).status).toBe(409);
+        const retry = await create(draft);
+        expect(retry.status).toBe(200);
+        expect(await retry.json()).toEqual({ id: "recovery-guide", instructions: "template" });
+        expect(await (await get("/api/agents", member)).json()).toContainEqual(expect.objectContaining({ id: "recovery-guide" }));
+        expect(JSON.parse(await fs.readFile(file, "utf8")).agents).toEqual(["agents/shared", folder]);
+      });
+    } finally {
+      failure.mockRestore();
+    }
   });
 
   it("enforces access at the new handlers even for an aggregate agent ID", async () => {
