@@ -1916,32 +1916,22 @@ describe("subagents API", () => {
     expect(seedWorkerRes.status).toBe(201);
 
     const projectDir = path.join(projectsRoot, created.path);
-    const workerStatePath = path.join(
-      projectDir,
-      "sessions",
-      "alpha",
-      "state.json"
-    );
-    const workerStateWaitStart = Date.now();
-    while (Date.now() - workerStateWaitStart < 5000) {
-      try {
-        const state = JSON.parse(
-          await fs.readFile(workerStatePath, "utf8")
-        ) as { session_id?: string };
-        if (state.session_id === "s1") break;
-      } catch {
-        // wait
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
     const spacePath = path.join(projectDir, "space.json");
-    const rawSpace = JSON.parse(await fs.readFile(spacePath, "utf8")) as {
-      worktreePath: string;
-      branch: string;
-      baseBranch: string;
-      integrationBlocked: boolean;
-      queue: Array<Record<string, unknown>>;
-    };
+    // The seed worker records its delivery after saving the session ID.
+    // Wait for that queue write before inserting the synthetic conflict.
+    const rawSpace = await vi.waitFor(
+      async () => {
+        const space = JSON.parse(await fs.readFile(spacePath, "utf8")) as {
+          integrationBlocked: boolean;
+          queue: Array<Record<string, unknown>>;
+        };
+        if (!space.queue.some((entry) => entry.workerSlug === "alpha")) {
+          throw new Error("Seed worker has not recorded its delivery");
+        }
+        return space;
+      },
+      { timeout: 5000 }
+    );
     rawSpace.integrationBlocked = true;
     rawSpace.queue.push({
       id: "conflict-1",

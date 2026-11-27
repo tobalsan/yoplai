@@ -51,6 +51,13 @@ always on for the local single-user desktop gateway. Each linked gateway
 applies its own policy. **Create on** offers the gateways where you can
 create, and the model picker follows your choice.
 
+On a linked gateway, select **Choose folder** to enter an absolute path or a
+path starting with `~/`, which refers to the gateway user's home. The parent
+must already exist. Choose an empty or new folder outside existing agent
+workspaces, with an unused agent ID as its name and no glob characters in the
+path. The gateway adds the path to its discovery rules if needed and loads
+the new agent immediately.
+
 When you open the web UI from a LAN address, set `web.baseUrl` to the URL
 you use in the browser, including its scheme and port. The gateway checks
 that origin on agent management writes.

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Choose a custom folder when creating an agent on a linked gateway. The gateway updates discovery as needed and loads the agent immediately.
+
 - Mention an agent in a shared room to get a public reply. Agents follow messages in room order, and newly added agents receive a handoff of prior discussion.
 
 - Find pre-Durable chats under **Older chats** in Cmd+K, open them read-only, and continue with their context in a new private thread.

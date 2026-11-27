@@ -41,6 +41,9 @@
 .agent-gateway-options span { display: block; padding: 6px 10px; border-radius: 6px; color: var(--text-secondary); font-size: 13px; }
 .agent-gateway-options input:checked + span { background: var(--bg-raised); color: var(--text-primary); }
 .agent-gateway-options input:focus-visible + span { outline: 2px solid var(--accent); }
+.agent-folder-option { display: grid; gap: 8px; margin-top: 10px; }
+.agent-folder-choice { display: flex; align-items: center; gap: 6px; width: fit-content; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+.agent-folder-choice input { margin: 0; accent-color: var(--accent); }
 .agent-create-fab {
   position: absolute;
   bottom: 24px;

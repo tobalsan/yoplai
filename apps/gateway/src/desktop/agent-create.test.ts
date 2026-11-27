@@ -223,6 +223,10 @@ it("rejects invalid JSON, a missing body, bad fields, and a model not on the lis
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_request" });
   }
+  // ALG-815 Testing Decisions, approved in Thinh's Groom GO, cover onboarding HTTP.
+  const customFolder = await create({ ...body(), folder: dir("onboarding-guide") });
+  expect(customFolder.status).toBe(400);
+  expect(await customFolder.json()).toMatchObject({ error: "invalid_request" });
   const res = await create({ ...body(), model: { ...model, model: "missing" } });
   expect(res.status).toBe(400);
   expect(await res.json()).toMatchObject({ error: "unavailable_model" });

@@ -117,7 +117,7 @@ function projectDirectories(dirs: string[], configDir: string) {
   return { identity, identities, files };
 }
 
-const DEFAULT_AGENT_DISCOVERY = "$YOPLAI_HOME/agents/*";
+export const DEFAULT_AGENT_DISCOVERY = "$YOPLAI_HOME/agents/*";
 
 function readDesktopDiscoveryRules() {
   const configPath = getConfigPath();

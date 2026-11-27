@@ -75,7 +75,7 @@ export async function fetchAgentModels(gateway?: GatewayName): Promise<Model[]> 
   return (await request<{ models: Model[] }>("/api/agent-management/models", gateway)).models;
 }
 export function createAgent(
-  draft: { name: string; purpose: string; requestId: string; model: ModelChoice; avatar: number },
+  draft: { name: string; purpose: string; requestId: string; model: ModelChoice; avatar: number; folder?: string },
   gateway?: GatewayName,
   image?: File,
 ) {

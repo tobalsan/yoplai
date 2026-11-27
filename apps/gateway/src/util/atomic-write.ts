@@ -6,12 +6,13 @@ import path from "node:path";
 // previous file intact and no temp file behind.
 export async function writeFileAtomic(
   file: string,
-  data: string | Uint8Array
+  data: string | Uint8Array,
+  mode?: number,
 ): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
-    await fs.writeFile(temporary, data);
+    await fs.writeFile(temporary, data, { mode });
     await fs.rename(temporary, file);
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -19,6 +20,6 @@ export async function writeFileAtomic(
   }
 }
 
-export function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  return writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+export function writeJsonAtomic(file: string, value: unknown, mode?: number): Promise<void> {
+  return writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`, mode);
 }

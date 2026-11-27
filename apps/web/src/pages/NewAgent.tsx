@@ -27,6 +27,9 @@ export function NewAgent() {
   const [gateways] = createResource(fetchCreationGateways);
   const [chosen, setChosen] = createSignal<CreationGateway>();
   const gateway = createMemo(() => chosen() ?? gateways()?.[0]);
+  const [chooseFolder, setChooseFolder] = createSignal(false);
+  const [folderPath, setFolderPath] = createSignal("");
+  const customFolder = () => gateway()?.name && chooseFolder() ? folderPath().trim() : undefined;
   const [models, { refetch: retryModels }] = createResource(gateway, (target) => fetchAgentModels(target.name));
   const [model, setModel] = createSignal<ModelChoice>();
   createEffect(() => {
@@ -45,7 +48,7 @@ export function NewAgent() {
   let requestId: string | undefined;
   onCleanup(() => { disposed = true; });
 
-  const dirty = () => !finished && !!(name() || purpose() || model() || avatar().file || avatar().face !== initialFace || chosen());
+  const dirty = () => !finished && !!(name() || purpose() || model() || avatar().file || avatar().face !== initialFace || chosen() || chooseFolder());
   const discard = createDiscardPrompt(dirty, "Discard this new agent?");
   useBeforeLeave((event) => {
     if (saving() && !finished) { event.preventDefault(); return; }
@@ -67,18 +70,23 @@ export function NewAgent() {
   });
   preventFileNavigation();
 
-  const ready = () => !!gateway() && !!name().trim() && !!model() && models.state === "ready" && !saving();
+  const ready = () => !!gateway() && !!name().trim() && !!model() && models.state === "ready" && customFolder() !== "" && !saving();
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     const selected = model();
     const destination = gateway();
     if (!selected || !destination || !ready()) return;
+    const folder = customFolder();
+    if (folder && !folder.startsWith("/") && !folder.startsWith("~")) {
+      setError("Enter an absolute folder path or start with ~/.");
+      return;
+    }
     setDoneAt(undefined);
     setSaving(true);
     setError("");
     try {
       requestId ??= createRequestId();
-      const result = await createAgent({ name: name().trim(), purpose: purpose().trim(), requestId, model: selected, avatar: avatar().face }, destination.name, avatar().file);
+      const result = await createAgent({ name: name().trim(), purpose: purpose().trim(), requestId, model: selected, avatar: avatar().face, folder }, destination.name, avatar().file);
       if (disposed) return;
       await finishCrafting(setDoneAt);
       if (disposed) return;
@@ -102,10 +110,31 @@ export function NewAgent() {
           <legend> Create on </legend>
           <div class="agent-gateway-options">
             <For each={gateways()}>{(target) => <label>
-              <input type="radio" name="creation-gateway" checked={gateway() === target} onChange={() => setChosen(target)} />
+              <input type="radio" name="creation-gateway" checked={gateway() === target} onChange={() => {
+                setChosen(target);
+                setError("");
+                if (!target.name) {
+                  setChooseFolder(false);
+                  setFolderPath("");
+                }
+              }} />
               <span>{target.label}</span>
             </label>}</For>
           </div>
+          <Show when={gateway()?.name}>
+            <div class="agent-folder-option">
+              <label class="agent-folder-choice">
+                <input type="checkbox" checked={chooseFolder()} onChange={(event) => setChooseFolder(event.currentTarget.checked)} />
+                Choose folder
+              </label>
+              <Show when={chooseFolder()}>
+                <label class="agent-form-field">Agent folder
+                  <input name="folder" placeholder="~/agent-name" spellcheck={false} value={folderPath()}
+                    onInput={(event) => setFolderPath(event.currentTarget.value)} />
+                </label>
+              </Show>
+            </div>
+          </Show>
         </fieldset>
       </Show>
       <AvatarField value={avatar()} onChange={setAvatar} disabled={saving()} />
