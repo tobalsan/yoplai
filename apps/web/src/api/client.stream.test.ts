@@ -218,6 +218,19 @@ describe("streamMessage", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("passes the reason and code for a refused send to the message error callback", () => {
+    const onError = vi.fn();
+    const stop = streamMessage("pilot", "Check this file", "main", vi.fn(), vi.fn(), onError);
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.receive({
+      type: "error", code: "send_rejected", message: "internal diagnostic", userMessage: "Attachment is missing.",
+    });
+    expect(onError.mock.calls).toEqual([["Attachment is missing.", "send_rejected"]]);
+    expect(socket.readyState).toBe(MockWebSocket.CLOSED);
+    stop();
+  });
+
   it("does not call onError on close after an error event was received", () => {
     const onDone = vi.fn();
     const onError = vi.fn();

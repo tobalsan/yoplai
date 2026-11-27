@@ -64,8 +64,8 @@ export async function buildDocumentAttachmentContext(
     let validatedPath: string | undefined;
     try {
       const normalized = await normalizeInboundAttachment(attachment);
-      text = await extractText(normalized.path, attachment.mimeType);
       validatedPath = normalized.path;
+      text = await extractText(normalized.path, attachment.mimeType);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logWarn("Failed to extract attachment text", {

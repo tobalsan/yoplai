@@ -199,7 +199,9 @@ it("treats raw Main stop commands as control requests without admitting them", a
     })));
     const projectStop = await gateway.send("local", "/stop", { projectId: "another-project" }, "ws");
     await vi.waitFor(() => expect(projectStop.events).toEqual([{
-      type: "error", message: "Durable Main does not support project chats or desktop turn IDs.",
+      type: "error", code: "send_rejected",
+      message: "Durable Main does not support project chats or desktop turn IDs.",
+      userMessage: "Durable Main does not support project chats or desktop turn IDs.",
     }]));
     const attachedStop = await gateway.request("local", "/api/agents/pilot/messages", {
       method: "POST", body: JSON.stringify({ message: "/stop", attachments: [{}] }),
@@ -407,7 +409,9 @@ it("isolates Main stops by account and refuses an unapproved caller", async () =
     expect(revoke.status).toBe(200);
     expect((await gateway.request("bob", stop, { method: "POST" })).status).toBe(403);
     bobSocket.send({ type: "send", agentId: "pilot", message: "/stop" });
-    await vi.waitFor(() => expect(bobSocket.events).toContainEqual({ type: "error", message: "Forbidden" }));
+    await vi.waitFor(() => expect(bobSocket.events).toContainEqual({
+      type: "error", code: "send_rejected", message: "Forbidden", userMessage: "Forbidden",
+    }));
     release.resolve();
     expect(await (await running).json()).toMatchObject({ payloads: [{ text: "Alice's run was left alone." }] });
   } finally {

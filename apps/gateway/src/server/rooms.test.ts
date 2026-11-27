@@ -50,7 +50,7 @@ it("persists each valid local send once, including concurrent retries and retrie
     for (const invalid of [
       { message: "Pick pears" }, { clientSendId: "bad id", message: "Pick pears" },
       { clientSendId: "stop", message: " /stop " },
-      { clientSendId: "upload", message: "Pick pears", attachments: [{ name: "notes.txt" }] },
+      { clientSendId: "upload", message: "Pick pears", attachments: [{ path: "/inbound/notes.txt", mimeType: "text/plain", filename: "notes.txt" }] },
     ]) {
       expect((await gateway.request("local", room + "/messages", jsonPost(invalid))).status).toBe(400);
     }

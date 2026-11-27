@@ -12,7 +12,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type AgentMemory, type FeedWindow, type FullHistoryMessage,
+  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type AgentMemory, type FeedWindow, type FileAttachment, type FullHistoryMessage,
   type ChannelAdmission, type ChannelCommand, type ChannelCommandResult, type ChannelIngress, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
@@ -25,11 +25,11 @@ import { readToolLabels } from "../maintenance/tool-labels.js";
 import { historyPage } from "../history/page.js";
 import { logError, logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
-import { appendAttachmentContext, buildDocumentAttachmentContext, getAttachmentFilename, isImageAttachment, normalizeInboundAttachment } from "../sdk/attachments.js";
+import { appendAttachmentContext, buildDocumentAttachmentContext, getAttachmentFilename, isImageAttachment, normalizeInboundAttachment, normalizeInboundAttachments } from "../sdk/attachments.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 import { COMPACTION_MEMORY_CHARS, compactionInputCeiling, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
-import { ThreadError, type WebSender } from "./contract.js";
+import { DurableAttachmentError, ThreadError, type DurableWebInput, type WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { feedDetail, feedItems, feedSearch, isFeedMessage } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
@@ -89,7 +89,7 @@ export type DurableHostOptions = {
   keeper?: KeeperOptions;
 };
 
-type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string } | ChannelInput;
+type Admission = { surface: "web"; sender: WebSender; text: string; requestId: string; attachments?: FileAttachment[] } | ChannelInput;
 const CHANNEL_NO_LONGER_ELIGIBLE = Symbol("channel-no-longer-eligible");
 type ChildAdmission = Omit<BackgroundChild, "id"> & {
   key: string;
@@ -334,14 +334,14 @@ export class DurableHost {
 
   async submitWeb(
     sender: WebSender,
-    { message, clientSendId, threadId }: { message: string; clientSendId: string; threadId?: string },
+    { message, clientSendId, attachments, threadId }: DurableWebInput & { threadId?: string },
     onEvent?: (event: StreamEvent) => void,
   ): Promise<RunAgentResult> {
     const thread = threadId === undefined ? undefined : await this.requireThread(sender.id, threadId);
     if (thread?.closed) throw new ThreadError(409, "Thread is closed");
     const conversation = thread ? await this.threadConversation(thread) : await this.openMain(sender.id);
     if (thread) await this.registerProviderSession(conversation.id);
-    const { submission, duplicate } = await this.admit(conversation, { surface: "web", sender, text: message, requestId: "web:" + clientSendId });
+    const { submission, duplicate } = await this.admit(conversation, { surface: "web", sender, text: message, requestId: "web:" + clientSendId, attachments });
     const wait = await this.attachSubmission(conversation, submission, sender.id, !duplicate, onEvent);
     return wait();
   }
@@ -789,22 +789,31 @@ export class DurableHost {
     const { requestId, surface, text } = source;
     const name = source.surface === "web" ? source.sender.name : source.actor.name;
     const id = conversation.id;
-    const existing = await conversation.commit((tx) => tx.submissionByRequest(id, requestId), context);
-    if (existing) {
+    const findDuplicate = async () => {
+      const existing = await conversation.commit((tx) => tx.submissionByRequest(id, requestId), context);
+      if (!existing) return;
       if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
       const submission = await this.harness.submission(existing.id, context);
       if (!submission) throw new Error("Could not find the admitted Durable input.");
-      return { submission, duplicate: true };
-    }
+      return { submission, duplicate: true, hold: false };
+    };
+    const existing = await findDuplicate();
+    if (existing) return existing;
 
     // An inbox item supersedes an onYield continuation in Durable. Give reviewed
     // replies their rewrite before admitting a distinct input into that Main.
     const previous = this.admissions.get(id) ?? Promise.resolve();
     const admission = previous.then(async () => {
-      const attachments = source.surface === "web" ? undefined : source.attachments;
+      let attachments = source.attachments;
+      if (source.surface === "web" && attachments?.length) {
+        // A concurrent admission may already have saved this send while this one was waiting.
+        const existing = await findDuplicate();
+        if (existing) return existing;
+        attachments = await normalizeInboundAttachments(attachments).catch(() => { throw new DurableAttachmentError(); });
+      }
       const files = attachments?.map((file) => ({ filename: getAttachmentFilename(file), mimeType: file.mimeType }));
       const images = await Promise.all((attachments ?? []).filter(isImageAttachment).map(async (file) => {
-        const { path, mimeType } = await normalizeInboundAttachment(file);
+        const { path, mimeType } = source.surface === "web" ? file : await normalizeInboundAttachment(file);
         return { filename: getAttachmentFilename(file), path, block: {
           type: "image" as const, mimeType, data: (await fs.readFile(path)).toString("base64"),
         } };
@@ -864,7 +873,7 @@ export class DurableHost {
             entry: {
               kind: InputEntry.kind,
               data: source.surface === "web"
-                ? { timestamp, text, surface, sender: source.sender, route: { surface: "web", user: source.sender.id } }
+                ? { timestamp, text, surface, sender: source.sender, route: { surface: "web", user: source.sender.id }, ...(files?.length && { attachments: files }) }
                 : { timestamp, text, surface, owner: source.owner, actor: source.actor, route: source.route, ...(files?.length && { attachments: files }) },
             },
           });

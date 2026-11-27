@@ -78,7 +78,7 @@ import {
   getMediaFileMetadata,
   resolveMediaFilePath,
 } from "../media/metadata.js";
-import { durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain, ThreadError } from "../durable/contract.js";
+import { DurableAttachmentError, durableWebSender, isDurableStopCommand, parseDurableWebSend, targetsDurableMain, ThreadError } from "../durable/contract.js";
 import type { DurableHost } from "../durable/host.js";
 import type { DurableWeb } from "../durable/web.js";
 import type { OpsMetrics } from "./ops-metrics.js";
@@ -1625,6 +1625,7 @@ api.post("/agents/:id/messages", async (c) => {
     return c.json(result);
   } catch (err) {
     if (err instanceof ThreadError) return c.json({ error: err.message }, err.status);
+    if (err instanceof DurableAttachmentError) return c.json({ error: err.message }, 400);
     return c.json(
       { error: err instanceof Error ? err.message : String(err) },
       500

@@ -80,7 +80,7 @@ export function createRoomRoutes(deps: {
   routes.post("/rooms/:roomId/messages", roomRoute(async (c, rooms, room, userId) => {
     const body = await c.req.json().catch(() => null);
     if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "Invalid room message" }, 400);
-    const parsed = parseDurableWebSend(body);
+    const parsed = parseDurableWebSend(body, { allowAttachments: false });
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     if ("stop" in parsed) return c.json({ error: "Rooms do not support stop commands" }, 400);
     const author = await deps.getSender(c);
