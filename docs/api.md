@@ -21,6 +21,8 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/api/shared-chats/:token` | Read a shared chat's persisted transcript (authenticated, multi-user only) |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
 | GET/PUT | `/api/me/durable-mode`  | Read or set the caller's Durable mode   |
+| GET/PUT | `/api/me/sidebar-order` | Read or set the caller's local agent order |
+| GET | `/api/agents/:id/memory` | Read the caller's Durable topics, plan, and gauge |
 | WS     | `/ws`                      | Send/subscribe streaming protocol      |
 
 Exact request/response schemas in `packages/shared` and route source are authoritative.
@@ -211,6 +213,14 @@ gateway-local and available in both modes. Single-user gateways store one
 setting. Multi-user gateways require authentication and use the caller's
 account.
 
+`GET /api/me/sidebar-order` returns `{ agentIds: string[] }`, initially empty.
+It filters out agents the caller can no longer see without updating the file.
+`PUT` accepts the same shape, rejecting invalid arrays or empty strings with
+400. It keeps the first occurrence of each visible local agent ID, saves that
+order for the caller, and returns it. Clients append unlisted agents in the
+order returned by the agent list. Multi-user gateways return 401 without an
+authenticated account.
+
 ### Chat
 
 The WebSocket `send` message and `POST /api/agents/:id/messages` accept
@@ -226,14 +236,19 @@ Main. An explicit legacy session id uses the legacy runner. Ordinary sends
 without a `clientSendId` also use the legacy runner. Main rejects project and
 desktop turn ids and attachments.
 
-The agent detail route includes `durable: true` when Durable mode applies to
-that agent for the caller. Otherwise it omits the field.
+Both the agent list and agent detail include `durable: true` when Durable mode applies
+to that agent for the caller. Otherwise it omits the field.
 The send endpoint still waits for settlement and returns `payloads` and `meta`
 with `sessionId` and `durationMs`. A failed or withheld reply returns an error
 status with `{ error }`. The socket receives ordered public `text` across tool
 rounds, then `done` or `error`. If a provider retry replaces text the socket
 already sent, the send ends with `error` and history shows the stored reply.
-Main subscriptions may receive `active_turn` snapshots and `history_updated`.
+A Main WebSocket subscription receives the owner's `active_turn` snapshots
+and `history_updated` events for Main and their threads. Main events carry
+`sessionId: "durable-main"` and thread events carry `sessionId: "thread:<id>"`.
+The initial active snapshot covers Main. Clients get a thread's initial live
+state from its HTTP feed and refresh it on matching events. `subscribeFeed`
+still streams Main's feed.
 An interrupted send settles with `meta.aborted: true`.
 
 The history route serves the existing simple or full view, paging, and active
@@ -264,6 +279,27 @@ WebSocket sends return `done` with `meta.stopStatus` set to `stopped` or
 `already_finished`, or an `error` with message `Forbidden` when access is denied.
 The model and the transcript receive neither command.
 
+### Memory
+
+`GET /api/agents/:id/memory` reads the authenticated caller's memory for the
+agent. The feed access check applies. Denied callers receive 403 and
+ineligible agents return 404. An empty memory returns 200 with empty lists.
+
+- `topics` entries contain `id`, `kind` (`open`, `decision`, or `digest`),
+  `title`, `note`, `refs`, and `updatedAt`. Resolvable references contain
+  `id`, `role`, `sender` when present, `timestamp`, and a clipped `text` quote
+  from the caller's public Main feed. The newest resolved reference supplies
+  `updatedAt`, or `null` when none resolve. A thread digest also has `threadId`.
+- `plan` contains `goals`, `nextSteps`, and `updatedAt`.
+- `gauge` contains `inputTokens` from the active context since the latest
+  seam and `ceilingTokens` from the Main model's compaction ceiling, or
+  `null` when the ceiling is unavailable.
+
+A dashboard's `chatHref` for a caller with access to an eligible Durable
+agent is `/chat/<agentId>?dashboard=<id>`. This opens Main alongside the
+dashboard, including for legacy dashboards. The legacy session and new-chat
+links still apply when Durable mode is off or the agent is ineligible.
+
 ### Feed
 
 When Durable mode applies, `/api/agents/:id/feed` exposes the caller's Main.
@@ -279,9 +315,11 @@ Assistant items with channel delivery include `deliveries`, an array of
 confirmed. Delivery changes appear in live feed frames.
 
 Assistant items and the current `live` state can include a `plan` object
-with `steps` (1–20 entries with `id`, `text` and `status`) and an optional
-one-line `explanation`. Step status is `pending`, `in_progress`, or
-`completed`. The latest checklist replaces the previous one in the answer
+with `steps` (1–20 entries with `id`, `text`, `status`, and an optional
+one-line `note` of 1–200 characters) and an optional one-line `explanation`.
+Step status is `pending`, `in_progress`, `completed`, or `attention`.
+The agent writes the note and status. Slack and Mattermost render an attention
+step as `- [ ] text (needs attention)` and indent the note two spaces on the next line. The latest checklist replaces the previous one in the answer
 group. It can arrive before any live text and stays on the assistant item
 after the turn ends and across reloads and restarts. Its tool calls are
 hidden from the activity trace and tool count.

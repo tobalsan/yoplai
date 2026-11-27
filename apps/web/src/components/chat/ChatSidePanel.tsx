@@ -4,7 +4,7 @@ export function canSplitPanel(rowWidth: number): boolean {
   return window.innerWidth > 768 && rowWidth >= 726;
 }
 
-export function ChatSidePanel(props: { children: JSX.Element }) {
+export function ChatSidePanel(props: { children: JSX.Element; durableShell?: boolean }) {
   let panel!: HTMLElement;
   const [width, setWidth] = createSignal(0);
   const [overlay, setOverlay] = createSignal(false);
@@ -26,7 +26,7 @@ export function ChatSidePanel(props: { children: JSX.Element }) {
     measure();
     onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", measure); });
   });
-  return <aside ref={panel} class="chat-side-panel" classList={{ "chat-side-panel-overlay": overlay() }} style={{ width: `${width()}px` }} aria-label="App view" tabIndex={-1}>
+  return <aside ref={panel} class="chat-side-panel" classList={{ "chat-side-panel-overlay": overlay(), "durable-side-panel": props.durableShell }} style={{ width: `${width()}px` }} aria-label="App view" tabIndex={-1}>
     <div role="separator" aria-label="Resize app view" aria-orientation="vertical" aria-valuemin={320} aria-valuemax={Math.max(320, available() - 406)} aria-valuenow={Math.round(width())} tabIndex={0}
       class="chat-panel-resizer" classList={{ "chat-panel-resizer-dragging": dragging() }} title="Drag to resize, double-click to reset"
       onPointerDown={(event) => { setDragging(true); event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); }}

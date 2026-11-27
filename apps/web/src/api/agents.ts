@@ -20,7 +20,7 @@ export async function fetchAgents(): Promise<Agent[]> {
 
 export async function fetchAgent(agentId: string): Promise<Agent> {
   const url = `${API_BASE}/agents/${encodeURIComponent(agentId)}`;
-  const pending = agentId.includes("@") ? undefined : pendingDurableModeSave();
+  const pending = pendingDurableModeSave();
   // A chat opened during the write must load detail after the setting settles.
   const owner = getOwner();
   const res = await (pending ? pending.then(() => runWithOwner(owner, () => fetch(url))) : fetch(url));
@@ -30,8 +30,8 @@ export async function fetchAgent(agentId: string): Promise<Agent> {
 
 export type AgentDashboard = DashboardRow;
 
-export async function fetchAgentDashboards(agentId: string, gateway?: GatewayName): Promise<AgentDashboard[]> {
-  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`));
+export async function fetchAgentDashboards(agentId: string, gateway?: GatewayName, signal?: AbortSignal): Promise<AgentDashboard[]> {
+  const res = await fetch(gatewayApiPath(gateway, `${API_BASE}/agents/${encodeURIComponent(agentId)}/dashboards`), signal ? { signal } : undefined);
   if (!res.ok) throw new Error("Failed to fetch dashboards");
   return res.json();
 }

@@ -7,6 +7,7 @@ import { SidebarAccountMenu } from "../components/SidebarAccountMenu";
 
 type SidebarAccountPanelProps = {
   collapsed: Accessor<boolean>;
+  hideArchive?: boolean;
 };
 
 type SessionUser = {
@@ -22,7 +23,7 @@ const accountLinks = [
   { label: "Account settings", icon: "fa-gear", path: "/account/settings" },
 ];
 
-export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
+export default function SidebarAccountPanel(props: SidebarAccountPanelProps) {
   const session = useSession();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = createSignal(false);
@@ -55,7 +56,7 @@ export default function SidebarAccountPanel(_props: SidebarAccountPanelProps) {
               </>
             }
           >
-            <For each={accountLinks}>{(link) => (
+            <For each={props.hideArchive ? accountLinks.filter((link) => link.path !== "/archive") : accountLinks}>{(link) => (
               <button type="button" class="account-menu-item" role="menuitem" onClick={() => navigate(link.path)}>
                 <i class={`fa-solid ${link.icon}`} aria-hidden="true" />
                 {link.label}

@@ -12,7 +12,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
-  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
+  DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type AgentMemory, type FeedWindow, type FullHistoryMessage,
   type ChannelAdmission, type ChannelCommand, type ChannelCommandResult, type ChannelIngress, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
@@ -29,7 +29,7 @@ import { COMPACTION_MEMORY_CHARS, compactionInputCeiling, createMainCompactionSe
 
 import { ThreadError, type WebSender } from "./contract.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
-import { feedDetail, feedItems, feedSearch } from "./feed-projection.js";
+import { feedDetail, feedItems, feedSearch, isFeedMessage } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
 import { DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
@@ -39,7 +39,7 @@ import { durableInstructions } from "./prompt.js";
 import { turnPlanTools } from "./turn-plan.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
 import { createMemoryTools } from "./memory-tools.js";
-import { MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
+import { emptyMemory, MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
 import { durableSessionHistory, type ReadableConversation } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { AbortedRuns, ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type BackgroundChild, type MainIdentityMap, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
@@ -966,8 +966,8 @@ export class DurableHost {
     let streamedTask: TaskId | undefined;
     let readThrough: EntryId | undefined;
     let replyChanged = false;
-    const publishMain = notify && !this.threadIds.has(conversation.id);
-    const watch = publishMain ? await conversation.watch(context) : undefined;
+    const sessionId = this.sessionRef(conversation.id);
+    const watch = notify ? await conversation.watch(context) : undefined;
     let acceptingPartials = true;
     const emitText = (taskId: TaskId | undefined, text: string) => {
       if (streamedTask !== taskId) {
@@ -987,7 +987,7 @@ export class DurableHost {
       const { live } = observed;
       const turn = await this.activeTurn(conversation, observed);
       if (!turn || !acceptingPartials) return;
-      if (onEvent && !replyChanged && live?.run?.inputs.includes(submission.id)) {
+      if (sessionId === DURABLE_MAIN_SESSION_ID && onEvent && !replyChanged && live?.run?.inputs.includes(submission.id)) {
         const after = readThrough ?? (await submission.status(context)).entry;
         const { through } = observed;
         if (!acceptingPartials) return;
@@ -1001,7 +1001,9 @@ export class DurableHost {
         if (!acceptingPartials) return;
         if (!replyChanged) emitText(live.run.taskId, turn.text);
       }
-      this.publish(user, turn);
+      if (this.listeners.has(user) && await this.mayReadFeed(user, user) && acceptingPartials) {
+        this.publish(user, turn);
+      }
     };
     if (watch) {
       await onView(watch.value);
@@ -1041,7 +1043,7 @@ export class DurableHost {
       } finally {
         await watch?.stop();
         this.options.wakeDelivery?.();
-        if (publishMain) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
+        if (notify) void this.publishSettlement(conversation, user, answeredBy).catch(() => { /* The harness may be closing. */ });
       }
     };
   }
@@ -1052,7 +1054,9 @@ export class DurableHost {
       // The answer is available before after-run tasks release the live turn.
       if (run?.afterRun && run.taskId === answeredBy) await this.harness.waitForTask(answeredBy, context);
     }
-    this.publish(user, { type: "history_updated", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID });
+    if (this.listeners.has(user) && await this.mayReadFeed(user, user)) {
+      this.publish(user, { type: "history_updated", agentId: this.agent.id, sessionId: this.sessionRef(conversation.id) });
+    }
   }
 
   private async effectiveSettlement(conversation: Conversation, original: Awaited<ReturnType<Submission["wait"]>>, wait: boolean) {
@@ -1144,7 +1148,9 @@ export class DurableHost {
     this.listeners.set(user, listeners);
     let updateSeen = false;
     const onUpdate = (event: WsServerMessage) => {
-      updateSeen = true;
+      if ((event.type === "active_turn" || event.type === "history_updated") && event.sessionId === DURABLE_MAIN_SESSION_ID) {
+        updateSeen = true;
+      }
       listener(event);
     };
     listeners.add(onUpdate);
@@ -1159,7 +1165,7 @@ export class DurableHost {
         const watch = await conversation.watch(context);
         try {
           const turn = await this.activeTurn(conversation, observeFeed(watch.value));
-          if (turn && !updateSeen) listener(turn);
+          if (turn && await this.mayReadFeed(user, user) && !updateSeen) listener(turn);
         } finally {
           await watch.stop();
         }
@@ -1191,7 +1197,7 @@ export class DurableHost {
     const attachedViews = projected.toolCalls.flatMap(({ id, parentToolCallId, name, view, status }) =>
       parentToolCallId && view && status === "done" ? [{ id, parentToolCallId, name, view, content: "", isError: false }] : []);
     return {
-      type: "active_turn", agentId: this.agent.id, sessionId: DURABLE_MAIN_SESSION_ID,
+      type: "active_turn", agentId: this.agent.id, sessionId: this.sessionRef(conversation.id),
       runId: projected.runId,
       userText: null, userTimestamp: timestamp, startedAt: timestamp,
       text: projected.text, thinking: projected.reasoning.join(""),
@@ -1256,6 +1262,42 @@ export class DurableHost {
 
   private async feedConversation(owner: string, threadId?: string) {
     return threadId === undefined ? this.mainFor(owner) : this.threadConversation(await this.requireThread(owner, threadId));
+  }
+
+  async readMemory(owner: string): Promise<AgentMemory | { forbidden: true }> {
+    if (!await this.mayReadFeed(owner, owner)) return { forbidden: true };
+    const [stored, main] = await Promise.all([
+      this.harness.snapshot(MemoryDoc, "user:" + owner, context),
+      this.mainFor(owner),
+    ]);
+    const projection = main && await this.feed.read(main);
+    const messages = new Map(feedItems(projection?.records ?? []).filter(isFeedMessage).map((row) => [row.id, row]));
+    const { topics, plan } = stored ?? emptyMemory();
+    const agent = getAgent(this.agent.id);
+    const model = agent?.model.provider && this.models.getModel(agent.model.provider, agent.model.model);
+    return {
+      topics: topics.map(({ refs: ids, ...topic }) => {
+        const refs = ids.flatMap((id) => {
+          const message = messages.get(id);
+          if (!message) return [];
+          const { role, timestamp, text } = message;
+          return [{
+            id, role, timestamp, text: text.length > 240 ? text.slice(0, 239) + "…" : text,
+            ...(message.role === "user" ? { sender: message.sender } : {}),
+          }];
+        });
+        return {
+          ...topic, refs,
+          updatedAt: refs.length ? Math.max(...refs.map(({ timestamp }) => timestamp)) : null,
+          ...(topic.kind === "digest" && topic.id.startsWith("th_") ? { threadId: topic.id.slice(3) } : {}),
+        };
+      }),
+      plan,
+      gauge: {
+        inputTokens: projection?.contextUsage.inputTokens ?? 0,
+        ceilingTokens: model ? compactionInputCeiling(model.contextWindow, model.maxTokens) : null,
+      },
+    };
   }
 
   async feedWindow(owner: string, principal: string, limit: number, selector?: FeedSelector, threadId?: string) {

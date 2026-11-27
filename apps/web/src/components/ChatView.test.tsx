@@ -78,6 +78,7 @@ const {
     state: null as unknown,
     view: undefined as string | undefined,
     session: undefined as string | undefined,
+    thread: undefined as string | undefined,
     project: undefined as string | undefined,
     dashboard: undefined as string | undefined,
     new: undefined as string | undefined,
@@ -93,7 +94,7 @@ vi.mock("@solidjs/router", () => ({
     get pathname() { return `/chat/${encodeURIComponent(routeState.agentId)}${routeState.view ? `/${routeState.view}` : ""}`; },
     get search() {
       const query = new URLSearchParams();
-      for (const key of ["session", "project", "dashboard", "new"] as const) {
+      for (const key of ["session", "thread", "project", "dashboard", "new"] as const) {
         if (routeState[key]) query.set(key, routeState[key]);
       }
       return query.size ? `?${query}` : "";
@@ -106,6 +107,7 @@ vi.mock("@solidjs/router", () => ({
       get project() { return routeState.project; },
       get dashboard() { routeVersion(); return routeState.dashboard; },
       get new() { routeVersion(); return routeState.new; },
+      get thread() { routeVersion(); return routeState.thread; },
       get session() {
         routeVersion();
         return routeState.session;
@@ -2654,6 +2656,165 @@ describe("ChatView abort handling", () => {
     expect(container.textContent).toContain("Interrupted");
 
     dispose();
+  });
+
+  it.each([{ gateway: undefined, shell: true }, { gateway: "remote", shell: false }])(
+    "uses the local Durable shell according to the agent gateway field ($gateway)",
+    async ({ gateway, shell }) => {
+      const account = { multiUser: true, user: { id: "locality-test" } };
+      setCapabilitiesForTests(account);
+      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["cedar@desk"], ...account });
+      routeState.agentId = "cedar@desk";
+      fetchAgentMock.mockResolvedValue({ id: "cedar@desk", name: "Cedar", durable: true, gateway });
+      let historyText = "Legacy transcript.";
+      fetchFullHistoryMock.mockImplementation(async () => ({
+        messages: [{ role: "assistant", content: [{ type: "text", text: historyText }], timestamp: 1 }],
+        sessionId: "durable-main",
+      }));
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+        if (path.includes("/feed?")) return Response.json(feedWindow([feedMessage(1)]));
+        if (path.endsWith("/threads")) return Response.json([]);
+        if (path.endsWith("/relay/device-links")) return Response.json([{ name: "remote", connected: true }]);
+        if (path.includes("/relay/device-settings?")) return Response.json({ workspaceFolder: null, full: false, mode: "ask" });
+        return Response.json({});
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const { container, dispose } = renderView();
+      try {
+        await waitFor(() => expect(queryByText(container, shell ? "Orchard request 1" : "Legacy transcript.")).not.toBeNull());
+        expect(!!queryByRole(container, "tab", { name: "Main" })).toBe(shell);
+        if (!shell) {
+          const callbacks = subscribeToSessionMock.mock.calls.at(-1)?.[2] as SubscriptionCallbacks;
+          historyText = "Remote Main settled.";
+          callbacks.onHistoryUpdated?.("thread:side");
+          expect(queryByText(container, "Remote Main settled.")).toBeNull();
+          callbacks.onHistoryUpdated?.("durable-main");
+          await waitFor(() => expect(queryByText(container, "Remote Main settled.")).not.toBeNull());
+          expect(fetchMock.mock.calls.some(([path]) => String(path).includes("/feed?"))).toBe(false);
+        }
+      } finally {
+        dispose();
+      }
+    },
+  );
+
+  it("forks a Main message and shows the agent's attention note", async () => {
+    const account = { multiUser: true, user: { id: "shell-fork-test" } };
+    setCapabilitiesForTests(account);
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["agent-1"], ...account });
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const answer: FeedItem = {
+      id: "m_2", role: "assistant", text: "Check the north shed.", timestamp: 2, toolCallCount: 0,
+      plan: { steps: [
+        { id: "keys", text: "Collect the keys", status: "completed" },
+        { id: "shed", text: "Inspect the shed", status: "attention", note: "Confirm that the gate is open." },
+        { id: "count", text: "Count the trays", status: "pending" },
+      ] },
+    };
+    const created = { id: "north", title: "North shed", closed: false, generation: 1, lastActivityAt: 2 };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+      if (url.endsWith("/threads")) return Response.json(init?.method === "POST" ? created : []);
+      return Response.json(feedWindow([feedMessage(1), answer]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(queryAllByRole(container, "button", { name: "Start a thread from here" })).toHaveLength(2));
+      expect(queryByRole(container, "button", { name: "Copy message" })).not.toBeNull();
+      expect(queryByRole(container, "button", { name: "Copy reply" })).not.toBeNull();
+      expect(queryByText(container, "Plan for this task")).not.toBeNull();
+      expect(queryByText(container, "1 of 3 done")).not.toBeNull();
+      expect(queryByRole(container, "img", { name: "Needs attention" })).not.toBeNull();
+      expect(queryByText(container, "Confirm that the gate is open.")).not.toBeNull();
+
+      queryAllByRole(container, "button", { name: "Start a thread from here" })[1]!.click();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/threads", expect.objectContaining({
+        method: "POST", body: '{"messageId":"m_2"}',
+      })));
+      await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/chat/agent-1?thread=north", { scroll: false }));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps an already-running thread isolated and sends to the selected thread", async () => {
+    const account = { multiUser: true, user: { id: "shell-thread-test" } };
+    setCapabilitiesForTests(account);
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["agent-1"], ...account });
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    routeState.thread = "glaze";
+    const thread = { id: "glaze", title: "Glaze", closed: false, generation: 1, lastActivityAt: 2 };
+    const threadPath = "/api/agents/agent-1/feed?limit=50&thread=glaze";
+    let answer = "Testing the glaze.";
+    let live = true;
+    let failNextRead = false;
+    const sendIds: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+      if (url.endsWith("/threads")) return Response.json([thread]);
+      if (url.endsWith("/messages") && init?.method === "POST") {
+        sendIds.push(JSON.parse(String(init.body)).clientSendId);
+        return sendIds.length === 1
+          ? Response.json({ error: "Could not send. Try again." }, { status: 503 })
+          : Response.json({});
+      }
+      if (url === threadPath && failNextRead) {
+        failNextRead = false;
+        return new Response(null, { status: 503 });
+      }
+      if (url === threadPath) return Response.json({
+        ...feedWindow(live ? [] : [{ id: "m_9", role: "assistant", text: answer, timestamp: 9, toolCallCount: 0 }]),
+        live: live ? { runId: "glaze-run", text: answer, reasoning: [], toolCalls: [] } : null,
+      });
+      return Response.json(feedWindow([feedMessage(1)]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, dispose } = renderView();
+    try {
+      await waitFor(() => expect(queryByRole(container, "tab", { name: "Glaze" })?.getAttribute("aria-selected")).toBe("true"));
+      await waitFor(() => expect(queryByText(container, "Testing the glaze.")).not.toBeNull());
+      const calls = () => fetchMock.mock.calls.filter(([url]) => url === threadPath).length;
+      const initial = calls();
+      const subscription = subscribeToSessionMock.mock.calls.at(-1)!;
+      const callbacks = subscription[2] as SubscriptionCallbacks;
+      expect(subscription.slice(3)).toEqual(["durable-main", true]);
+      callbacks.onHistoryUpdated?.("durable-main");
+      expect(calls()).toBe(initial);
+      expect(queryByText(container, "Testing the glaze.")).not.toBeNull();
+      answer = "The glaze is ready.";
+      live = false;
+      failNextRead = true;
+      callbacks.onHistoryUpdated?.();
+      await vi.waitFor(() => expect(queryByText(container, "The glaze is ready.")).not.toBeNull());
+      expect(queryByRole(container, "button", { name: "Start a thread from here" })).toBeNull();
+
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      composer.value = "Try a second coat.";
+      fireEvent.input(composer);
+      fireEvent.keyDown(composer, { key: "Enter" });
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => {
+        if (url !== "/api/agents/agent-1/messages" || !init?.body) return false;
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          sessionId: "thread:glaze", message: "Try a second coat.", clientSendId: expect.any(String),
+        });
+        return true;
+      })).toBe(true));
+      await waitFor(() => expect(composer.value).toBe("Try a second coat."));
+      expect(queryByText(container, "Could not send. Try again.")).not.toBeNull();
+      fireEvent.keyDown(composer, { key: "Enter" });
+      await waitFor(() => expect(sendIds).toHaveLength(2));
+      expect(sendIds[1]).toBe(sendIds[0]);
+      expect(streamMessageMock).not.toHaveBeenCalled();
+      expect(queryByRole(container, "tab", { name: "Main" })).not.toBeNull();
+    } finally {
+      dispose();
+      routeState.thread = undefined;
+    }
   });
 
   it("opens Durable Main on feed rows and excludes the legacy compaction summary", async () => {

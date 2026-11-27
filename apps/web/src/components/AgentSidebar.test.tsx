@@ -10,6 +10,7 @@ window.matchMedia = () => ({ matches: false }) as MediaQueryList;
 
 const [pathname, setPathname] = createSignal("/projects");
 const fetchProjectsMock = vi.fn<() => Promise<unknown[]>>();
+const fetchAgentsMock = vi.fn();
 const fetchAgentSessionsMock = vi.fn(async () => ({ items: [] as unknown[] }));
 const fetchChatProjectsMock = vi.fn(async () => ({ items: [] as { id: string; name: string; createdAt: number; updatedAt: number }[] }));
 const moveChatToProjectMock = vi.fn(async () => {});
@@ -36,6 +37,7 @@ class UnauthenticatedError extends Error {
 
 vi.mock("../api", () => ({
   fetchProjects: fetchProjectsMock,
+  fetchAgents: fetchAgentsMock,
   fetchAgentSessions: fetchAgentSessionsMock,
   deleteAgentSession: vi.fn(),
   renameAgentSession: vi.fn(),
@@ -97,6 +99,59 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
+  it("reorders local agents by keyboard, drag, and menu and leaves linked agents out of the saved order", async () => {
+    setCapabilitiesForTests({ multiUser: true, user: { id: "sidebar-order-dummy" } });
+    fetchAgentsMock.mockResolvedValue([
+      { id: "maple", name: "Maple", description: "Support" },
+      { id: "cedar@local", name: "Cedar", description: "Planning", durable: true },
+      { id: "pine", name: "Pine", description: "Inventory" },
+      { id: "birch@remote", name: "Birch", gateway: "remote", durable: true },
+    ]);
+    const writes: string[][] = [];
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+      if (url.endsWith("/me/sidebar-order")) {
+        if (init?.method === "PUT") {
+          const { agentIds } = JSON.parse(String(init.body));
+          writes.push(agentIds);
+          return Response.json({ agentIds });
+        }
+        return Response.json({ agentIds: ["pine", "cedar@local"] });
+      }
+      return Response.json({ items: [{ timestamp: 1860000000000 }], live: null });
+    });
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
+    try {
+      const list = () => within(getByRole(container, "region", { name: "Your agents" }));
+      const order = () => list().getAllByRole("link").map((link) => link.getAttribute("href"));
+      await vi.waitFor(() => expect(order()).toEqual(["/chat/pine", "/chat/cedar%40local", "/chat/maple", "/chat/birch%40remote"]));
+      expect(queryByRole(container, "region", { name: "Recent" })).toBeNull();
+      expect(list().getByRole("link", { name: /cedar/i }).textContent).toContain("Planning");
+      const cedar = list().getByRole("link", { name: /cedar/i });
+      fireEvent.keyDown(cedar, { key: "ArrowUp", altKey: true });
+      await vi.waitFor(() => expect(writes[0]).toEqual(["cedar@local", "pine", "maple"]));
+      const mapleGrip = list().getByRole("button", { name: "Drag Maple to reorder" });
+      await vi.waitFor(() => expect(mapleGrip.getAttribute("draggable")).toBe("true"));
+      const transfer = { setData() {}, effectAllowed: "", dropEffect: "" };
+      fireEvent.dragStart(mapleGrip, { dataTransfer: transfer });
+      fireEvent.dragOver(cedar, { dataTransfer: transfer, clientY: -1 });
+      fireEvent.drop(cedar, { dataTransfer: transfer, clientY: -1 });
+      await vi.waitFor(() => expect(writes[1]).toEqual(["maple", "cedar@local", "pine"]));
+      const menu = list().getByLabelText("Cedar menu");
+      menu.click();
+      await vi.waitFor(() => expect(getByRole(document.body, "button", { name: "Move down" })).toBeTruthy());
+      getByRole(document.body, "button", { name: "Move down" }).click();
+      await vi.waitFor(() => expect(writes[2]).toEqual(["maple", "pine", "cedar@local"]));
+      expect(list().queryByLabelText("Birch menu")).toBeNull();
+    } finally {
+      dispose();
+      resetCapabilitiesForTests();
+      fetch.mockRestore();
+    }
+  });
+
   it("selects a theme by keyboard and cycles the theme when collapsed", () => {
     const [collapsed, setCollapsed] = createSignal(false);
     const container = document.body.appendChild(document.createElement("div"));

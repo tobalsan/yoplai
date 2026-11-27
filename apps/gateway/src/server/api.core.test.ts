@@ -225,6 +225,33 @@ describe("api core session resolution", () => {
     }
   });
 
+  it("opens local Durable Main for owned and legacy dashboard rows", async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-main-api-"));
+    const { getDashboardRegistry } = await import("../canvas/store.js");
+    const { DurableModeStore } = await import("../durable-mode/store.js");
+    const registry = getDashboardRegistry("/tmp/yoplai-test/canvas/registry.json");
+    const setting = new DurableModeStore("/tmp/yoplai-test");
+    const entry = await registry.createOwned("alpha", "cedar-count.html", "local", "CEDAR", { sessionId: "old-cedar", userId: "local" });
+    const legacy = await registry.link("alpha", "maple-count.html");
+    try {
+      await setting.set(true);
+      getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace });
+      const { api } = await import("./api.core.js");
+      expect(await (await api.request("/agents/alpha/dashboards")).json()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}` }),
+        expect.objectContaining({ id: legacy.id, chatHref: `/chat/alpha?dashboard=${legacy.id}` }),
+      ]));
+      expect(await (await api.request("/dashboards")).json()).toMatchObject({
+        owned: [expect.objectContaining({ id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}` })],
+      });
+    } finally {
+      await setting.set(false);
+      await registry.deleteId(entry.id);
+      await registry.deleteId(legacy.id);
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("pages full history without dropping timestamp ties and reports active usage outside the archive", async () => {
     getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace: "/tmp" });
     const originals = Array.from({ length: 250 }, (_, i) => ({ role: "user", timestamp: Math.floor(i / 3), content: [{ type: "text", text: `message ${i}` }] }));

@@ -1,6 +1,12 @@
+import { createEffect, createSignal } from "solid-js";
+import { capabilities } from "../lib/capabilities";
 import { API_BASE, apiFetch } from "./core";
 
 type DurableMode = { enabled: boolean };
+const account = () => capabilities.multiUser ? capabilities.user?.id : "local";
+const [mode, setMode] = createSignal<{ owner: string; data: DurableMode }>();
+const [durableModeVersion, setDurableModeVersion] = createSignal(0);
+let pendingRead: { owner: string; request: Promise<DurableMode> } | undefined;
 let pendingSave: Promise<void> | undefined;
 
 async function requestDurableMode(enabled?: boolean): Promise<DurableMode> {
@@ -13,15 +19,46 @@ async function requestDurableMode(enabled?: boolean): Promise<DurableMode> {
     }),
   });
   if (!response.ok) throw new Error("Durable mode request failed");
-  return response.json();
+  const data: DurableMode = await response.json();
+  return { enabled: data?.enabled === true };
 }
 
-export function getDurableMode() {
-  return requestDurableMode();
+export function getDurableMode(): Promise<DurableMode> {
+  const owner = account();
+  if (!owner) return requestDurableMode();
+  const cached = mode();
+  if (cached?.owner === owner) return Promise.resolve(cached.data);
+  if (pendingRead?.owner === owner) return pendingRead.request;
+  const version = durableModeVersion();
+  const request = requestDurableMode().then((data) => {
+    if (owner === account() && version === durableModeVersion()) setMode({ owner, data });
+    return data;
+  }).finally(() => {
+    if (pendingRead?.request === request) pendingRead = undefined;
+  });
+  pendingRead = { owner, request };
+  return request;
+}
+
+export function useDurableMode() {
+  createEffect(() => {
+    if (account()) void getDurableMode().catch(() => undefined);
+  });
+  return () => {
+    const result = mode();
+    return result?.owner === account() && result?.data.enabled === true;
+  };
 }
 
 export function saveDurableMode(enabled: boolean) {
-  const request = requestDurableMode(enabled);
+  const owner = account();
+  const request = requestDurableMode(enabled).then((data) => {
+    if (owner && owner === account()) {
+      setMode({ owner, data });
+      setDurableModeVersion((version) => version + 1);
+    }
+    return data;
+  });
   const settled = request.then(() => {}, () => {});
   pendingSave = settled;
   void settled.then(() => {
@@ -33,3 +70,5 @@ export function saveDurableMode(enabled: boolean) {
 export function pendingDurableModeSave() {
   return pendingSave;
 }
+
+export { durableModeVersion };
