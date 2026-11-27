@@ -12,7 +12,7 @@ import type {
   SlackComponentConfig,
   SlackComponentDmConfig,
 } from "@yoplai/shared";
-import { classifyRunFailure, runFailureMessage, DEFAULT_MAIN_KEY } from "@yoplai/shared";
+import { classifyRunFailure, durableChannelCommandReply, parseDurableChannelCommand, runFailureMessage, DEFAULT_MAIN_KEY } from "@yoplai/shared";
 import { getSlackContext } from "./context.js";
 import { resolveSlackDmOwner } from "./bot-registry.js";
 import {
@@ -95,7 +95,7 @@ export type SlackBot = {
   stop: () => Promise<void>;
   matchesIngress: (ingress: ChannelIngress) => boolean;
   resolveDmOwner: ChannelOwnerResolver;
-  postDmReply: (channel: string, text: string) => Promise<string | undefined>;
+  postDmReply: (channel: string, text: string, thread?: string) => Promise<string | undefined>;
 };
 
 type SlackMessageTarget = {
@@ -950,7 +950,7 @@ async function handleSlackMessage(
   // unhandled failure (see the two call sites below), never when an error
   // was already caught and reported to the user.
   releaseEvent: () => void = () => {},
-  submitDm?: (text: string) => Promise<boolean>,
+  submitDm?: (text: string, collectFiles: () => ReturnType<typeof collectSlackAttachments>) => Promise<boolean>,
 ): Promise<void> {
   // Detect bang commands on raw text before any normalization/mention gating.
   // Bang commands bypass mention requirements — they're slash-command alternatives.
@@ -971,15 +971,30 @@ async function handleSlackMessage(
     releaseEvent();
     claimResult = undefined;
   };
+  const fileThreadTs = data.thread_ts ?? data.ts;
+  let collected: ReturnType<typeof collectSlackAttachments> | undefined;
+  const collectFiles = () => collected ??= collectSlackAttachments({
+    data, client, botToken: target.config.token ?? "", threadTs: fileThreadTs,
+  });
+  const dm = submitDm && data.channel_type === "im" && !target.proactiveReply
+    ? processMessage(data, target.config, botUserId)
+    : undefined;
+  if (submitDm && dm?.shouldReply) {
+    if (!claimOnce()) return;
+    try {
+      if (await submitDm(dm.normalizedContent, collectFiles)) return;
+    } catch (error) {
+      releaseClaim();
+      throw error;
+    }
+  }
   if (rawBang) {
     if (!claimOnce()) return;
     try {
       const handled = await handleBangCommand(data, client, target, rawBang);
       if (handled) return;
     } catch (err) {
-      // handleBangCommand already catches and reports its own errors via
-      // postEphemeral; reaching here means even that report failed, so
-      // nothing was communicated. Release so Slack's retry is processed.
+      // A failed error reply leaves nothing communicated. Allow Slack to retry.
       releaseClaim();
       throw err;
     }
@@ -998,7 +1013,7 @@ async function handleSlackMessage(
     }
   }
 
-  const result = processMessage(
+  const result = dm ?? processMessage(
     data,
     binding?.source === "agent"
       ? withoutSlackMentionRequirement(target, data.channel).config
@@ -1019,15 +1034,6 @@ async function handleSlackMessage(
     console.debug(`${target.logPrefix} Ignored: proactive_reply_not_allowed`);
     return;
   }
-  if (submitDm && !target.proactiveReply) {
-    try {
-      if (await submitDm(result.normalizedContent)) return;
-    } catch (error) {
-      releaseClaim();
-      throw error;
-    }
-  }
-
   const threadPolicy = target.channelConfig?.threadPolicy ?? target.dmConfig?.threadPolicy;
   const sessionKey = target.proactiveReply
     ? buildSlackSessionKey(data.channel)
@@ -1043,7 +1049,6 @@ async function handleSlackMessage(
   const replyThreadTs = binding ? data.thread_ts : defaultReplyThreadTs;
   // Proactive participants keep their own DM session and owner, not the bound session.
   if (target.proactiveReply) binding = undefined;
-  const fileThreadTs = data.thread_ts ?? data.ts;
 
   let thinkingDisplay: ThinkingStreamDisplay | null = null;
   let progressDisplay: SlackProgressDisplay | null = null;
@@ -1051,12 +1056,7 @@ async function handleSlackMessage(
   let runAborted = false;
   let resultSessionId: string | undefined;
   try {
-    const { contentSuffix, attachments } = await collectSlackAttachments({
-      data,
-      client,
-      botToken: target.config.token ?? "",
-      threadTs: fileThreadTs,
-    });
+    const { contentSuffix, attachments } = await collectFiles();
     const content = withContentSuffix(result.normalizedContent, contentSuffix);
     if (!content && attachments.length === 0) return;
 
@@ -1627,6 +1627,14 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
   });
   const matchesIngress = (ingress: ChannelIngress) => !stopped && ingress.surface === "slack"
     && ingress.botKey === w.botKey && ingress.team === getCachedSlackWorkspace(client);
+  const dmRoute = async (
+    agentId: string, team: string, channel: string, user: string, thread?: string,
+  ) => {
+    const ingress = { surface: "slack", team, botKey: w.botKey, channel, ...(thread && { thread }) } as const;
+    const actor = { surface: "slack", team, id: user, name: user } as const;
+    const owner = await resolveSlackDmOwner({ agentId, ingress, actor });
+    if (owner) return { agentId, owner, actor, route: { sink: "slack", destination: { channel }, ingress } };
+  };
 
   app.message(async ({ message, client: eventClient, body }) => {
     if (stopped) return;
@@ -1656,26 +1664,37 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       busyNotice,
       () => claimSlackMessageEvent(deduper, body, data, target.logPrefix),
       () => releaseSlackMessageEvent(deduper, body, data),
-      async (text) => {
+      async (text, collectFiles) => {
         const ctx = getSlackContext();
-        if (!ctx.submitChannelInput || data.channel_type !== "im" || !data.user || data.bot_id ||
-            (data.thread_ts && data.thread_ts !== data.ts) || data.files?.length ||
-            (Array.isArray(asRecord(message).attachments) && (asRecord(message).attachments as unknown[]).length) ||
-            !text.trim() || /^[!/]/.test(text.trim()) || /^[!/]/.test(data.text?.trim() ?? "")) return false;
+        if ((!ctx.submitChannelInput && !ctx.submitChannelCommand) || !data.user ||
+            text.split(/\s+/, 1)[0]?.toLowerCase() === "!pair") return false;
         const team = getCachedSlackWorkspace(client);
         const event = toSlackEventIdentity(body, data);
         if (!team || (event.team && team !== event.team)) return false;
-        const surface = "slack";
-        const ingress = { surface, team, botKey: w.botKey, channel: data.channel } as const;
-        const actor = { surface, team, id: data.user, name: data.user } as const;
-        const agentId = target.agent.id;
-        const owner = await resolveSlackDmOwner({ agentId, ingress, actor });
-        if (!owner) return false;
-        const name = await getSlackUserDisplayName(clientForDm(), data.user) ?? data.user;
+        const thread = data.thread_ts !== data.ts ? data.thread_ts : undefined;
+        const input = await dmRoute(target.agent.id, team, data.channel, data.user, thread);
+        if (!input) return false;
+        const command = parseDurableChannelCommand(text);
+        if (command) {
+          const reply = durableChannelCommandReply(await ctx.submitChannelCommand?.({ ...input, command }));
+          if (!reply) return false;
+          await eventClient.chat.postMessage({ channel: data.channel, text: reply, ...(thread && { thread_ts: thread }) }).catch(() => {
+            ctx.logger.warn("Could not acknowledge Durable Slack command", { agentId: input.agentId, channel: data.channel });
+          });
+          return true;
+        }
+        if (!ctx.submitChannelInput) return false;
+        const { attachments, contentSuffix } = await collectFiles();
+        if (!text && !attachments.length && !contentSuffix) return true;
+        const [name, parent] = await Promise.all([
+          getSlackUserDisplayName(clientForDm(), data.user),
+          getThreadParent(eventClient as unknown as SlackWebClient, data.channel, thread, data.ts, team),
+        ]);
         const result = await ctx.submitChannelInput({
-          agentId, owner, surface, actor: { ...actor, name }, text,
+          ...input, surface: "slack", actor: { ...input.actor, name: name ?? input.actor.name }, text,
+          attachments, attachmentPreview: contentSuffix || undefined,
+          threadRoot: parent?.content,
           requestId: `slack:${team}:${data.channel}:${event.eventId ?? data.ts}`,
-          route: { sink: surface, destination: { channel: data.channel }, ingress },
         });
         return result.status === "admitted";
       }
@@ -1767,6 +1786,17 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
         });
         return;
       }
+      const durableCommand = parseDurableChannelCommand(name);
+      const team = getCachedSlackWorkspace(client);
+      const ctx = getSlackContext();
+      if (target.isDm && durableCommand && ctx.submitChannelCommand && team && command.team_id === team) {
+        const input = await dmRoute(target.agent.id, team, command.channel_id, command.user_id);
+        const reply = input && durableChannelCommandReply(await ctx.submitChannelCommand({ ...input, command: durableCommand }));
+        if (reply) {
+          await respond({ text: reply, response_type: "ephemeral" });
+          return;
+        }
+      }
       await handler(
         {
           channel_id: command.channel_id,
@@ -1804,9 +1834,9 @@ function wireSlackBot(w: SlackBotWiring): SlackBot {
       }
       return multiUser ? resolveSlackRequester(client, actor.id) : "local";
     },
-    async postDmReply(channel, text) {
+    async postDmReply(channel, text, thread) {
       const result = await clientForDm().chat.postMessage({
-        channel, text, mrkdwn: true, unfurl_links: false, unfurl_media: false,
+        channel, text, ...(thread && { thread_ts: thread }), mrkdwn: true, unfurl_links: false, unfurl_media: false,
       });
       return result.ts;
     },

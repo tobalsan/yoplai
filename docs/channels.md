@@ -130,13 +130,29 @@ has exactly one `dm.allowFrom` entry and it matches the sender. Each bot's
 allowlist is evaluated separately. If you configure several single-sender
 bots for one agent, their senders share that agent's local Main.
 
-Allowed unbound senders, users with Durable mode off, group DMs, channels,
-threads, commands and messages with attachments use legacy routing. The
-allowlist continues to reject disallowed senders. Eligible Durable replies
-return as one post through the bot that received the DM. Long replies link
-to the web feed when a base URL is configured. The feed shows an uncertain
-delivery when the gateway cannot confirm the post. These deliveries require
-manual checking and are never retried automatically.
+Eligible top-level DMs can include files or consist entirely of attachments.
+The agent receives the uploaded files and the web feed displays their names
+alongside the typed message.
+
+A reply inside a DM thread opens a private Durable child and answers inside
+the same thread. The child uses the DM owner's credentials and appears in
+their web thread list. After 24 hours idle, Main receives a digest. A later
+reply reopens the child and the next idle period produces another digest.
+
+Use `!stop` to stop the active Main turn from the DM or the active child turn
+from inside the thread. An idle conversation replies “Nothing is running.”
+Slack's registered `/stop` targets Main because app slash commands run
+outside message threads. [Slack slash commands](https://docs.slack.dev/interactivity/implementing-slash-commands/)
+`!new`, `!reset`, `/new`, `!compact`, and `/compact` reply that the
+conversation is continuous. Mattermost handles these commands as message text.
+`!pair` opens the account-linking flow.
+
+Allowed unbound senders, users with Durable mode off, group DMs, and channels
+use legacy routing. Eligible Durable replies return as one post through the
+receiving bot. Long Main replies link to the web feed when a base URL is
+configured. The feed shows an uncertain delivery when the gateway cannot
+confirm the post. These deliveries require manual checking and are never
+retried automatically.
 
 ## IRC
 

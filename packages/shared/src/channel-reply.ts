@@ -1,3 +1,19 @@
+import type { ChannelCommand, ChannelCommandResult } from "./types.js";
+
+export function parseDurableChannelCommand(text: string): ChannelCommand["command"] | undefined {
+  const token = text.trim().split(/\s+/, 1)[0]?.toLowerCase();
+  if (token === "!stop" || token === "/stop") return "stop";
+  if (token && ["!new", "!reset", "/new", "!compact", "/compact"].includes(token)) return "ignored";
+}
+
+export function durableChannelCommandReply(result: ChannelCommandResult | undefined): string | undefined {
+  switch (result?.status) {
+    case "stopped": return "Stopped.";
+    case "already_finished": return "Nothing is running.";
+    case "ignored": return "This conversation is continuous, so there is nothing to reset or compact.";
+  }
+}
+
 /** Bound an already-rendered reply, leaving room for the link and a closing code fence. */
 export function limitChannelReply(text: string, max: number, link?: string): string {
   if (text.length <= max) return text;

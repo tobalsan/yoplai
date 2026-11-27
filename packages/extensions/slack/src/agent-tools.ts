@@ -516,7 +516,7 @@ export function createSlackDeliverySink(ctx: ExtensionContext): DeliverySink {
       const bot = getSlackIngressBot(agent.id, ingress);
       if (!bot || ingress.channel !== destination.channel) throw new Error("Slack DM bot unavailable.");
       const rendered = limitChannelReply(markdownToMrkdwn(text), SLACK_MAX, feedUrl ? `<${feedUrl}|Read in web chat>` : undefined);
-      return { receipt: await bot.postDmReply(ingress.channel, rendered) };
+      return { receipt: await bot.postDmReply(ingress.channel, rendered, ingress.thread) };
     }
     const [channel, threadTs] = destination.channel
       ? destination.channel.split(":", 2)

@@ -219,8 +219,12 @@ export function projectRecords(
       anchor = undefined;
       const { data } = entry;
       const sender = "name" in data ? data.name : "sender" in data ? data.sender.name : data.actor.name;
+      const files = "attachments" in data && data.attachments?.length
+        ? "Attachments: " + data.attachments.map(({ filename }) => filename).join(", ")
+        : "";
+      const text = [data.text, files].filter(Boolean).join("\n\n");
       records.push({ kind: "user", id: "m_" + entry.id, sender, surface: data.surface ?? "web", message: {
-        role: "user", timestamp: entry.data.timestamp, content: [{ type: "text", text: entry.data.text }],
+        role: "user", timestamp: data.timestamp, content: [{ type: "text", text }],
       } });
     } else if (FailureNoteEntry.is(entry)) {
       flush();

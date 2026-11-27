@@ -24,7 +24,7 @@ export function describeThread(id: string, thread: ThreadRecord, items: readonly
   const title = thread.title ?? (firstLine(first?.text ?? "", 80) || firstLine(fork?.text ?? "", 80) || "New thread");
   return {
     id, title, preview: firstLine((last ?? fork)?.text ?? "", 120),
-    createdAt: thread.createdAt, lastActivityAt: last?.timestamp ?? thread.createdAt,
+    createdAt: thread.createdAt, lastActivityAt: thread.lastActivityAt ?? last?.timestamp ?? thread.createdAt,
     closed: thread.closed, generation: thread.generation,
     ...(thread.dashboardId !== undefined && { dashboardId: thread.dashboardId }),
     ...(thread.forkedFrom !== undefined && { forkedFrom: thread.forkedFrom }),

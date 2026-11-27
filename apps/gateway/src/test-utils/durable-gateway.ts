@@ -20,8 +20,8 @@ type ModelLimits = Partial<{ contextWindow: number; maxTokens: number }>;
 export type RealTestModel = { provider: string; model: string; limits?: ModelLimits; apiKey?: string };
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper, realModel, fauxLimits, fauxApi, wrapModels, afterThreadArchive, afterChildSettlement,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[] | (() => Promise<Extension[]>); modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"]; realModel?: RealTestModel; fauxLimits?: ModelLimits; fauxApi?: string; wrapModels?: (factory: DurableModelsFactory) => DurableModelsFactory; afterThreadArchive?: DurableHostOptions["afterThreadArchive"]; afterChildSettlement?: DurableHostOptions["afterChildSettlement"] } = {}) {
+  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper, realModel, fauxLimits, fauxApi, wrapModels, afterThreadArchive, afterThreadNote, now, threadSweepIntervalMs, afterChildSettlement,
+}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[] | (() => Promise<Extension[]>); modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"]; realModel?: RealTestModel; fauxLimits?: ModelLimits; fauxApi?: string; wrapModels?: (factory: DurableModelsFactory) => DurableModelsFactory; afterThreadArchive?: DurableHostOptions["afterThreadArchive"]; afterThreadNote?: DurableHostOptions["afterThreadNote"]; now?: DurableHostOptions["now"]; threadSweepIntervalMs?: number; afterChildSettlement?: DurableHostOptions["afterChildSettlement"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -123,6 +123,9 @@ export async function startDurableTestGateway({
       keeper,
       channelContext: channels,
       afterThreadArchive,
+      afterThreadNote,
+      now,
+      threadSweepIntervalMs,
       afterChildSettlement,
       afterMainCommit() {
         if (!fault) return;

@@ -1527,7 +1527,7 @@ export type ChannelActor = { id: string; name: string } & (
   | { surface: "mattermost"; server: string }
 );
 
-export type ChannelIngress = { botKey: string; channel: string } & (
+export type ChannelIngress = { botKey: string; channel: string; thread?: string } & (
   | { surface: "slack"; team: string }
   | { surface: "mattermost"; server: string }
 );
@@ -1548,6 +1548,9 @@ export type ChannelInput = Pick<ChannelOwnerRequest, "agentId" | "actor"> & {
   surface: ChannelSurface;
   requestId: string;
   text: string;
+  attachments?: FileAttachment[];
+  attachmentPreview?: string;
+  threadRoot?: string;
   route: ChannelRoute;
 };
 
@@ -1575,6 +1578,10 @@ export type JobTickResult = { status: "done"; result: RunAgentResult } | { statu
 
 export type WebhookAdmission = { status: "admitted"; duplicate: boolean } | { status: "not_durable" };
 export type ChannelAdmission = { status: "admitted"; duplicate: boolean } | { status: "not_durable" };
+export type ChannelCommand = Pick<ChannelInput, "agentId" | "owner" | "actor" | "route"> & {
+  command: "stop" | "ignored";
+};
+export type ChannelCommandResult = DurableStopResult | { status: "ignored" | "not_durable" };
 
 /**
  * Runtime push of a text result into a comm channel. Registered by comm
@@ -1818,6 +1825,7 @@ export interface ExtensionContext {
   getDeliverySink(id: string): DeliverySink | undefined;
   registerChannelOwnerResolver?(surface: ChannelSurface, resolver: ChannelOwnerResolver): () => void;
   submitChannelInput?(input: ChannelInput): Promise<ChannelAdmission>;
+  submitChannelCommand?(input: ChannelCommand): Promise<ChannelCommandResult>;
   /** Admit a webhook into its owner's Durable child when eligible. */
   submitWebhookInput?(input: WebhookInput): Promise<WebhookAdmission>;
   /** Run one scheduled tick in its owner's Durable child when eligible. */

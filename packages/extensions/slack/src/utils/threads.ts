@@ -22,11 +22,12 @@ export async function getThreadParent(
   client: SlackWebClient,
   channel: string,
   threadTs: string | undefined,
-  messageTs?: string
+  messageTs?: string,
+  workspace?: string,
 ): Promise<ThreadParentInfo | null> {
   if (!threadTs || threadTs === messageTs) return null;
 
-  const key = cacheKey(channel, threadTs);
+  const key = workspace ? JSON.stringify([workspace, channel, threadTs]) : cacheKey(channel, threadTs);
   const cached = threadParentCache.get(key);
   if (cached) return cached;
 
@@ -38,7 +39,7 @@ export async function getThreadParent(
       limit: 1,
     });
     const parent = result.messages?.[0];
-    if (!parent) return null;
+    if (!parent || (workspace && parent.ts !== threadTs)) return null;
 
     const info: ThreadParentInfo = {
       author: parent.username ?? parent.user ?? "unknown",

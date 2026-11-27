@@ -1,5 +1,5 @@
 import { defineDoc, defineEntry, type ConversationId, type EntryId, type SubmissionId } from "@earendil-works/pi-durable";
-import type { ChannelActor, ChannelRoute, RunFailureKind } from "@yoplai/shared";
+import type { ChannelActor, ChannelRoute, FileAttachment, RunFailureKind } from "@yoplai/shared";
 import type { WebSender } from "./contract.js";
 
 type WebInput = { timestamp: number; sender: WebSender; surface?: "web"; route: { surface: "web"; user: string }; text: string };
@@ -8,6 +8,7 @@ type ChannelEntry = Pick<WebInput, "timestamp" | "text"> & {
   actor: ChannelActor;
   owner: string;
   route: ChannelRoute;
+  attachments?: { filename: string; mimeType: FileAttachment["mimeType"] }[];
 };
 
 export type BackgroundChild = {
@@ -76,6 +77,8 @@ export type ThreadRecord = {
   conversationId: ConversationId;
   owner: string;
   createdAt: number;
+  surfaceKey?: string;
+  lastActivityAt?: number;
   title?: string;
   dashboardId?: string;
   forkedAt?: EntryId;
