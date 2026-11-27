@@ -46,11 +46,21 @@ the rest of the agent's data.
 
 ## Chat rooms
 
-The gateway opens `rooms.sqlite` on room use. A room uses its owner's chat
+The gateway opens `rooms.sqlite` on startup or room use. A room uses its owner's chat
 project ID. Project files, notes, and instructions stay in the owner's
-`chat-projects/<id>/` directory. The SQLite database holds the owner, member and
-agent IDs, and sequenced messages. Treat the database and its SQLite WAL
-sidecars as private conversation data.
+`chat-projects/<id>/` directory. The sequenced log stores each event's author
+kind (`user`, `agent`, or `digest`), mentioned agent IDs, optional author agent
+ID, and optional answer reference. Existing messages migrate as user rows
+with an empty mention list. Active agent registrations record the room's
+sequence at join and a generation that advances when the agent rejoins.
+Existing registrations migrate at generation 1 with the room's current sequence.
+Treat the database and its SQLite WAL sidecars as private conversation data.
+
+Each agent's Durable store maps `room:<roomId>` to a room conversation. Its
+conversation document stores the membership generation, delivered room sequence
+and examined-answer cursor. The delivered sequence commits with the model input
+or passive context that covers it. Answer publication uses an idempotent room
+log key so recovery can replay an interrupted publication.
 
 ## Project data
 

@@ -10,8 +10,19 @@ export type RoomMessage = {
   audience: string;
   text: string;
   timestamp: number;
+  authorKind?: "user" | "agent" | "digest";
+  agentId?: string | null;
+  ref?: { conversationId: number; answerId: number } | null;
+  mentions?: string[];
 };
 
-export function projectRoomMessage(row: RoomMessage): Extract<FeedItem, { role: "user" }> {
-  return { id: row.id, role: "user", text: row.text, timestamp: row.timestamp, sender: row.authorName, surface: "web" };
+export function projectRoomMessage(row: RoomMessage): FeedItem {
+  const { id, text, timestamp } = row;
+  if (row.authorKind === "agent") {
+    return { id, role: "assistant", text, timestamp, sender: row.authorName, toolCallCount: 0 };
+  }
+  if (row.authorKind === "digest") {
+    return { id, role: "user", text, timestamp, sender: "Thread digest" };
+  }
+  return { id, role: "user", text, timestamp, sender: row.authorName, surface: "web" };
 }

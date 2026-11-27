@@ -16,7 +16,7 @@ import {
   type ChannelAdmission, type ChannelCommand, type ChannelCommandResult, type ChannelIngress, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
-import { durableModeFor } from "../durable-mode/resolve.js";
+import { durableAgentEligible, durableModeFor } from "../durable-mode/resolve.js";
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { messageText, oneLine } from "../history/condense.js";
 import { buildHandoff } from "../history/handoff.js";
@@ -48,6 +48,8 @@ import { AbortedRuns, ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type Ba
 import { describeThread, firstLine, threadRef } from "./threads.js";
 import { durableStorePath } from "./store-path.js";
 import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
+import { RoomConversations, type RoomDelivery } from "./rooms.js";
+import type { RoomStore } from "../rooms/store.js";
 
 import { handoffTranscript } from "./background.js";
 
@@ -75,6 +77,7 @@ function surfaceThreadDue(thread: ThreadRecord, now: number) {
 export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
+  afterRoomCommit?: (delivery: RoomDelivery, signal: AbortSignal) => void | Promise<void>;
   afterChildSettlement?: () => void | Promise<void>;
   afterThreadArchive?: () => void | Promise<void>;
   afterThreadNote?: () => void | Promise<void>;
@@ -99,6 +102,7 @@ export class DurableHost {
   readonly deliveries: DeliveryQueue;
   private readonly feed: DurableFeed;
   private readonly keeper: MemoryKeeper;
+  private readonly rooms?: RoomConversations;
   private readonly settlingChildren = new Map<ConversationId, Promise<RunAgentResult>>();
   private readonly waitingDigests = new Set<string>();
   private readonly childKeys = new Map<ConversationId, string>();
@@ -126,6 +130,7 @@ export class DurableHost {
     private readonly review: ReturnType<typeof createReplyReview>,
     private readonly memoryTools: Extension,
     private readonly options: DurableHostOptions,
+    roomStore?: RoomStore,
   ) {
     this.deliveries = new DeliveryQueue(harness, agent.id, async (conversation, submission) => {
       const status = await submission.status(context);
@@ -150,21 +155,56 @@ export class DurableHost {
       for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
       return names;
     }, (conversation, callId) => {
-      const owner = this.owners.get(conversation.id);
+      const owner = this.rooms?.sessionRef(conversation.id) ? undefined : this.owners.get(conversation.id);
       if (owner === undefined) return;
       return getMcpAppView({ agentId: agent.id, sessionId: this.sessionRef(conversation.id), userId: owner === "local" ? undefined : owner }, callId);
     }, this.deliveries);
     this.keeper = new MemoryKeeper(harness, this.feed, models, agent.id, options.keeper);
+    if (roomStore) this.rooms = new RoomConversations(harness, roomStore, agent.id, {
+      active: () => durableAgentEligible(getAgent(agent.id)),
+      name: () => (getAgent(agent.id) ?? agent).name,
+      holdsReplies: review.holdsReplies,
+      handoffMaxChars: () => {
+        const current = getAgent(agent.id) ?? agent;
+        return this.handoffMaxChars({ provider: current.model.provider, modelId: current.model.model },
+          current.fallback_model && { provider: current.fallback_model.provider, modelId: current.fallback_model.model });
+      },
+      register: async (id, owner) => {
+        this.owners.set(id, owner);
+        await this.registerProviderSession(id);
+      },
+      mutate: (id, action) => this.mutateConversation(id, action),
+      configure: async ({ id }) => {
+        const { change, primary, fallback } = await this.configureFor(id);
+        return async (tx) => {
+          await configure(tx, id, change);
+          await setModelPolicy(tx, id, primary, fallback);
+        };
+      },
+      restore: async (conversation) => {
+        const { change } = await this.configureFor(conversation.id);
+        const current = await this.harness.snapshot(AgentDoc, conversation.id, context);
+        await conversation.configure({ ...change, model: current?.model ?? change.model }, context);
+      },
+      answer: (conversation, id) => this.publicAnswer(conversation, id),
+      failure: (conversation, id, result) => this.recordFailure(conversation, id, result),
+      afterCommit: options.afterRoomCommit,
+    });
   }
 
-  static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions) {
+  static async open(home: string, agent: AgentConfig, runtime: ExtensionRuntime, metrics: OpsMetrics, options: DurableHostOptions, rooms?: RoomStore) {
     const provider = agent.model.provider;
     if (!provider) throw new Error("Durable requires model.provider to be set.");
     let harness: Harness | undefined;
+    let host: DurableHost | undefined;
     const providerConversations = new Map<string, ConversationId>();
     const models = await (options.createModels ?? createDurableModels)(agent, async (sessionId) => {
       const id = sessionId && providerConversations.get(sessionId);
-      if (harness && id) return getModelPolicy(harness, id);
+      if (harness && id) {
+        const policy = await getModelPolicy(harness, id);
+        if (host?.rooms?.mayRun(id) === false) throw new DurableAccessDenied();
+        return policy;
+      }
     });
     const compactionSettings = createMainCompactionSettings(models);
     const store = durableStorePath(home, agent.id);
@@ -172,12 +212,12 @@ export class DurableHost {
     const storage = await openNodeSqliteStorage(store);
     const registry = createRegistry();
     const owners = new Map<ConversationId, string>();
-    const memoryTools = createMemoryTools((id) => userMemoryKey(owners.get(id)));
-    let host: DurableHost | undefined;
+    const memoryTools = createMemoryTools((id) => host?.memoryKey(id));
     const tools = createDurableTools(agent.id, runtime, registry, (id) => owners.get(id),
       (id) => host?.sessionRef(id) ?? DURABLE_MAIN_SESSION_ID,
       (id) => host?.childKeys.has(id) ?? false,
       (id) => host?.mainIds.has(id) === true || host?.threadIds.has(id) === true,
+      (id) => host?.rooms?.mayRun(id),
       () => metrics.increment("interrupted_tool_calls", agent.id), async (id, args) => {
         if (!host) throw new Error("Durable host is not open.");
         return host.sessionHistory(id, args);
@@ -194,8 +234,11 @@ export class DurableHost {
       hooks: [hook(GenerationTask, {
         async afterRun(run, api, context) {
           host?.noteTurn(api.conversationId, run.last);
+          await host?.rooms?.finishTurn(api.conversationId);
           const inbox = await api.snapshot(InboxDoc, api.conversationId, context);
-          if (inbox?.items.some(({ mode }) => mode !== "write")) await host?.configureQueuedRun(api.conversationId);
+          if (host?.rooms?.mayRun(api.conversationId) !== false && inbox?.items.some(({ mode }) => mode !== "write")) {
+            await host?.configureQueuedRun(api.conversationId);
+          }
           return undefined;
         },
       }), hook(CompactionTask, {
@@ -206,7 +249,7 @@ export class DurableHost {
             for (const name of options.fixture?.invisibleTools ?? []) names.add(name);
             return names;
           }, async () => {
-            const key = userMemoryKey(owners.get(api.conversationId));
+            const key = host?.memoryKey(api.conversationId);
             if (key === undefined) return;
             const memory = await api.snapshot(MemoryDoc, key, context);
             return memory && renderMemory(memory, COMPACTION_MEMORY_CHARS);
@@ -242,7 +285,7 @@ export class DurableHost {
           };
         },
       }, context);
-      host = new DurableHost(harness, models, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options);
+      host = new DurableHost(harness, models, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options, rooms);
       await host.resume();
       host.threadSweepTimer = setInterval(() => host?.wakeThreadSweep(), options.threadSweepIntervalMs ?? 60_000).unref();
       return host;
@@ -259,8 +302,16 @@ export class DurableHost {
 
   private noteTurn(id: ConversationId, last: EntryId) {
     if (this.threadIds.has(id) || this.childKeys.has(id)) return;
-    const key = userMemoryKey(this.owners.get(id));
+    const key = this.memoryKey(id);
     if (key !== undefined) this.keeper.noteTurn(key, id, last);
+  }
+
+  private memoryKey(id: ConversationId) {
+    return this.rooms?.sessionRef(id) ? undefined : userMemoryKey(this.owners.get(id));
+  }
+
+  wakeRoom(roomId: string) {
+    this.rooms?.wake(roomId);
   }
 
   private async mainId(user: string): Promise<ConversationId | undefined> {
@@ -587,6 +638,8 @@ export class DurableHost {
   }
 
   private sessionRef(id: ConversationId) {
+    const room = this.rooms?.sessionRef(id);
+    if (room !== undefined) return room;
     const childKey = this.childKeys.get(id);
     if (childKey !== undefined) return childKey;
     const threadId = this.threadIds.get(id);
@@ -877,7 +930,14 @@ export class DurableHost {
     const change: AgentChange = {
       model: { provider, modelId: agent.model.model },
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
-      extensions: [this.review.extension, CodingTools, this.tools.gate, this.boundary, ...(principal.background ? [] : [this.memoryTools]), ...(principal.sessionId === DURABLE_MAIN_SESSION_ID ? [turnPlanTools] : []), ...installed, ...(this.options.fixture ? [this.options.fixture.extension] : []), ...(agent.codemode ? [this.codemode] : []), ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : [])],
+      extensions: [
+        this.review.extension, ...(principal.room ? [] : [CodingTools]), this.tools.gate, this.boundary,
+        ...(principal.room || principal.background ? [] : [this.memoryTools]),
+        ...(principal.sessionId === DURABLE_MAIN_SESSION_ID ? [turnPlanTools] : []), ...installed,
+        ...(this.options.fixture ? [this.options.fixture.extension] : []),
+        ...(!principal.room && agent.codemode ? [this.codemode] : []),
+        ...(agent.toolDeferral?.enabled !== false ? [toolSearch] : []),
+      ],
       instructions: await durableInstructions(agent, config, principal, this.runtime, summary),
     };
     const fallback = agent.fallback_model;
@@ -928,7 +988,7 @@ export class DurableHost {
   }
 
   private async resume() {
-    const pending = (await this.harness.inspect(context)).submissions;
+    const inspection = await this.harness.inspect(context);
     const map = await this.harness.snapshot(MainMap, context);
     for (const [key, id] of Object.entries(map?.conversations ?? {})) {
       this.owners.set(id as ConversationId, key.slice("main:".length));
@@ -943,10 +1003,12 @@ export class DurableHost {
       this.owners.set(conversationId, owner);
       this.threadIds.set(conversationId, threadId);
     }
+    await this.rooms?.prepareRecovery(inspection);
     const routes = [];
     const stopping: { conversation: Conversation; user: string }[] = [];
     const configured = new Set<ConversationId>();
-    for (const record of pending) {
+    for (const record of inspection.submissions) {
+      if (this.rooms?.sessionRef(record.conversationId)) continue;
       const user = this.owners.get(record.conversationId);
       const child = this.childKeys.has(record.conversationId);
       const threadId = this.threadIds.get(record.conversationId);
@@ -979,6 +1041,7 @@ export class DurableHost {
       if (!child) routes.push(await this.attachSubmission(conversation, submission, user, true));
     }
     this.harness.resume();
+    this.rooms?.resume();
     for (const { conversation, user } of stopping) {
       void this.mutateConversation(conversation.id, async () => {
         await conversation.waitForIdle(context);
@@ -1177,7 +1240,11 @@ export class DurableHost {
         entry: {
           kind: FailureNoteEntry.kind,
           data: { submissionId, kind: durableKind, ...(accessError && { accessError }) },
-          model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
+          // A model-visible write would place kept room inputs at an idle
+          // boundary and could start a turn without a mention.
+          ...(this.rooms?.sessionRef(conversation.id) === undefined && {
+            model: [{ role: "user", content: `[previous reply failed: ${phrase}]`, timestamp: Date.now() }],
+          }),
         },
       });
       return true;
@@ -1421,6 +1488,7 @@ export class DurableHost {
   }
 
   private async historyAudience(caller: ConversationId) {
+    if (this.rooms?.sessionRef(caller)) return [];
     const owner = this.owners.get(caller);
     if (owner === undefined || !await this.mayReadFeed(owner, owner)) return [];
     const main = await this.mainFor(owner);
@@ -1494,6 +1562,7 @@ export class DurableHost {
 
   async close(): Promise<void> {
     clearInterval(this.threadSweepTimer);
+    await this.rooms?.close();
     await this.threadSweep;
     this.keeper.close();
     try {

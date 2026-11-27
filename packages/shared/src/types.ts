@@ -2772,7 +2772,7 @@ export type TurnPlan = {
 
 export type FeedItem = FeedMessage & (
   | { role: "user"; sender: string; surface?: "web" | ChannelSurface | "job" | "webhook" }
-  | { role: "assistant"; toolCallCount: number; deliveries?: FeedDelivery[]; plan?: TurnPlan }
+  | { role: "assistant"; toolCallCount: number; sender?: string; deliveries?: FeedDelivery[]; plan?: TurnPlan }
   | { role: "failure"; kind: RunFailureKind }
   | { role: "seam"; reason: "manual" | "threshold" | "overflow"; carried: { firstKept: string; indexed: number } }
 );

@@ -20,8 +20,8 @@ type ModelLimits = Partial<{ contextWindow: number; maxTokens: number }>;
 export type RealTestModel = { provider: string; model: string; limits?: ModelLimits; apiKey?: string };
 
 export async function startDurableTestGateway({
-  multiUser = false, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper, realModel, fauxLimits, fauxApi, wrapModels, afterThreadArchive, afterThreadNote, now, threadSweepIntervalMs, afterChildSettlement,
-}: { multiUser?: boolean; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[] | (() => Promise<Extension[]>); modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"]; realModel?: RealTestModel; fauxLimits?: ModelLimits; fauxApi?: string; wrapModels?: (factory: DurableModelsFactory) => DurableModelsFactory; afterThreadArchive?: DurableHostOptions["afterThreadArchive"]; afterThreadNote?: DurableHostOptions["afterThreadNote"]; now?: DurableHostOptions["now"]; threadSweepIntervalMs?: number; afterChildSettlement?: DurableHostOptions["afterChildSettlement"] } = {}) {
+  multiUser = false, additionalAgents = [], afterRoomCommit, extraYaml = "", enableDurableMode = true, reviewer, legacyAnswer, tokensPerSecond, fixtureExtensions = [], modelFixture, customModel, extraConfig, appViews = false, feedSendComplete, recheckMs, fixture, startChannels, deliveryFixture, keeper, realModel, fauxLimits, fauxApi, wrapModels, afterThreadArchive, afterThreadNote, now, threadSweepIntervalMs, afterChildSettlement,
+}: { multiUser?: boolean; additionalAgents?: Parameters<typeof writeTestAgent>[1][]; afterRoomCommit?: DurableHostOptions["afterRoomCommit"]; extraYaml?: string; enableDurableMode?: boolean; reviewer?: ExtensionReplyReviewer | (() => ExtensionReplyReviewer); legacyAnswer?: string; tokensPerSecond?: number; fixtureExtensions?: Extension[] | (() => Promise<Extension[]>); modelFixture?: { provider: string; model: string; observeKey: (key?: string) => void }; customModel?: CustomModel; extraConfig?: Record<string, unknown>; appViews?: boolean; feedSendComplete?: () => Promise<void>; recheckMs?: number; fixture?: DurableHostOptions["fixture"]; startChannels?: (ctx: ExtensionContext, home: string) => (() => void | Promise<void>) | void | Promise<(() => void | Promise<void>) | void>; deliveryFixture?: DurableHostOptions["deliveryFixture"]; keeper?: DurableHostOptions["keeper"]; realModel?: RealTestModel; fauxLimits?: ModelLimits; fauxApi?: string; wrapModels?: (factory: DurableModelsFactory) => DurableModelsFactory; afterThreadArchive?: DurableHostOptions["afterThreadArchive"]; afterThreadNote?: DurableHostOptions["afterThreadNote"]; now?: DurableHostOptions["now"]; threadSweepIntervalMs?: number; afterChildSettlement?: DurableHostOptions["afterChildSettlement"] } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-durable-"));
   const sockets = new Set<WebSocket>();
   const users = new Map<TestUser, { id: string; cookie: string }>([["local", { id: "local", cookie: "" }]]);
@@ -43,7 +43,7 @@ export async function startDurableTestGateway({
   vi.stubEnv("YOPLAI_HOME", home);
   await writeTestV3Config(home, {
     extraConfig: { oauth: { encryptionKey: "fixture-encryption-key-durable" }, ...extraConfig, ...(appsPort ? { apps: { port: appsPort, origin: "http://127.0.0.1:" + appsPort } } : {}) },
-    agents: [{ id: "pilot", model: realModel ? { provider: realModel.provider, model: realModel.model } : customModel ?? modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }],
+    agents: [{ id: "pilot", model: realModel ? { provider: realModel.provider, model: realModel.model } : customModel ?? modelFixture ?? { provider: "faux", model: "fixture" }, extraYaml }, ...additionalAgents],
     extensions: multiUser ? {
       multiUser: {
         enabled: true, autoApprove: true, emailAndPassword: { enabled: true },
@@ -68,7 +68,7 @@ export async function startDurableTestGateway({
   if (realModel?.apiKey) await seedModelKeys({ [realModel.provider]: realModel.apiKey });
   vi.resetModules();
   const { startServer } = await import("../server/index.js");
-  const { loadConfig, reloadConfig } = await import("../config/index.js");
+  const { loadConfig, reloadConfig, setSingleAgentMode } = await import("../config/index.js");
   const { getExtensionRuntime } = await import("../extensions/registry.js");
   const { createExtensionContext } = await import("../extensions/context.js");
   const { createDurableFaux } = await import("../durable/faux.js");
@@ -127,6 +127,7 @@ export async function startDurableTestGateway({
       now,
       threadSweepIntervalMs,
       afterChildSettlement,
+      afterRoomCommit,
       afterMainCommit() {
         if (!fault) return;
         fault = false;
@@ -255,6 +256,7 @@ export async function startDurableTestGateway({
     socket,
     connectDevice,
     setDurableMode,
+    setSingleAgentMode,
     configureCustomModel,
     script: faux.script,
     callCount: faux.callCount,
@@ -296,6 +298,9 @@ export async function startDurableTestGateway({
       }
       await startAuth?.();
       await open();
+    },
+    appendRoomDigest(roomId: string, threadId: string, generation: number, text: string) {
+      return server.rooms.append(roomId, `thread-note:${threadId}:${generation}`, { id: threadId, name: "Thread digest" }, text, { kind: "digest" });
     },
     async writePassiveEntry(user: TestUser, entry: EntryDraft) {
       const agent = loadConfig().agents.find((agent) => agent.id === "pilot")!;
