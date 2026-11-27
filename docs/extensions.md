@@ -127,16 +127,27 @@ Telegram and Discord delivery stays at the chat/channel level.
 Slack and Mattermost register an optional `ctx.registerChannelOwnerResolver`
 and submit eligible DMs with `ctx.submitChannelInput`. Pass the verified
 speaker, bound owner, stable platform request ID and reply route. The route
-records the ingress workspace or server, bot key and channel. An `admitted`
+records the ingress workspace or server, bot key, channel, and optional
+`ingress.thread` parent ID. Pass saved inbound files as `attachments`, even
+when the typed `text` is empty. A failed text-file download can supply
+`attachmentPreview` for model context. Pass available parent text as
+`threadRoot` for the child's first input. An `admitted`
 result transfers delivery to the gateway, including on duplicate admission.
 A `not_durable` result uses the legacy route.
 The verified envelope establishes the DM at admission. The resolver also
 receives `verifyDestination: true` before delivery to recheck the channel
 type and participants with the provider.
 
+Use `ctx.submitChannelCommand` with the same agent, owner, actor and route.
+`command: "stop"` targets the running turn of Main or the specified child and
+returns `stopped` or `already_finished`. `command: "ignored"` checks
+eligibility for reset and compact commands and returns `ignored`. A
+`not_durable` result hands the command back to the extension's legacy flow.
+
 Delivery sinks can return `{ receipt: string }` for an acknowledged post.
-A Durable reply supplies `durable.ingress` and, when configured, a
-`durable.feedUrl`. Send through that ingress bot in one attempt and return the
+A Durable reply supplies `durable.ingress` with the optional thread parent.
+Main replies can also supply a configured `durable.feedUrl`. Send through
+that ingress bot in one attempt and return the
 provider post ID. The worker records a missing receipt or thrown error as
 uncertain. Existing scheduler and tool callers can use sinks that return void.
 

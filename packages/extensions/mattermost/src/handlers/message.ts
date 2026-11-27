@@ -3,6 +3,8 @@ import {
   getSurfaceLinkService,
   buildMattermostContext,
   classifyRunFailure,
+  durableChannelCommandReply,
+  parseDurableChannelCommand,
   runFailureMessage,
   type AgentConfig,
   type ChannelConversationType,
@@ -342,7 +344,8 @@ async function handleReset(
 async function buildContext(
   inbound: InboundPost,
   route: MattermostRoute,
-  deps: MattermostTurnDeps
+  deps: MattermostTurnDeps,
+  rootPost?: Promise<MattermostPost | undefined>,
 ) {
   const { post: p } = inbound;
   const sender = inbound.senderName || (await displayName(deps, p.user_id));
@@ -371,8 +374,8 @@ async function buildContext(
     | undefined;
   if (p.root_id) {
     try {
-      const root = await deps.rest.getPost(p.root_id);
-      threadStarter = {
+      const root = await (rootPost ?? deps.rest.getPost(p.root_id));
+      if (root) threadStarter = {
         author: await displayName(deps, root.user_id),
         content: root.message,
         timestamp: root.create_at,
@@ -470,28 +473,51 @@ export async function handleMattermostPost(
     return;
   }
 
-  if (isResetCommand(text) && (p.file_ids?.length ?? 0) === 0) {
-    await handleReset(inbound, route, deps);
-    return;
-  }
+  const rootId = replyRootId(p, route.isDm);
+  let collected: Promise<FileAttachment[]> | undefined;
+  const collectFiles = () => collected ??= (async () => {
+    const files = route.attachmentsEnabled ? postFiles(p) : [];
+    if (!files.length || !ctx.saveMediaFile) return [];
+    const { attachments, errors } = await collectMattermostAttachments(files, deps.rest, ctx.saveMediaFile);
+    for (const error of errors) {
+      await post(deps, p.channel_id, rootId, error).catch(() => {});
+    }
+    return attachments;
+  })();
 
-  if (ctx.submitChannelInput && deps.botKey && route.isDm && !p.root_id && !isBotPost(p) &&
-      text.trim() && !/^[!/]/.test(text.trim()) && postFiles(p).length === 0) {
+  let rootPost: Promise<MattermostPost | undefined> | undefined;
+  if ((ctx.submitChannelInput || ctx.submitChannelCommand) && deps.botKey && route.isDm && !isBotPost(p)) {
     const surface = "mattermost";
     const server = deps.rest.baseUrl;
-    const ingress = { surface, server, botKey: deps.botKey, channel: p.channel_id } as const;
+    const ingress = { surface, server, botKey: deps.botKey, channel: p.channel_id, ...(p.root_id && { thread: p.root_id }) } as const;
     const name = (inbound.senderName ?? p.user_id).replace(/^@/, "");
     const actor = { surface, server, id: p.user_id, name } as const;
     const verified = { agentId: agent.id, ingress, actor };
     try {
       const owner = await resolveMattermostDmOwner(verified);
       if (owner) {
-        const result = await ctx.submitChannelInput({
-          agentId: agent.id, owner, surface, actor, text,
-          requestId: `mm:${server}:${p.id}`,
-          route: { sink: surface, destination: { channel: p.channel_id }, ingress },
-        });
-        if (result.status === "admitted") return;
+        const input = { agentId: agent.id, owner, actor, route: { sink: surface, destination: { channel: p.channel_id }, ingress } };
+        const command = parseDurableChannelCommand(text);
+        if (command) {
+          const reply = durableChannelCommandReply(await ctx.submitChannelCommand?.({ ...input, command }));
+          if (reply) {
+            await post(deps, p.channel_id, rootId, reply).catch(() => {
+              ctx.logger.warn("Could not acknowledge Durable Mattermost command", { agentId: agent.id, channel: p.channel_id });
+            });
+            return;
+          }
+        } else if (ctx.submitChannelInput) {
+          const attachments = await collectFiles();
+          if (!text && !attachments.length) return;
+          if (p.root_id) rootPost = deps.rest.getPost(p.root_id).catch(() => undefined);
+          const parent = await rootPost;
+          const result = await ctx.submitChannelInput({
+            ...input, surface, text, attachments,
+            threadRoot: parent?.channel_id === p.channel_id ? parent.message : undefined,
+            requestId: `mm:${server}:${p.id}`,
+          });
+          if (result.status === "admitted") return;
+        }
       }
     } catch (error) {
       deps.releaseClaim?.();
@@ -499,7 +525,11 @@ export async function handleMattermostPost(
     }
   }
 
-  const rootId = replyRootId(p, route.isDm);
+  if (isResetCommand(text) && (p.file_ids?.length ?? 0) === 0) {
+    await handleReset(inbound, route, deps);
+    return;
+  }
+
   const sessionKey = sessionKeyFor(p, route.isDm);
   const status = route.acknowledgeMessages
     ? new StatusReaction(deps.rest, deps.bot.id, p.id)
@@ -544,21 +574,9 @@ export async function handleMattermostPost(
       sessionId = session.sessionId;
       sessionOwnerId = session.owner;
     }
-    context = await buildContext(inbound, route, deps);
+    context = await buildContext(inbound, route, deps, rootPost);
 
-    const files = route.attachmentsEnabled ? postFiles(p) : [];
-    if (files.length > 0 && ctx.saveMediaFile) {
-      const collected = await collectMattermostAttachments(
-        files,
-        deps.rest,
-        (data, mimeType, filename) =>
-          ctx.saveMediaFile!(data, mimeType, filename)
-      );
-      attachments = collected.attachments;
-      for (const error of collected.errors) {
-        await post(deps, p.channel_id, rootId, error).catch(() => {});
-      }
-    }
+    attachments = await collectFiles();
   } catch (err) {
     console.error(`${route.logPrefix} Error:`, err);
     await fail(err);

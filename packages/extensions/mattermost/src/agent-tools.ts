@@ -212,6 +212,7 @@ export function createMattermostDeliverySink(
       if (!bot || ingress.channel !== destination.channel) throw new Error("Mattermost DM bot unavailable.");
       const post = await bot.rest.createPost({
         channel_id: ingress.channel,
+        ...(ingress.thread && { root_id: ingress.thread }),
         message: limitChannelReply(text, MATTERMOST_MAX, feedUrl ? `[Read in web chat](${feedUrl})` : undefined),
       }, AbortSignal.timeout(10_000), { singleAttempt: true });
       return { receipt: post.id };

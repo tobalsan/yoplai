@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import type { AgentConfig } from "@yoplai/shared";
+import type { AgentConfig, ChannelCommand } from "@yoplai/shared";
 import { CONFIG_DIR, getAgent, loadConfig } from "../config/index.js";
 import type { GatewayExtensionContext } from "../extensions/context.js";
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
@@ -30,16 +30,24 @@ export class DurableWeb {
         await host?.deliveries.scan(channels, signal);
       }
     });
-    channels.connectChannelInput(async (input) => {
+    const checkChannel = ({ agentId, owner, actor, route }: Pick<ChannelCommand, "agentId" | "owner" | "actor" | "route">) => async () => {
       if (this.closing) throw new Error("Gateway is shutting down.");
+      const allowed = await mayUseChannel(agentId, owner, actor, route, channels);
+      if (this.closing) throw new Error("Gateway is shutting down.");
+      return allowed;
+    };
+    channels.connectChannelInput(async (input) => {
       const agent = getAgent(input.agentId);
-      const eligible = async () => {
-        const allowed = await mayUseChannel(input.agentId, input.owner, input.actor, input.route, channels);
-        if (this.closing) throw new Error("Gateway is shutting down.");
-        return allowed;
-      };
+      const eligible = checkChannel(input);
       if (!agent || input.surface !== input.actor.surface || !await eligible()) return { status: "not_durable" };
       return (await this.host(agent)).submitChannel(input, eligible);
+    });
+    channels.connectChannelCommand(async (input) => {
+      const agent = getAgent(input.agentId);
+      const eligible = checkChannel(input);
+      if (!agent || !await eligible()) return { status: "not_durable" };
+      if (input.command === "ignored") return { status: "ignored" };
+      return (await this.host(agent)).stopChannel(input, eligible);
     });
     channels.connectWebhookInput(async (input) => {
       const agent = await this.backgroundAgent(input.agentId, input.owner);

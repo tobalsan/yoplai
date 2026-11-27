@@ -13,7 +13,7 @@ import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import {
   DEFAULT_RETRY_BASE_DELAY_SECONDS, DEFAULT_RETRY_MAX_ATTEMPTS, DURABLE_MAIN_SESSION_ID, runFailureMessage, type AgentConfig, type FeedWindow, type FullHistoryMessage,
-  type ChannelAdmission, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
+  type ChannelAdmission, type ChannelCommand, type ChannelCommandResult, type ChannelIngress, type ChannelInput, type JobTickInput, type JobTickResult, type WebhookAdmission, type WebhookInput, type DurableStopResult, type HistoryViewMode, type RunAgentResult, type SimpleHistoryMessage, type StreamEvent, type WsActiveTurnSnapshot, type WsServerMessage,
 } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
@@ -23,6 +23,7 @@ import { buildHandoff } from "../history/handoff.js";
 import { historyPage } from "../history/page.js";
 import { logError, logWarn } from "../logging.js";
 import type { OpsMetrics } from "../server/ops-metrics.js";
+import { appendAttachmentContext, buildDocumentAttachmentContext, getAttachmentFilename, isImageAttachment, normalizeInboundAttachment } from "../sdk/attachments.js";
 import { createDurableModels, type DurableModelsFactory } from "./models.js";
 import { COMPACTION_MEMORY_CHARS, compactionInputCeiling, createMainCompactionSettings, summarizeCompaction } from "./compaction.js";
 
@@ -49,14 +50,34 @@ import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
 import { handoffTranscript } from "./background.js";
 
 const CHILD_DIGEST_CHARS = 500;
+const SURFACE_THREAD_IDLE_MS = 24 * 60 * 60 * 1000;
 const context = BACKGROUND_CONTEXT;
 const toolSearch = createToolSearchExtension();
 const routingWarnings = new Set<string>();
+
+function surfaceThreadKey(ingress: ChannelIngress) {
+  const workspace = ingress.surface === "slack" ? ingress.team : ingress.server;
+  return `sthread:${ingress.surface}:${workspace}:${ingress.channel}:${ingress.thread}`;
+}
+
+function findSurfaceThread(threads: Record<string, ThreadRecord>, owner: string, key: string) {
+  return Object.entries(threads).find(([, thread]) => thread.owner === owner && thread.surfaceKey === key);
+}
+
+function surfaceThreadDue(thread: ThreadRecord, now: number) {
+  if (!thread.surfaceKey) return false;
+  return thread.closed
+    ? thread.digestedGeneration !== thread.generation
+    : thread.lastActivityAt !== undefined && now - thread.lastActivityAt >= SURFACE_THREAD_IDLE_MS;
+}
 export type DurableHostOptions = {
   createModels?: DurableModelsFactory;
   afterMainCommit?: () => void | Promise<void>;
   afterChildSettlement?: () => void | Promise<void>;
   afterThreadArchive?: () => void | Promise<void>;
+  afterThreadNote?: () => void | Promise<void>;
+  now?: () => number;
+  threadSweepIntervalMs?: number;
   fixture?: { extension: Extension; invisibleTools?: readonly string[] };
   wakeDelivery?: () => void;
   deliveryFixture?: DeliveryFixture;
@@ -86,6 +107,8 @@ export class DurableHost {
   private readonly conversationMutations = new Map<ConversationId, Promise<void>>();
   private readonly listeners = new Map<string, Set<(event: WsServerMessage) => void>>();
   private readonly feedListeners = new Map<ConversationId, Set<() => void>>();
+  private threadSweepTimer?: ReturnType<typeof setInterval>;
+  private threadSweep?: Promise<void>;
 
   private constructor(
     private readonly harness: Harness,
@@ -219,6 +242,7 @@ export class DurableHost {
       }, context);
       host = new DurableHost(harness, models, agent, runtime, providerConversations, owners, tools, boundary, codemode, sandbox, review, memoryTools, options);
       await host.resume();
+      host.threadSweepTimer = setInterval(() => host?.wakeThreadSweep(), options.threadSweepIntervalMs ?? 60_000).unref();
       return host;
     } catch (error) {
       if (host) await host.close();
@@ -270,7 +294,10 @@ export class DurableHost {
   }
 
   async submitChannel(input: ChannelInput, eligible: () => Promise<boolean>): Promise<ChannelAdmission> {
-    const conversation = await this.openMain(input.owner);
+    const { ingress } = input.route;
+    const conversation = ingress.thread
+      ? await this.openSurfaceThread(input.owner, ingress)
+      : await this.openMain(input.owner);
     const admitted = await this.admit(conversation, input, eligible).catch((error: unknown) => {
       if (error !== CHANNEL_NO_LONGER_ELIGIBLE && !(error instanceof DurableAccessDenied)) throw error;
     });
@@ -468,16 +495,37 @@ export class DurableHost {
     return thread;
   }
 
-  private async threadConversation(thread: ThreadRecord) {
+  private async openSurfaceThread(owner: string, ingress: ChannelIngress) {
+    const key = surfaceThreadKey(ingress);
+    const [id, conversationId] = await this.harness.commit(async (tx) => {
+      const { threads } = await tx.doc(ThreadMap);
+      const existing = findSurfaceThread(threads, owner, key);
+      if (existing) return [existing[0], existing[1].conversationId] as const;
+      const id = randomUUID();
+      const conversation = await tx.createConversation({ ownership: { kind: "ownerless" } });
+      const thread: ThreadRecord = {
+        owner, conversationId: conversation.id, surfaceKey: key, createdAt: this.now(), generation: 1, closed: false,
+      };
+      threads[id] = thread;
+      return [id, conversation.id] as const;
+    }, context);
+    const conversation = await this.threadConversation({ conversationId });
+    this.threadIds.set(conversation.id, id);
+    this.owners.set(conversation.id, owner);
+    await this.registerProviderSession(conversation.id);
+    return conversation;
+  }
+
+  private async threadConversation(thread: Pick<ThreadRecord, "conversationId">) {
     const conversation = await this.harness.conversation(thread.conversationId, context);
     if (!conversation) throw new ThreadError(404, "Thread not found");
     return conversation;
   }
 
-  private async seedThread(conversation: Conversation, id: string) {
+  private async seedThread(conversation: Conversation, id: string, allowClosed: boolean) {
     await conversation.commit(async (tx) => {
       const thread = (await tx.doc(ThreadMap)).threads[id]!;
-      if (thread.closed) throw new ThreadError(409, "Thread is closed");
+      if (thread.closed && !allowClosed) throw new ThreadError(409, "Thread is closed");
       if (thread.seeded) return;
       const memory = await tx.doc(MemoryDoc, "user:" + thread.owner, null);
       const seed = renderMemory(memory, COMPACTION_MEMORY_CHARS);
@@ -522,15 +570,7 @@ export class DurableHost {
     return this.mutateConversation(conversation.id, async () => {
       const thread = await this.requireThread(owner, id);
       if (thread.generation !== generation) throw new ThreadError(409, "Stale generation");
-      if (!thread.closed) {
-        await conversation.commit(async (tx) => {
-          if ((await tx.doc(LiveDoc, conversation.id)).run) {
-            throw new ThreadError(409, "Stop the thread before closing it");
-          }
-          (await tx.doc(ThreadMap)).threads[id]!.closed = true;
-        }, context);
-        await this.options.afterThreadArchive?.();
-      }
+      if (!thread.closed) await this.archiveThread(conversation, id, false);
       return this.finishThreadClose(id, { ...thread, closed: true }, conversation);
     });
   }
@@ -543,13 +583,57 @@ export class DurableHost {
       if (!thread.closed) return this.describeThread(id, thread);
       const closed = await this.finishThreadClose(id, thread, conversation);
       const generation = thread.generation + 1;
+      const lastActivityAt = thread.surfaceKey ? this.now() : closed.lastActivityAt;
       await conversation.commit(async (tx) => {
         const stored = (await tx.doc(ThreadMap)).threads[id]!;
         stored.closed = false;
         stored.generation = generation;
+        if (stored.surfaceKey) stored.lastActivityAt = lastActivityAt;
       }, context);
-      return { ...closed, closed: false, generation };
+      return { ...closed, closed: false, generation, lastActivityAt };
     });
+  }
+
+  private async archiveThread(conversation: Conversation, id: string, onlyIfIdle: boolean) {
+    const archived = await conversation.commit(async (tx) => {
+      if ((await tx.doc(LiveDoc, conversation.id)).run) {
+        if (onlyIfIdle) return false;
+        throw new ThreadError(409, "Stop the thread before closing it");
+      }
+      if (onlyIfIdle && (await tx.doc(InboxDoc, conversation.id)).items.some(({ mode }) => mode !== "write")) return false;
+      (await tx.doc(ThreadMap)).threads[id]!.closed = true;
+      return true;
+    }, context);
+    if (archived) await this.options.afterThreadArchive?.();
+    return archived;
+  }
+
+  private now() {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  private wakeThreadSweep() {
+    this.threadSweep ??= this.sweepThreads().catch((error: unknown) => {
+      logError("Could not scan Durable channel threads", error, { agentId: this.agent.id });
+    }).finally(() => { this.threadSweep = undefined; });
+  }
+
+  private async sweepThreads() {
+    const map = await this.harness.snapshot(ThreadMap, context);
+    const now = this.now();
+    for (const [id, candidate] of Object.entries(map?.threads ?? {})) {
+      if (!surfaceThreadDue(candidate, now) || this.conversationMutations.has(candidate.conversationId)) continue;
+      await this.mutateConversation(candidate.conversationId, async () => {
+        const thread = (await this.harness.snapshot(ThreadMap, context))?.threads[id];
+        if (!thread || !surfaceThreadDue(thread, this.now())) return;
+        const conversation = await this.threadConversation(thread);
+        if (thread.closed || await this.archiveThread(conversation, id, true)) {
+          await this.finishThreadClose(id, { ...thread, closed: true }, conversation);
+        }
+      }).catch((error: unknown) => {
+        logError("Could not close Durable channel thread", error, { agentId: this.agent.id, threadId: id });
+      });
+    }
   }
 
   private async finishThreadClose(id: string, thread: ThreadRecord, conversation: Conversation) {
@@ -557,14 +641,6 @@ export class DurableHost {
     const description = describeThread(id, thread, items);
     const answer = items.filter(({ role }) => role === "assistant").at(-1);
     const digest = threadDigest(id, description.title, firstLine(answer?.text ?? "") || "no conclusion");
-    if (thread.digestedGeneration !== thread.generation) {
-      await this.harness.commit(async (tx) => {
-        const stored = (await tx.doc(ThreadMap)).threads[id]!;
-        const memory = await tx.doc(MemoryDoc, "user:" + thread.owner, null);
-        memory.topics = putThreadDigest(memory.topics, digest);
-        stored.digestedGeneration = thread.generation;
-      }, context);
-    }
     const main = await this.openMain(thread.owner);
     await main.commit((tx) => main.submit(tx, {
       type: "write",
@@ -574,6 +650,15 @@ export class DurableHost {
         model: [{ role: "user", content: `[thread ${JSON.stringify(digest.title)} closed] ${digest.note}`, timestamp: Date.now() }],
       },
     }), context);
+    if (thread.digestedGeneration !== thread.generation) {
+      await this.options.afterThreadNote?.();
+      await this.harness.commit(async (tx) => {
+        const stored = (await tx.doc(ThreadMap)).threads[id]!;
+        const memory = await tx.doc(MemoryDoc, "user:" + thread.owner, null);
+        memory.topics = putThreadDigest(memory.topics, digest);
+        stored.digestedGeneration = thread.generation;
+      }, context);
+    }
     return description;
   }
 
@@ -615,13 +700,37 @@ export class DurableHost {
     // replies their rewrite before admitting a distinct input into that Main.
     const previous = this.admissions.get(id) ?? Promise.resolve();
     const admission = previous.then(async () => {
+      const attachments = source.surface === "web" ? undefined : source.attachments;
+      const files = attachments?.map((file) => ({ filename: getAttachmentFilename(file), mimeType: file.mimeType }));
+      const images = await Promise.all((attachments ?? []).filter(isImageAttachment).map(async (file) => {
+        const { path, mimeType } = await normalizeInboundAttachment(file);
+        return { filename: getAttachmentFilename(file), path, block: {
+          type: "image" as const, mimeType, data: (await fs.readFile(path)).toString("base64"),
+        } };
+      }));
+      const modelText = appendAttachmentContext(
+        `[from ${name.replace(/[\r\n[\]]/g, " ")} via ${surface}]\n${text}`,
+        [
+          await buildDocumentAttachmentContext(attachments, { includeUnextractedPath: true }),
+          ...images.map((image) => `Image: ${image.filename}\nPath: ${image.path}`),
+          source.surface === "web" ? "" : source.attachmentPreview,
+        ].filter(Boolean).join("\n\n"),
+      );
       const hold = this.review.holdsReplies();
       if (hold) await conversation.waitForIdle(context);
       const admit = (seenFailure: LiveState["runFailure"], configuration?: Awaited<ReturnType<DurableHost["configureFor"]>>) => this.mutateConversation(id, async () => {
-        // Reviewed replies and fallback can delay the admission while the actor unlinks.
-        if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
         const threadId = this.threadIds.get(id);
-        if (threadId !== undefined) await this.seedThread(conversation, threadId);
+        if (threadId !== undefined) {
+          if (source.surface !== "web") {
+            const thread = (await this.harness.snapshot(ThreadMap, context))?.threads[threadId];
+            if (thread?.closed && thread.digestedGeneration !== thread.generation) {
+              await this.finishThreadClose(threadId, thread, conversation);
+            }
+          }
+          await this.seedThread(conversation, threadId, source.surface !== "web");
+        }
+        // Reviewed replies, fallback and close recovery can delay admission while the actor unlinks.
+        if (eligible && !await eligible()) throw CHANNEL_NO_LONGER_ELIGIBLE;
         return conversation.commit(async (tx) => {
           const existing = await tx.submissionByRequest(conversation.id, requestId);
           if (existing) return { submissionId: existing.id, duplicate: true };
@@ -633,17 +742,29 @@ export class DurableHost {
             await setModelPolicy(tx, id, configuration.primary, configuration.fallback);
           }
           const timestamp = Date.now();
+          const thread = threadId === undefined ? undefined : (await tx.doc(ThreadMap)).threads[threadId];
+          if (thread?.closed) {
+            if (source.surface === "web") throw new ThreadError(409, "Thread is closed");
+            thread.closed = false;
+            thread.generation++;
+          }
+          const root = source.surface !== "web" && thread?.surfaceKey && thread.lastActivityAt === undefined
+            ? oneLine(source.threadRoot ?? "").slice(0, 500)
+            : "";
+          if (thread?.surfaceKey) thread.lastActivityAt = this.now();
+          const inputText = root ? `Thread started from: ${root}\n\n${modelText}` : modelText;
+          const content = images.length ? [{ type: "text" as const, text: inputText }, ...images.map(({ block }) => block)] : inputText;
           const submissionId = await conversation.submit(tx, {
             type: "input",
             requestId,
-            content: `[from ${name.replace(/[\r\n[\]]/g, " ")} via ${surface}]\n${text}`,
+            content,
             whenBusy: "steer",
             onAbort: "keep",
             entry: {
               kind: InputEntry.kind,
               data: source.surface === "web"
                 ? { timestamp, text, surface, sender: source.sender, route: { surface: "web", user: source.sender.id } }
-                : { timestamp, text, surface, owner: source.owner, actor: source.actor, route: source.route },
+                : { timestamp, text, surface, owner: source.owner, actor: source.actor, route: source.route, ...(files?.length && { attachments: files }) },
             },
           });
           if (source.surface !== "web") await this.deliveries.enqueue(tx, id, submissionId, source, timestamp);
@@ -1100,12 +1221,29 @@ export class DurableHost {
 
   async stop(principal: string, runId?: string, threadId?: string): Promise<DurableStopResult | { forbidden: true }> {
     const conversation = await this.feedConversation(principal, threadId);
-    if (!conversation) {
-      return await this.mayReadFeed(principal, principal) ? { status: "already_finished" } : { forbidden: true };
+    return this.stopConversation(conversation, principal, () => this.mayReadFeed(principal, principal), runId);
+  }
+
+  async stopChannel({ owner, route: { ingress } }: ChannelCommand, eligible: () => Promise<boolean>): Promise<ChannelCommandResult> {
+    let conversation: Conversation | undefined;
+    if (ingress.thread) {
+      const map = await this.harness.snapshot(ThreadMap, context);
+      const target = findSurfaceThread(map?.threads ?? {}, owner, surfaceThreadKey(ingress));
+      if (target) conversation = await this.threadConversation(target[1]);
+    } else {
+      conversation = await this.mainFor(owner);
     }
+    const result = await this.stopConversation(conversation, owner, eligible);
+    return "forbidden" in result ? { status: "not_durable" } : result;
+  }
+
+  private async stopConversation(
+    conversation: Conversation | undefined, principal: string, eligible: () => Promise<boolean>, runId?: string,
+  ): Promise<DurableStopResult | { forbidden: true }> {
+    if (!conversation) return await eligible() ? { status: "already_finished" } : { forbidden: true };
     const id = conversation.id;
     return this.mutateConversation(id, async () => {
-      if (!await this.mayReadFeed(principal, principal)) return { forbidden: true };
+      if (!await eligible()) return { forbidden: true };
       const run = (await this.harness.snapshot(LiveDoc, id, context))?.run;
       if (!run || (runId !== undefined && runId !== await runIdFor(this.harness, conversation, run))) {
         return { status: "already_finished" };
@@ -1265,6 +1403,8 @@ export class DurableHost {
   }
 
   async close(): Promise<void> {
+    clearInterval(this.threadSweepTimer);
+    await this.threadSweep;
     this.keeper.close();
     try {
       await this.harness.close(context);

@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineDoc, type Conversation, type ConversationId, type EntryId, type Harness, type Submission, type SubmissionId, type Tx } from "@earendil-works/pi-durable";
-import type { ChannelInput, ChannelRoute, DeliverySink, FeedDelivery, TurnPlan } from "@yoplai/shared";
+import type { ChannelInput, DeliverySink, FeedDelivery, TurnPlan } from "@yoplai/shared";
 import { getAgent, loadConfig } from "../config/index.js";
 import type { GatewayExtensionContext } from "../extensions/context.js";
 import { logWarn } from "../logging.js";
@@ -30,8 +30,8 @@ const DeliveryDoc = defineDoc<{ routes: Record<string, PendingRoute>; effects: R
   checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
 });
 
-function effectKey(answerId: EntryId, { ingress }: ChannelRoute) {
-  return JSON.stringify([answerId, ingress.surface, ingress.surface === "slack" ? ingress.team : ingress.server, ingress.botKey, ingress.channel]);
+function effectKey(answerId: EntryId, { conversationId, route: { ingress } }: PendingRoute) {
+  return JSON.stringify([conversationId, answerId, ingress.surface, ingress.surface === "slack" ? ingress.team : ingress.server, ingress.botKey, ingress.channel, ingress.thread]);
 }
 
 async function sendOnce(sink: DeliverySink, input: Parameters<DeliverySink>[0]) {
@@ -108,8 +108,12 @@ export class DeliveryQueue {
         const current = await tx.doc(DeliveryDoc);
         if (!current.routes[id]) return;
         if (answerId !== undefined) {
-          const key = effectKey(answerId, item.route);
-          const effect = current.effects[key];
+          const key = effectKey(answerId, item);
+          const { ingress } = item.route;
+          // A pending steer from before the key change may already have a reply effect.
+          const oldKey = JSON.stringify([answerId, ingress.surface, ingress.surface === "slack" ? ingress.team : ingress.server, ingress.botKey, ingress.channel]);
+          const oldEffect = ingress.thread === undefined ? current.effects[oldKey] : undefined;
+          const effect = current.effects[key] ?? (oldEffect?.conversationId === item.conversationId ? oldEffect : undefined);
           if (effect) effect.submissions.push(submission.id);
           else current.effects[key] = {
             ...item, answerId, submissions: [submission.id], state: "pending", updatedAt: Date.now(),
@@ -144,7 +148,7 @@ export class DeliveryQueue {
     const config = loadConfig();
     const base = config.server?.baseUrl ?? config.web?.baseUrl;
     const feedPath = "/chat/" + encodeURIComponent(agent.id);
-    const url = base && URL.canParse(feedPath, base) ? new URL(feedPath, base) : undefined;
+    const url = !route.ingress.thread && base && URL.canParse(feedPath, base) ? new URL(feedPath, base) : undefined;
     const feedUrl = url && (url.protocol === "http:" || url.protocol === "https:") ? url.href : undefined;
     if (!await this.transition(key, "pending", "sending")) return;
     const result = await sendOnce(sink, {

@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Send files in eligible Slack and Mattermost DMs, continue private Durable threads with 24-hour idle digests, and stop the active DM or thread turn from chat.
+
 - List, search, and read your pre-Durable chats with `legacy_history` in Durable Main and private threads.
 
 - Durable Main shows live turn checklists that stay with finished answers and appear in eligible Slack and Mattermost DM replies.

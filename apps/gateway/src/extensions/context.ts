@@ -9,6 +9,8 @@ import { getAgentDataDir, resolveAgentConfigRoute, resolveBindHost, sanitizeAgen
 import type {
   DeliverySink,
   ChannelAdmission,
+  ChannelCommand,
+  ChannelCommandResult,
   ChannelInput,
   JobTickInput,
   JobTickResult,
@@ -105,6 +107,7 @@ export function bindExtensionContext(context: ExtensionContext, extension: Pick<
 
 export type GatewayExtensionContext = ExtensionContext & {
   connectChannelInput: (submit: (input: ChannelInput) => Promise<ChannelAdmission>) => void;
+  connectChannelCommand: (submit: (input: ChannelCommand) => Promise<ChannelCommandResult>) => void;
   connectWebhookInput: (submit: (input: WebhookInput) => Promise<WebhookAdmission>) => void;
   connectJobTick: (run: (input: JobTickInput) => Promise<JobTickResult>) => void;
   resolveChannelOwner: (surface: ChannelSurface, input: ChannelOwnerRequest) => ReturnType<ChannelOwnerResolver>;
@@ -117,6 +120,7 @@ export function createExtensionContext(_resolvedConfig: GatewayConfig): GatewayE
   const deliverySinks = new Map<string, { sink: DeliverySink }>();
   const ownerResolvers = new Map<ChannelSurface, ChannelOwnerResolver>();
   let submitChannelInput: ((input: ChannelInput) => Promise<ChannelAdmission>) | undefined;
+  let submitChannelCommand: ((input: ChannelCommand) => Promise<ChannelCommandResult>) | undefined;
   let submitWebhookInput: ((input: WebhookInput) => Promise<WebhookAdmission>) | undefined;
   let runJobTick: ((input: JobTickInput) => Promise<JobTickResult>) | undefined;
   const deliveryOffers = new Map<string, DeliveryOfferProvider>();
@@ -128,6 +132,10 @@ export function createExtensionContext(_resolvedConfig: GatewayConfig): GatewayE
     connectChannelInput(submit) { submitChannelInput = submit; },
     async submitChannelInput(input) {
       return submitChannelInput ? submitChannelInput(input) : { status: "not_durable" };
+    },
+    connectChannelCommand(submit) { submitChannelCommand = submit; },
+    async submitChannelCommand(input) {
+      return submitChannelCommand ? submitChannelCommand(input) : { status: "not_durable" };
     },
     connectWebhookInput(submit) { submitWebhookInput = submit; },
     async submitWebhookInput(input) {
