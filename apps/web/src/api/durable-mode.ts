@@ -2,7 +2,7 @@ import { createEffect, createSignal } from "solid-js";
 import { capabilities } from "../lib/capabilities";
 import { API_BASE, apiFetch } from "./core";
 
-type DurableMode = { enabled: boolean };
+type DurableMode = { enabled: boolean; updatedAt?: string; unsynced?: string[] };
 const account = () => capabilities.multiUser ? capabilities.user?.id : "local";
 const [mode, setMode] = createSignal<{ owner: string; data: DurableMode }>();
 const [durableModeVersion, setDurableModeVersion] = createSignal(0);
@@ -20,7 +20,7 @@ async function requestDurableMode(enabled?: boolean): Promise<DurableMode> {
   });
   if (!response.ok) throw new Error("Durable mode request failed");
   const data: DurableMode = await response.json();
-  return { enabled: data?.enabled === true };
+  return { enabled: data?.enabled === true, updatedAt: data?.updatedAt, unsynced: data?.unsynced };
 }
 
 export function getDurableMode(): Promise<DurableMode> {

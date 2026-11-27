@@ -214,12 +214,26 @@ Use `packages/shared` stream schemas and `apps/gateway/src/server/ws-broker.ts`;
 
 ### Account setting
 
-`GET /api/me/durable-mode` returns `{ enabled: boolean }`. It defaults to
-`false`. `PUT /api/me/durable-mode` accepts the same object and returns the
-saved value. A missing or non-boolean `enabled` returns 400. The route is
-gateway-local and available in both modes. Single-user gateways store one
-setting. Multi-user gateways require authentication and use the caller's
-account.
+`GET /api/me/durable-mode` returns `{ enabled: boolean, updatedAt?: string,
+unsynced?: string[] }`. The setting defaults to off. Existing settings
+without a timestamp omit `updatedAt`. Single-user gateways store one setting.
+Multi-user gateways require authentication and use the caller's account,
+including when a link key authenticates the caller.
+
+`PUT /api/me/durable-mode` accepts `{ enabled: boolean, updatedAt?: string }`
+and returns the stored setting. A missing or non-boolean `enabled`, or an
+invalid `updatedAt`, returns 400. A PUT without a timestamp saves with the
+current time and immediately pushes the change to linked gateways on a
+trusted device request. A timestamped PUT applies only to the receiving
+gateway and only if the supplied time is newer.
+
+Trusted device GETs reconcile with linked gateways at most once per link
+per minute. A link connection also triggers reconciliation. The newest
+timestamp wins, and a missing timestamp is older than any valid one. Failures
+leave the local save intact. Device GET and toggle responses list affected
+gateway names in `unsynced` until a successful sync. Link attempts have a
+three-second deadline. `GET /api/me/durable-mode?local=1` returns only the
+stored setting.
 
 `GET /api/me/sidebar-order` returns `{ agentIds: string[] }`, initially empty.
 It filters out agents the caller can no longer see without updating the file.

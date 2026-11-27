@@ -1,4 +1,4 @@
-import { Match, Switch, createResource, createSignal } from "solid-js";
+import { Match, Show, Switch, createResource, createSignal } from "solid-js";
 import { getDurableMode, saveDurableMode } from "../api/durable-mode";
 import { showToast } from "../lib/toast";
 import { Button } from "../components/ui/Button";
@@ -12,7 +12,7 @@ export function AccountSettings() {
     if (!previous || saving()) return;
     const enabled = !previous.enabled;
     setSaving(true);
-    mutate({ enabled });
+    mutate({ ...previous, enabled });
     try {
       mutate(await saveDurableMode(enabled));
     } catch {
@@ -38,14 +38,19 @@ export function AccountSettings() {
             <div class="account-settings-row">
               <div>
                 <strong id="durable-mode-label">Durable mode</strong>
-                <p id="durable-mode-description">Use Durable Main for non-sandboxed agents on this gateway.</p>
+                <p id="durable-mode-description">Use Durable Main for non-sandboxed agents on this gateway and linked gateways.</p>
+                <Show when={setting().unsynced?.length}>
+                  <p id="durable-mode-sync-status" role="status">Not updated on {setting().unsynced?.join(", ")}. Syncs on reconnect.</p>
+                </Show>
               </div>
               <button
                 class="account-settings-switch"
                 type="button"
                 role="switch"
                 aria-labelledby="durable-mode-label"
-                aria-describedby="durable-mode-description"
+                aria-describedby={setting().unsynced?.length
+                  ? "durable-mode-description durable-mode-sync-status"
+                  : "durable-mode-description"}
                 aria-checked={setting().enabled}
                 aria-busy={saving()}
                 disabled={saving()}
@@ -66,6 +71,7 @@ const styles = `
   .account-settings h1 { margin: 0 0 16px; color: var(--text-primary); font-size: 22px; }
   .account-settings p { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
   .account-settings [role="alert"] { margin-bottom: 8px; }
+  #durable-mode-sync-status { overflow-wrap: anywhere; }
   .account-settings-row {
     display: flex; align-items: center; justify-content: space-between; gap: 16px;
     min-height: 64px; padding: 8px 0; border-block: 1px solid var(--border-default);

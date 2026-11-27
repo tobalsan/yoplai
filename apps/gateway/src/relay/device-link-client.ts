@@ -33,6 +33,7 @@ export type DeviceLinkManagerOptions = {
   getGateways: () => RemoteGateway[];
   /** Live runtime policy, checked independently of gateway reconciliation. */
   isRelayEnabled?: () => boolean;
+  onConnected?: (gateway: RemoteGateway) => void;
   deviceName?: string;
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
@@ -118,11 +119,15 @@ class DeviceLinkClient {
           );
           return;
         }
+        const firstHello = !ready;
         ready = true;
         this.connected = true;
         this.status = "connected";
         this.failureLogged = false;
         this.delayMs = this.options.reconnectMinMs ?? RECONNECT_MIN_MS;
+        if (firstHello && !this.stopped && this.options.isRelayEnabled?.() !== false) {
+          this.options.onConnected?.(this.gateway);
+        }
         return;
       }
       if (!ready) {

@@ -1,12 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { disconnectRemoteGateway, linkWithBrowser } from "../cli/connect.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fixtureRelease } from "../extensions/release-bundle.fixture.js";
 import { createFileRemoteGatewayStore } from "./store.js";
 
@@ -39,6 +39,7 @@ let catalog: Awaited<ReturnType<typeof startCatalog>>;
 let forwarder: Awaited<ReturnType<typeof startForwarder>>;
 let localBase: string;
 let localStorePath: string;
+let connectCli: typeof import("../cli/connect.js");
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -51,8 +52,8 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function startGateway(name: string, mode: "remote" | "local"): Promise<Running> {
-  const port = await freePort();
+async function startGateway(name: string, mode: "remote" | "local", restartPort?: number): Promise<Running> {
+  const port = restartPort ?? await freePort();
   const home = path.join(tmpDir, name);
   const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", fixture], {
     cwd: gatewayDir,
@@ -171,6 +172,13 @@ async function storedKey(): Promise<string> {
 const me = async (key: string) => (await fetch(`${remoteBase}/api/me`, { headers: { Authorization: `Bearer ${key}` } })).status;
 const deviceStates = async () => json<Array<{ name: string; connected: boolean; status: string }>>(await fetch(`${localBase}/api/relay/device-links`));
 
+const durableRoute = "/api/me/durable-mode";
+const toggleDurable = (base: string, enabled: boolean, sessionCookie?: string) => fetch(base + durableRoute, {
+  method: "PUT",
+  headers: { "content-type": "application/json", ...(sessionCookie && { Cookie: sessionCookie }) },
+  body: JSON.stringify({ enabled }),
+});
+
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "yoplai-link-http-"));
   catalog = await startCatalog();
@@ -185,6 +193,8 @@ beforeAll(async () => {
   remoteBase = `http://127.0.0.1:${remote.port}`;
   localBase = `http://127.0.0.1:${local.port}`;
   localStorePath = path.join(local.home, ".yoplai", "remote-gateways.json");
+  vi.stubEnv("YOPLAI_HOME", path.dirname(localStorePath));
+  connectCli = await import("../cli/connect.js");
   forwarder = await startForwarder();
   linkedRemote = forwarder.base;
   cookie = await signUp("alice@example.test");
@@ -194,7 +204,7 @@ afterAll(async () => {
   forwarder?.close();
   catalog?.close();
   for (const { child } of started) {
-    if (!child.pid) continue;
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) continue;
     try {
       process.kill(-child.pid, "SIGTERM");
     } catch (error) {
@@ -203,6 +213,7 @@ afterAll(async () => {
   }
   await sleep(300);
   await fs.rm(tmpDir, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 async function startCatalog() {
@@ -296,7 +307,7 @@ describe("browser link between two real gateways", () => {
     const printed: string[] = [];
     const store = createFileRemoteGatewayStore(localStorePath);
     let browserDone: Promise<{ status: number; body: Record<string, unknown> }> | undefined;
-    const linked = await linkWithBrowser(linkedRemote, { name: "hub", openBrowser: true }, {
+    const linked = await connectCli.linkWithBrowser(linkedRemote, { name: "hub", openBrowser: true }, {
       gatewayBase: localBase,
       print: (line) => printed.push(line),
       open: (url) => {
@@ -330,6 +341,33 @@ describe("browser link between two real gateways", () => {
     // Remote agents show on the local gateway through the linked key.
     const agents = await json<Array<{ id: string }>>(await fetch(`${localBase}/api/agents`));
     expect(agents.map((agent) => agent.id)).toContain("pom@hub");
+  });
+
+  it("pushes Durable mode through the link key only to the consenting account", async () => {
+    const bobCookie = await signUp("bob@example.test");
+    const { user: bob } = await json<{ user: { id: string } }>(await fetch(remoteBase + "/api/auth/get-session", {
+      headers: { Cookie: bobCookie },
+    }));
+    expect((await fetch(remoteBase + "/api/admin/users/" + bob.id, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ approved: true }),
+    })).status).toBe(200);
+    const bobSave = await toggleDurable(remoteBase, false, bobCookie);
+    expect(bobSave.status).toBe(200);
+    const bobBefore = await json(bobSave);
+
+    const result = await toggleDurable(localBase, true);
+    expect(result.status).toBe(200);
+    const saved = await json(result);
+    expect(saved).toEqual({ enabled: true, updatedAt: expect.any(String) });
+    const readRemote = async (sessionCookie: string) => {
+      const response = await fetch(remoteBase + durableRoute, { headers: { Cookie: sessionCookie } });
+      expect(response.status).toBe(200);
+      return json(response);
+    };
+    expect(await readRemote(cookie)).toEqual(saved);
+    expect(await readRemote(bobCookie)).toEqual(bobBefore);
   });
 
   it("shows the saved link after a reload, with key state apart from connection state, and no secret", async () => {
@@ -410,7 +448,7 @@ describe("browser link between two real gateways", () => {
     const key = await storedKey();
     expect(await me(key)).toBe(200);
     const store = createFileRemoteGatewayStore(localStorePath);
-    const message = await disconnectRemoteGateway("hub", {}, store, { gatewayBase: localBase });
+    const message = await connectCli.disconnectRemoteGateway("hub", {}, store, { gatewayBase: localBase });
     expect(message).toContain("Revoked the key");
     expect(store.list()).toEqual([]);
     expect(await me(key)).toBe(401);
@@ -471,6 +509,32 @@ describe("browser link between two real gateways", () => {
     expect(open?.token).toBeUndefined();
     expect(open?.managed).toBeUndefined();
   }, 120_000);
+
+  it("saves Durable mode while a gateway is offline and catches it up on reconnect", async () => {
+    const plainBase = `http://127.0.0.1:${plain.port}`;
+    await until(async () => (await deviceStates()).some((state) => state.name === "open" && state.connected));
+    expect((await toggleDurable(localBase, false)).status).toBe(200);
+    expect(await json(await fetch(plainBase + durableRoute + "?local=1"))).toMatchObject({ enabled: false });
+    await json(await fetch(localBase + durableRoute));
+
+    const exited = once(plain.child, "exit", { signal: AbortSignal.timeout(5_000) });
+    process.kill(-plain.child.pid!, "SIGKILL");
+    await exited;
+    const saved = await toggleDurable(localBase, true);
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toMatchObject({ enabled: true, unsynced: ["open"] });
+    expect(await json(await fetch(localBase + durableRoute))).toMatchObject({ enabled: true, unsynced: ["open"] });
+
+    plain = await startGateway("plain", "local", plain.port);
+    // Read only the remote before checking the device, so device GET cannot repair the setting.
+    await until(async () => {
+      const setting = await json(await fetch(plainBase + durableRoute + "?local=1"));
+      return setting.enabled === true;
+    }, 10_000);
+    const synced = await json(await fetch(localBase + durableRoute));
+    expect(synced).toMatchObject({ enabled: true });
+    expect(synced).not.toHaveProperty("unsynced");
+  }, 45_000);
 
   it("refuses a plain http address that is not a literal loopback address, before any request", async () => {
     const response = await startLink("bad", undefined, "http://localhost:9");

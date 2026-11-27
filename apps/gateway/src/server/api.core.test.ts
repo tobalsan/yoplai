@@ -14,6 +14,8 @@ vi.mock("../model-quota/runtime.js", () => ({ modelQuotaStore: { list: quota.lis
 const getActiveAgents = vi.fn();
 const isAgentActive = vi.fn();
 const resolveWorkspaceDir = vi.fn((workspace: string) => workspace);
+const defaultConfigDir = "/tmp/yoplai-test";
+let configDir = defaultConfigDir;
 let loadConfigValue: Record<string, unknown> = {
   branding: undefined,
   agents: [],
@@ -45,7 +47,7 @@ const resolveStartupConfig = vi.fn(async (config) => config);
 const reconcileExternal = vi.fn();
 
 vi.mock("../config/index.js", () => ({
-  CONFIG_DIR: "/tmp/yoplai-test",
+  get CONFIG_DIR() { return configDir; },
   getAgent,
   getActiveAgents,
   getRawLoadedConfig: () => loadConfigValue,
@@ -197,17 +199,29 @@ describe("api core session resolution", () => {
     });
   });
 
-  it("agent dashboard rows resume local history and fall back when that conversation is removed", async () => {
-    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-chat-api-"));
-    const { getDashboardRegistry } = await import("../canvas/store.js");
-    const registry = getDashboardRegistry("/tmp/yoplai-test/canvas/registry.json");
-    const history = "/tmp/yoplai-test/history/alpha-alg657-local.jsonl";
-    const entry = await registry.createOwned("alpha", "alg657-harbor.html", "local", "HARBOR", { sessionId: "alg657-local", userId: "local" });
-    try {
+  describe("dashboard chat links", () => {
+    let api: typeof import("./api.core.js").api;
+    let registry: import("../canvas/store.js").DashboardRegistry;
+
+    beforeEach(async ({ onTestFinished }) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-api-"));
+      onTestFinished(async () => {
+        configDir = defaultConfigDir;
+        await fs.rm(directory, { recursive: true, force: true });
+      });
+      configDir = directory;
+      getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace: directory });
+      const { getDashboardRegistry } = await import("../canvas/store.js");
+      registry = getDashboardRegistry(path.join(directory, "canvas", "registry.json"));
+      // Give the cold gateway import its own setup deadline before writing fixtures.
+      ({ api } = await import("./api.core.js"));
+    }, 20_000);
+
+    it("agent dashboard rows resume local history and fall back when that conversation is removed", async () => {
+      const history = path.join(configDir, "history", "alpha-alg657-local.jsonl");
+      const entry = await registry.createOwned("alpha", "alg657-harbor.html", "local", "HARBOR", { sessionId: "alg657-local", userId: "local" });
       await fs.mkdir(path.dirname(history), { recursive: true });
       await fs.writeFile(history, "{}\n");
-      getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace });
-      const { api } = await import("./api.core.js");
       expect(await (await api.request("/agents/alpha/dashboards")).json()).toContainEqual(expect.objectContaining({
         id: entry.id, chatHref: `/chat/alpha?session=alg657-local&dashboard=${entry.id}`,
       }));
@@ -218,25 +232,13 @@ describe("api core session resolution", () => {
       expect(await (await api.request("/agents/alpha/dashboards")).json()).toContainEqual(expect.objectContaining({
         id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}&new=1`,
       }));
-    } finally {
-      await registry.deleteId(entry.id);
-      await fs.rm(history, { force: true });
-      await fs.rm(workspace, { recursive: true, force: true });
-    }
-  });
+    });
 
-  it("opens local Durable Main for owned and legacy dashboard rows", async () => {
-    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "dashboard-main-api-"));
-    const { getDashboardRegistry } = await import("../canvas/store.js");
-    const { DurableModeStore } = await import("../durable-mode/store.js");
-    const registry = getDashboardRegistry("/tmp/yoplai-test/canvas/registry.json");
-    const setting = new DurableModeStore("/tmp/yoplai-test");
-    const entry = await registry.createOwned("alpha", "cedar-count.html", "local", "CEDAR", { sessionId: "old-cedar", userId: "local" });
-    const legacy = await registry.link("alpha", "maple-count.html");
-    try {
-      await setting.set(true);
-      getAgent.mockReturnValue({ id: "alpha", name: "Alpha", workspace });
-      const { api } = await import("./api.core.js");
+    it("opens local Durable Main for owned and legacy dashboard rows", async () => {
+      const { DurableModeStore } = await import("../durable-mode/store.js");
+      await new DurableModeStore(configDir).set(true);
+      const entry = await registry.createOwned("alpha", "cedar-count.html", "local", "CEDAR", { sessionId: "old-cedar", userId: "local" });
+      const legacy = await registry.link("alpha", "maple-count.html");
       expect(await (await api.request("/agents/alpha/dashboards")).json()).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}` }),
         expect.objectContaining({ id: legacy.id, chatHref: `/chat/alpha?dashboard=${legacy.id}` }),
@@ -244,12 +246,7 @@ describe("api core session resolution", () => {
       expect(await (await api.request("/dashboards")).json()).toMatchObject({
         owned: [expect.objectContaining({ id: entry.id, chatHref: `/chat/alpha?dashboard=${entry.id}` })],
       });
-    } finally {
-      await setting.set(false);
-      await registry.deleteId(entry.id);
-      await registry.deleteId(legacy.id);
-      await fs.rm(workspace, { recursive: true, force: true });
-    }
+    });
   });
 
   it("pages full history without dropping timestamp ties and reports active usage outside the archive", async () => {

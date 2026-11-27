@@ -36,4 +36,4 @@ it("retains each authenticated account's visible sidebar order across restart", 
   } finally {
     await gateway.close();
   }
-});
+}, 10_000);

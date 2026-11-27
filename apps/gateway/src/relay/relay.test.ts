@@ -181,6 +181,146 @@ describe("desktop relay: chat relay", () => {
     return JSON.stringify(await response.json());
   }
 
+  async function durableSetting(base: string, setting?: { enabled: boolean; updatedAt?: string }, suffix = "", origin?: string) {
+    const response = await fetch(base + "/api/me/durable-mode" + suffix, {
+      method: setting ? "PUT" : "GET",
+      headers: { ...(setting && { "content-type": "application/json" }), ...(origin && { Origin: origin }) },
+      body: setting ? JSON.stringify(setting) : undefined,
+      signal: AbortSignal.timeout(7_000),
+    });
+    expect(response.status).toBe(200);
+    return response.json();
+  }
+
+  it("keeps conflicting Durable settings when the timestamps are both missing or equal", async () => {
+    await fs.writeFile(path.join(tmpDir, "local", ".yoplai", "durable-mode.json"), '{"enabled":true}');
+    await fs.writeFile(path.join(tmpDir, "remote", ".yoplai", "durable-mode.json"), '{"enabled":false}');
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-06-01T11:00:00.000Z"));
+    try {
+      expect(await durableSetting(localBase)).toEqual({ enabled: true });
+      expect(await durableSetting(remoteBase, undefined, "?local=1")).toEqual({ enabled: false });
+
+      await durableSetting(localBase, { enabled: true, updatedAt: "2030-06-01T11:00:00.000Z" });
+      await durableSetting(remoteBase, { enabled: false, updatedAt: "2030-06-01T11:00:00.000Z" });
+      vi.setSystemTime(new Date("2030-06-01T11:01:00.000Z"));
+      expect(await durableSetting(localBase)).toEqual({ enabled: true, updatedAt: "2030-06-01T11:00:00.000Z" });
+      expect(await durableSetting(remoteBase, undefined, "?local=1")).toEqual({ enabled: false, updatedAt: "2030-06-01T11:00:00.000Z" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pushes the device's Durable mode toggle to a linked single-user gateway", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-06-01T12:00:00.000Z"));
+    try {
+      expect(await durableSetting(localBase, { enabled: true })).toEqual({ enabled: true, updatedAt: "2030-06-01T12:00:00.000Z" });
+      expect(await durableSetting(remoteBase, undefined, "?local=1")).toEqual({ enabled: true, updatedAt: "2030-06-01T12:00:00.000Z" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles the newest Durable mode change in either direction", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-06-01T13:00:00.000Z"));
+    try {
+      await durableSetting(localBase, { enabled: true, updatedAt: "2030-06-01T12:01:00.000Z" });
+      await durableSetting(remoteBase, { enabled: false, updatedAt: "2030-06-01T12:02:00.000Z" });
+      expect(await durableSetting(localBase)).toEqual({ enabled: false, updatedAt: "2030-06-01T12:02:00.000Z" });
+
+      await durableSetting(localBase, { enabled: true, updatedAt: "2030-06-01T12:03:00.000Z" });
+      expect(await durableSetting(localBase, { enabled: false, updatedAt: "2030-06-01T12:02:00.000Z" }))
+        .toEqual({ enabled: true, updatedAt: "2030-06-01T12:03:00.000Z" });
+      vi.setSystemTime(new Date("2030-06-01T13:01:00.000Z"));
+      expect(await durableSetting(localBase)).toEqual({ enabled: true, updatedAt: "2030-06-01T12:03:00.000Z" });
+      expect(await durableSetting(remoteBase, undefined, "?local=1")).toEqual({ enabled: true, updatedAt: "2030-06-01T12:03:00.000Z" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not contact a downstream gateway for peer reads, copied settings, or untrusted requests", async () => {
+    const downstream = await startFakeGateway();
+    saveGateway({ name: "downstream", url: downstream.url });
+    try {
+      const copied = { enabled: true, updatedAt: "2030-06-01T15:00:00.000Z" };
+      expect(await durableSetting(localBase, copied)).toEqual(copied);
+      expect(await durableSetting(localBase, undefined, "?local=1")).toEqual(copied);
+      const externalOrigin = "https://example.test";
+      expect(await durableSetting(localBase, undefined, "", externalOrigin)).toEqual(copied);
+      expect(await durableSetting(localBase, { enabled: false }, "", externalOrigin))
+        .toEqual({ enabled: false, updatedAt: expect.any(String) });
+      expect(downstream.requests).toHaveLength(0);
+    } finally {
+      removeGateway("downstream");
+      downstream.close();
+    }
+  });
+
+  it("reports a linked gateway whose Durable mode response body stalls", async () => {
+    const stalled = await startFakeGateway((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write("{");
+    });
+    saveGateway({ name: "stalled", url: stalled.url });
+    try {
+      const start = performance.now();
+      expect(await durableSetting(localBase, { enabled: true })).toEqual({
+        enabled: true, updatedAt: expect.any(String), unsynced: ["stalled"],
+      });
+      expect(performance.now() - start).toBeLessThan(5_000);
+      expect(stalled.requests.map(({ method }) => method)).toEqual(["PUT"]);
+      expect(await durableSetting(localBase, undefined, "", "https://example.test"))
+        .toEqual({ enabled: true, updatedAt: expect.any(String) });
+    } finally {
+      removeGateway("stalled");
+      stalled.close();
+    }
+  }, 10_000);
+
+  it("picks up remote Durable mode changes after the one-minute reconcile throttle", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-06-01T14:00:00.000Z"));
+    try {
+      await durableSetting(localBase, { enabled: true, updatedAt: "2030-06-01T13:59:00.000Z" });
+      expect(await durableSetting(localBase)).toEqual({ enabled: true, updatedAt: "2030-06-01T13:59:00.000Z" });
+      await durableSetting(remoteBase, { enabled: false, updatedAt: "2030-06-01T14:00:01.000Z" });
+      vi.setSystemTime(new Date("2030-06-01T14:00:59.000Z"));
+      expect(await durableSetting(localBase)).toEqual({ enabled: true, updatedAt: "2030-06-01T13:59:00.000Z" });
+      vi.setSystemTime(new Date("2030-06-01T14:01:00.000Z"));
+      expect(await durableSetting(localBase)).toEqual({ enabled: false, updatedAt: "2030-06-01T14:00:01.000Z" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a failed Durable mode push while a newer reconcile is pending", async () => {
+    let pendingPush: http.ServerResponse | undefined;
+    let pendingRead: http.ServerResponse | undefined;
+    const remote = await startFakeGateway((request, response) => {
+      if (request.method === "PUT") pendingPush = response;
+      if (request.method === "GET") pendingRead = response;
+    });
+    saveGateway({ name: "overlap", url: remote.url });
+    try {
+      const push = durableSetting(localBase, { enabled: false });
+      await vi.waitFor(() => expect(pendingPush).toBeDefined());
+      const reconcile = durableSetting(localBase);
+      await vi.waitFor(() => expect(pendingRead).toBeDefined());
+
+      pendingPush?.writeHead(503).end();
+      const saved = await push;
+      pendingRead?.writeHead(503).end();
+      expect(await reconcile).toMatchObject({ enabled: false, unsynced: ["overlap"] });
+      expect(saved).toMatchObject({ enabled: false, unsynced: ["overlap"] });
+    } finally {
+      removeGateway("overlap");
+      remote.close();
+    }
+  });
+
   it("lists remote agents with a suffix and a gateway field", async () => {
     const agents = (await (await fetch(`${localBase}/api/agents`)).json()) as Array<{ id: string; gateway?: string }>;
     expect(agents.map((agent) => agent.id).sort()).toEqual(["local", "pom@ams", "pom@loc", "twin", "twin@ams"]);
