@@ -13,7 +13,7 @@ import { WebSocket } from "ws";
 import { writeTestAgent, writeTestV3Config } from "./v3-config.js";
 
 type TestUser = "local" | "alice" | "bob" | "carol";
-type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments">;
+type SendOptions = Pick<WsSendMessage, "clientSendId" | "sessionKey" | "sessionId" | "projectId" | "turnId" | "attachments"> & { deviceTurnToken?: string };
 type CustomModel = { provider: string; model: string; baseUrl: string; apiKey: string; headers?: Record<string, string> };
 
 type ModelLimits = Partial<{ contextWindow: number; maxTokens: number }>;
@@ -235,6 +235,7 @@ export async function startDurableTestGateway({
     const hello = once(ws, "message");
     ws.send(JSON.stringify({ type: "hello", protocolVersion: DEVICE_PROTOCOL_VERSION }));
     await hello;
+    return ws;
   }
 
   function send(user: TestUser, message: string, options?: SendOptions, transport?: "http"): Promise<Response>;
