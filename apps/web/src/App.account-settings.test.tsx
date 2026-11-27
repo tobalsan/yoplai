@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { findByRole, findByText, getByRole, queryByRole, waitFor } from "@testing-library/dom";
+import { findByRole, findByText, getByRole, queryByRole, queryByText, waitFor } from "@testing-library/dom";
 import { render } from "solid-js/web";
 import App from "./App";
 import { resetCapabilitiesForTests } from "./lib/capabilities";
@@ -15,6 +15,7 @@ let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let multiUser: boolean;
 let enabled: boolean;
+let unsynced: string[] | undefined;
 let save: (setting: boolean, signal?: AbortSignal | null) => Promise<Response>;
 let chatReads: boolean[];
 let suggestionsRequested: boolean;
@@ -22,6 +23,7 @@ let suggestionsRequested: boolean;
 beforeEach(() => {
   multiUser = false;
   enabled = false;
+  unsynced = undefined;
   chatReads = [];
   suggestionsRequested = false;
   save = async (setting) => {
@@ -38,7 +40,7 @@ beforeEach(() => {
     if (path === "/api/capabilities") return Response.json({ multiUser, extensions: {}, agents: [], apps: { available: false }, version: 2, ...(multiUser ? { user } : {}) });
     if (path === "/api/me/durable-mode") {
       if (init?.method === "PUT") return save(JSON.parse(String(init.body)).enabled, init.signal);
-      return Response.json({ enabled });
+      return Response.json({ enabled, unsynced });
     }
     if (path === "/api/agents/sage") {
       chatReads.push(enabled);
@@ -78,6 +80,27 @@ function mount(path: string) {
   history.replaceState({}, "", path);
   dispose = render(() => <App />, root);
 }
+
+it("shows gateways that missed a Durable mode change and clears the note after a synced save", async () => {
+  unsynced = ["lab"];
+  const saveNormally = save;
+  save = async (setting) => {
+    enabled = setting;
+    return Response.json({ enabled, unsynced: ["studio", "office"] });
+  };
+  mount("/account/settings");
+  const control = await findByRole<HTMLButtonElement>(root, "switch", { name: "Durable mode" });
+  expect(await findByText(root, "Not updated on lab. Syncs on reconnect.")).toBeTruthy();
+  control.click();
+  expect(await findByText(root, "Not updated on studio, office. Syncs on reconnect.")).toBeTruthy();
+  expect(control.getAttribute("aria-checked")).toBe("true");
+
+  save = saveNormally;
+  control.click();
+  await waitFor(() => expect(control.disabled).toBe(false));
+  expect(control.getAttribute("aria-checked")).toBe("false");
+  expect(queryByText(root, /Not updated on/)).toBeNull();
+});
 
 it("loads the setting, saves changes and reverts a failed save with an error toast", async () => {
   mount("/account/settings");

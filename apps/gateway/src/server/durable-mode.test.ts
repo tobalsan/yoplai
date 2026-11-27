@@ -16,11 +16,16 @@ it("defaults off and saves the single-user setting across gateway restarts", asy
     expect(await initial.json()).toEqual({ enabled: false });
     const invalid = await gateway.request("local", route, put({ enabled: "true" }));
     expect(invalid.status).toBe(400);
+    for (const updatedAt of ["yesterday", null, 42]) {
+      expect((await gateway.request("local", route, put({ enabled: true, updatedAt }))).status).toBe(400);
+    }
     const saved = await gateway.request("local", route, put({ enabled: true }));
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ enabled: true });
+    const state = await saved.json() as { enabled: boolean; updatedAt: string };
+    expect(state).toEqual({ enabled: true, updatedAt: expect.any(String) });
+    expect(Number.isFinite(Date.parse(state.updatedAt))).toBe(true);
     await gateway.restart();
-    expect(await (await gateway.request("local", route)).json()).toEqual({ enabled: true });
+    expect(await (await gateway.request("local", route)).json()).toEqual(state);
   } finally {
     await gateway.close();
   }
@@ -75,7 +80,7 @@ it("keeps each account's setting, HTTP and WebSocket replies, and feed separate 
     expect(await (await gateway.request("alice", route)).json()).toEqual({ enabled: false });
     const saved = await gateway.request("alice", route, put({ enabled: true, userId: gateway.accountId("bob") }));
     expect(saved.status).toBe(200);
-    expect(await (await gateway.request("alice", route)).json()).toEqual({ enabled: true });
+    expect(await (await gateway.request("alice", route)).json()).toEqual({ enabled: true, updatedAt: expect.any(String) });
     expect(await (await gateway.request("bob", route)).json()).toEqual({ enabled: false });
     expect(await (await gateway.request("alice", "/api/agents/pilot")).json()).toHaveProperty("durable", true);
     expect(await (await gateway.request("bob", "/api/agents/pilot")).json()).not.toHaveProperty("durable");

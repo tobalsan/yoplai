@@ -13,7 +13,7 @@
 | `agents/<id>/cron/jobs.json` | Scheduler jobs                                  |
 | `agents/<id>/cron/output/`   | Scheduler/heartbeat run output                  |
 | `agents/<id>/durable/agent.sqlite` | Pi Durable transcript, Main identity map, submissions and review decisions |
-| `durable-mode.json` | Single-user Durable mode preference. Multi-user preferences live at `sessions/users/<userId>/durable-mode.json`. |
+| `durable-mode.json` | Single-user Durable mode preference, `{ enabled: boolean, updatedAt?: string }`. The ISO timestamp is optional for older files. Multi-user preferences have the same shape at `sessions/users/<userId>/durable-mode.json`. |
 | `agents/<id>/dreams/`        | Dream journals/state/staged sessions            |
 | `history/*.jsonl`            | Canonical single-user chat transcripts          |
 | `sessions/*.jsonl`           | Pi SDK runtime resume state                     |
