@@ -17,7 +17,7 @@ export function getWsUrl(): string {
 type DispatchCallbacks = Partial<
   StreamCallbacks & {
     onActiveTurn?: (snapshot: ActiveTurn, sessionId?: string) => void;
-    onHistoryUpdated?: () => void;
+    onHistoryUpdated?: (sessionId?: string) => void;
   }
 >;
 
@@ -82,6 +82,7 @@ export type WsStreamEvent =
     }
   | {
       type: "history_updated";
+      sessionId?: string;
     }
   | {
       type: "active_turn";
@@ -169,7 +170,7 @@ export function dispatchWsEvent(
       callbacks.onDone?.(event.meta);
       break;
     case "history_updated":
-      callbacks.onHistoryUpdated?.();
+      callbacks.onHistoryUpdated?.(event.sessionId);
       break;
     case "active_turn":
       callbacks.onActiveTurn?.({

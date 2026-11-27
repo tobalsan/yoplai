@@ -106,6 +106,8 @@ type ChatSessionInput = {
   onRemoteReset: () => Promise<void>;
   preservePrependScroll: (prepend: () => void) => void;
   durableLive?: Accessor<{ runId?: string } | null | undefined>;
+  durableThreadId?: Accessor<string | undefined>;
+  onDurableEvent?: (type: "active_turn" | "history_updated", sessionId?: string) => void;
   onDurableError?: (error: string) => void;
   onLiveView?: (view: McpAppViewReference) => void;
 };
@@ -123,7 +125,14 @@ function isRemoteAgent(agentId: string): boolean {
 
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, viewMode, explicitSessionId } = input;
-  const durableMain = () => !isRemoteAgent(input.agentId()) && targetsDurableMain(agent()?.durable === true, explicitSessionId());
+  const durableSession = createMemo(() => {
+    const current = agent();
+    if (current?.id !== input.agentId() || current.gateway || current.durable !== true) return;
+    const thread = input.durableThreadId?.();
+    if (thread) return "thread:" + thread;
+    if (targetsDurableMain(true, explicitSessionId())) return DURABLE_MAIN_SESSION_ID;
+  });
+  const durableMain = () => durableSession() !== undefined;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
   const [simpleMessages, setSimpleMessages] = createSignal<SimpleViewMessage[]>(
     []
@@ -844,7 +853,7 @@ export function createChatSession(input: ChatSessionInput) {
       displayedSession = nextSession;
       if (durableMain()) {
         setLoading(false);
-        adoptSessionId(DURABLE_MAIN_SESSION_ID);
+        adoptSessionId(durableSession()!);
       } else {
         void loadHistory(mode);
       }
@@ -870,6 +879,14 @@ export function createChatSession(input: ChatSessionInput) {
     const key = sessionKey();
     if (!agentId) return;
     const subscribedSession = currentSession();
+    const durable = durableSession();
+    const selector = durable ? DURABLE_MAIN_SESSION_ID : explicitSessionId();
+    const matchesView = (id?: string) => {
+      if (!id) return true;
+      if (durable || selector) return id === (durable ?? selector);
+      if (id.startsWith("thread:")) return false;
+      return id !== DURABLE_MAIN_SESSION_ID || !!agent()?.gateway;
+    };
     const isCurrentSubscription = () => subscribedSession === currentSession();
     const isOpenAgent = () => input.agentId() === agentId;
 
@@ -1010,6 +1027,8 @@ export function createChatSession(input: ChatSessionInput) {
         },
         onActiveTurn: (turn, sessionId) => {
           if (!isCurrentSubscription()) return;
+          if (durable) input.onDurableEvent?.("active_turn", sessionId);
+          if (!matchesView(sessionId)) return;
           // The gateway sends this event for the session of the subscribed key.
           if (sessionId) adoptSessionId(sessionId);
           if (durableMain()) {
@@ -1019,8 +1038,10 @@ export function createChatSession(input: ChatSessionInput) {
             applyActiveTurnSnapshot(turn);
           }
         },
-        onHistoryUpdated: () => {
+        onHistoryUpdated: (sessionId) => {
           if (!isCurrentSubscription()) return;
+          if (durable) input.onDurableEvent?.("history_updated", sessionId);
+          if (!matchesView(sessionId)) return;
           if (durableMain()) {
             if (!ownsDisplayedDirectStream() && !input.durableLive?.()) resetStreamingState();
             if (pendingQueuedMessages().length > 0) setPendingQueuedMessages((prev) => prev.slice(1));
@@ -1043,8 +1064,8 @@ export function createChatSession(input: ChatSessionInput) {
           }
         },
       },
-      explicitSessionId(),
-      isRemoteAgent(agentId)
+      selector,
+      !!durable || isRemoteAgent(agentId)
     );
   });
 
@@ -1931,7 +1952,7 @@ export function createChatSession(input: ChatSessionInput) {
     setStopping(true);
 
     try {
-      if (main) return await postDurableStop(input.agentId(), unbound ? undefined : live?.runId ?? latestDurableTurn?.runId);
+      if (main) return await postDurableStop(input.agentId(), unbound ? undefined : live?.runId ?? latestDurableTurn?.runId, input.durableThreadId?.());
       aborted = true;
       const sessionId = explicitSessionId();
       if (sessionId) await postAbort(input.agentId(), sessionKey(), sessionId);

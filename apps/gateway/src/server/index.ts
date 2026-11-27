@@ -164,7 +164,7 @@ app.use("/api/*", async (c, next) => {
   const runtime = currentExtensionRuntime();
   for (const matcher of runtime.getRouteMatchers()) {
     // These core routes are also available without multi-user.
-    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/me/durable-mode" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || path === "/api/admin/agent-management" || path === "/api/admin/durable/delivery" || ownsExtensionCatalogPath(path))) continue;
+    if (matcher.extension === "multiUser" && (path === "/api/me/main-agent" || path === "/api/me/durable-mode" || path === "/api/me/sidebar-order" || path === "/api/admin/top-extensions" || path === "/api/admin/model-quota" || path === "/api/admin/agent-management" || path === "/api/admin/durable/delivery" || ownsExtensionCatalogPath(path))) continue;
     if (!matcher.matches(path)) continue;
     if (isExtensionEnabled(config, matcher.extension, runtime)) break;
     if (matcher.allowWhenDisabled && runtime.isEnabled(matcher.extension))
@@ -265,7 +265,11 @@ app.use("/api/agents/:id/*", async (c, next) => {
   }
 
   const { requireAgentAccess } = await loadMultiUserMiddlewareModule();
-  return requireAgentAccess("id")(c, next);
+  const denial = await requireAgentAccess("id")(c, next);
+  if (denial?.status === 403 && c.req.method === "GET" && /^\/api\/agents\/[^/]+\/memory$/.test(c.req.path)) {
+    return c.json({ error: "Agent access denied" }, 403);
+  }
+  return denial;
 });
 if (readEnv("DEV")) {
   app.get("/api/debug/events", (c) =>

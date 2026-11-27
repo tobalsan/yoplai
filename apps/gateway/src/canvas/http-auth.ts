@@ -1,17 +1,26 @@
 import type { DashboardActor } from "./policy.js";
-import { loadConfig } from "../config/index.js";
+import { getAgent, loadConfig } from "../config/index.js";
+
+import { durableModeFor } from "../durable-mode/resolve.js";
 
 type Auth = { user?: { id?: string } };
 
 export async function resolveDashboardHttpActor(auth: unknown, agentId?: string): Promise<DashboardActor> {
-  if (!loadConfig().extensions?.multiUser?.enabled) return { userId: "local", eligible: true, hasAgentAccess: true };
+  const agent = agentId ? getAgent(agentId) : undefined;
+  if (!loadConfig().extensions?.multiUser?.enabled) {
+    return { userId: "local", eligible: true, hasAgentAccess: true, durableChat: await durableModeFor(undefined, agent) };
+  }
   const { getMultiUserRuntime, getEligibleAccount, hasAgentAccess } = await import("@yoplai/extension-multi-user");
   const runtime = getMultiUserRuntime();
   const userId = (auth as Auth | null)?.user?.id;
   const account = runtime && userId ? getEligibleAccount(runtime.db, userId, { approvalBypass: "superadmin" }) : undefined;
   const session = auth as Parameters<typeof hasAgentAccess>[0];
   const currentAuth = account && session ? { ...session, user: { ...session.user, role: account.role, approved: true } } : null;
-  return { userId, eligible: !!account, superadmin: account?.role === "superadmin", hasAgentAccess: !!currentAuth && !!agentId && await hasAgentAccess(currentAuth, agentId) };
+  const access = !!currentAuth && !!agentId && await hasAgentAccess(currentAuth, agentId);
+  return {
+    userId, eligible: !!account, superadmin: account?.role === "superadmin", hasAgentAccess: access,
+    durableChat: access && await durableModeFor(userId, agent),
+  };
 }
 
 export async function listDashboardRecipients(): Promise<Array<{ id: string; name: string; email: string; image: string | null }>> {

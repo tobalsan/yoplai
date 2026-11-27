@@ -11,6 +11,13 @@ import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatToolbarOverflow } from "./chat/ChatToolbarOverflow";
 import { ContextUsageRing } from "./chat/ContextUsageRing";
+import { durableModeVersion, useDurableMode } from "../api/durable-mode";
+import { fetchMemory, sendThreadMessage } from "../api/durable";
+import { fetchAgentDashboards } from "../api/agents";
+import { MemoryPanel, memoryFraction } from "./chat/MemoryPanel";
+import { DurableThreadTabs, createDurableThreads } from "./chat/DurableThreadTabs";
+import { watchThreadFeed } from "./chat/thread-feed";
+import "./chat/DurableShell.css";
 import { fetchFeedWindow, subscribeToFeed } from "../api/feed";
 import { createFeedWindow, FEED_PAGE_SIZE } from "./chat/feed-window";
 import { FeedTranscript, createFeedDetails, feedAppViewCalls } from "./chat/FeedTranscript";
@@ -157,7 +164,9 @@ export function ChatView() {
   };
   const navigate = useNavigate();
   const location = useLocation<{ mainAgentHome?: boolean; draftMessage?: string; feedSearch?: number }>();
-  const [agent, { mutate: setAgent }] = createResource(() => params.agentId, fetchAgent);
+  const [agent, { mutate: setAgent, refetch: refetchAgent }] = createResource(() => params.agentId, fetchAgent);
+  const modeEnabled = useDurableMode();
+  createEffect(on(durableModeVersion, () => { void refetchAgent(); }, { defer: true }));
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [settingsDirty, setSettingsDirty] = createSignal(false);
   const [settingsSaving, setSettingsSaving] = createSignal(false);
@@ -230,8 +239,33 @@ export function ChatView() {
     typeof searchParams.session === "string" && searchParams.session.trim()
       ? searchParams.session
       : undefined;
-  const dashboardFromUrl = typeof searchParams.dashboard === "string" ? searchParams.dashboard : undefined;
-  if (dashboardFromUrl && searchParams.new === "1" && !explicitSessionId()) startNewChat(params.agentId);
+  const durableMain = createMemo(() => agent()?.id === params.agentId && !agent()?.gateway &&
+    targetsDurableMain(agent()?.durable === true, explicitSessionId()));
+  const shell = createMemo(() => modeEnabled() && durableMain());
+  const threadId = createMemo(() => shell() && typeof searchParams.thread === "string" ? searchParams.thread || undefined : undefined);
+  const selectedSessionId = () => {
+    const thread = threadId();
+    return thread ? "thread:" + thread : explicitSessionId();
+  };
+  const switchThread = (id?: string) => {
+    if (id === threadId()) return;
+    const query = new URLSearchParams(location.search);
+    if (id) query.set("thread", id);
+    else query.delete("thread");
+    navigate(location.pathname + (query.size ? `?${query}` : ""), { scroll: false });
+  };
+  const threads = createDurableThreads(() => shell() ? params.agentId : undefined, threadId, switchThread);
+  const dashboardFromUrl = () => typeof searchParams.dashboard === "string" ? searchParams.dashboard : undefined;
+  if (dashboardFromUrl() && searchParams.new === "1" && !explicitSessionId()) startNewChat(params.agentId);
+  const [memoryOpen, setMemoryOpen] = createSignal(false);
+  const [memoryActive, setMemoryActive] = createSignal(false);
+  const [memoryRead, { refetch: refreshMemory }] = createResource(() => shell() ? params.agentId : undefined, async (id) => {
+    try { return { id, data: await fetchMemory(id), fetchedAt: Date.now(), error: false }; }
+    catch { return { id, data: undefined, fetchedAt: undefined, error: true }; }
+  });
+  const memory = () => memoryRead.latest?.id === params.agentId ? memoryRead.latest : undefined;
+  const memoryShown = () => shell() && memoryOpen();
+  createEffect(on(() => params.agentId, () => { setMemoryOpen(false); setMemoryActive(false); }, { defer: true }));
   const [suggestions] = createResource(
     () => [params.agentId, explicitSessionId()] as const,
     ([agentId]) => fetchAgentSuggestions(agentId)
@@ -284,7 +318,7 @@ export function ChatView() {
     }
   );
 
-  const currentSession = () => `${params.agentId}:${sessionKey()}:${explicitSessionId() ?? ""}`;
+  const currentSession = () => `${params.agentId}:${sessionKey()}:${selectedSessionId() ?? ""}`;
   createEffect(on(currentSession, () => setDurableSendError(""), { defer: true }));
   // Live views to open, in arrival order and one per view. They wait for the agent (it fixes the tab key)
   // and the history (it restores saved tabs first). Each stays queued until the conversation holds its result.
@@ -302,31 +336,47 @@ export function ChatView() {
       return { session: scope, views, last: view };
     });
   }
-  const durableMain = () => !params.agentId.includes("@") && agent()?.id === params.agentId &&
-    targetsDurableMain(agent()?.durable === true, explicitSessionId());
-  const feedScope = () => durableMain() ? params.agentId : undefined;
-  const feedChat = createMemo(on(feedScope, (agentId) => {
+  const feedScope = createMemo(() => durableMain() ? params.agentId : undefined);
+  const feedChat = createMemo(on([feedScope, threadId], ([agentId, thread]) => {
     if (!agentId) return;
     const requests = new AbortController();
-    const feed = createFeedWindow((selector) => fetchFeedWindow(agentId, selector, FEED_PAGE_SIZE, requests.signal), preserveFeedScroll);
-    const details = createFeedDetails(agentId, preserveFeedScroll);
-    const stop = subscribeToFeed(agentId, FEED_PAGE_SIZE, feed.onFrame, feed.disconnected);
+    const read = (selector = {}) => fetchFeedWindow(agentId, selector, FEED_PAGE_SIZE,
+      AbortSignal.any([requests.signal, AbortSignal.timeout(15_000)]), thread);
+    const feed = createFeedWindow(read, preserveFeedScroll);
+    const details = createFeedDetails(agentId, preserveFeedScroll, thread);
+    const watch = thread ? watchThreadFeed(agentId, () => read(), feed.onFrame) : undefined;
+    const stop = thread ? undefined : subscribeToFeed(agentId, FEED_PAGE_SIZE, feed.onFrame, feed.disconnected);
     onCleanup(() => {
       feed.dispose();
       requests.abort();
-      stop();
+      watch?.stop();
+      stop?.();
     });
-    return { feed, details };
+    return { feed, details, watch };
   }));
   const feed = () => feedChat()?.feed;
 
   const session = createChatSession({
     durableLive: () => feed()?.live(),
+    durableThreadId: threadId,
+    onDurableEvent: (type, id) => {
+      if (!shell()) return;
+      if (type === "history_updated") {
+        threads.refresh();
+        if (id === DURABLE_MAIN_SESSION_ID) {
+          window.dispatchEvent(new CustomEvent("durable-history-updated", { detail: params.agentId }));
+          void refreshMemory();
+        }
+      }
+      if (threadId() && (id === selectedSessionId() || !id)) {
+        feedChat()?.watch?.refresh(type === "history_updated");
+      }
+    },
     onDurableError: setDurableSendError,
     agentId: () => params.agentId,
     agent,
     sessionKey,
-    explicitSessionId,
+    explicitSessionId: selectedSessionId,
     viewMode,
     projectId: () => searchParams.project ? String(searchParams.project) : undefined,
     isArchived: isSessionArchived,
@@ -390,14 +440,15 @@ export function ChatView() {
     contextUsage, contextWarning, thinkingLevel,
     compactStatusForCurrentSession,
   } = session;
-  const isStreaming = () => !!feed()?.live() || sessionStreaming();
+  const [threadPosting, setThreadPosting] = createSignal<ReadonlySet<string>>(new Set());
+  const isStreaming = () => !!feed()?.live() || sessionStreaming() || threadPosting().has(currentSession());
   const loading = () => feed() ? feed()?.status() === "loading" : sessionLoading();
   const historyLoaded = () => {
     const window = feed();
     if (!window) return session.historyLoaded();
     const status = window.status();
     if (status === "ready" || status === "not-found") {
-      return { scope: currentSession(), sessionId: explicitSessionId(), empty: window.items().length === 0 };
+      return { scope: currentSession(), sessionId: selectedSessionId(), empty: window.items().length === 0 };
     }
   };
   const setup = useOptionalSetup();
@@ -503,7 +554,8 @@ export function ChatView() {
       setDurableSendError("");
       jumpToLatest();
     }
-    await session.sendFromView(trimmed);
+    if (threadId()) await postThread(trimmed);
+    else await session.sendFromView(trimmed);
   };
   let focusedHomeSession: string | null = null;
   createEffect(on(historyLoaded, (loaded) => {
@@ -696,12 +748,14 @@ export function ChatView() {
   });
 
   const canAttachFiles = () =>
+    !threadId() &&
     !loading() &&
     !uploadingFiles() &&
     !isStreaming() &&
     !impersonationStatus()?.active;
 
   const getFileDropError = () => {
+    if (threadId()) return "Open Main to attach files.";
     if (isStreaming()) {
       return "Wait for the current response before attaching files.";
     }
@@ -855,11 +909,35 @@ export function ChatView() {
       const session = explicitSessionId();
       const query = new URLSearchParams();
       if (session) query.set("session", session);
+      if (threadId()) query.set("thread", threadId()!);
       if (searchParams.project) query.set("project", String(searchParams.project));
       const path = query.size ? `${basePath}?${query}` : basePath;
       navigate(durableMain() ? path + messageHash() : path, { replace: true });
     }
   };
+
+  const threadSendRetries = new Map<string, { text: string; id: string }>();
+  async function postThread(text: string) {
+    const thread = threadId();
+    const scope = currentSession();
+    if (!thread || threadPosting().has(scope)) return;
+    const retry = threadSendRetries.get(scope);
+    const request = retry?.text === text ? retry : { text, id: crypto.randomUUID() };
+    setThreadPosting((pending) => new Set([...pending, scope]));
+    setDurableSendError("");
+    jumpToLatest();
+    try {
+      await sendThreadMessage(params.agentId, thread, text, request.id);
+      threadSendRetries.delete(scope);
+    } catch (error) {
+      threadSendRetries.set(scope, request);
+      if (currentSession() === scope) setDurableSendError(error instanceof Error ? error.message : "Could not send the message.");
+      throw error;
+    } finally {
+      setThreadPosting((pending) => new Set([...pending].filter((item) => item !== scope)));
+      if (currentSession() === scope) feedChat()?.watch?.refresh(true);
+    }
+  }
 
   let submittingDurableDraft = false;
   const handleSend = async () => {
@@ -895,6 +973,19 @@ export function ChatView() {
     }
 
     const message = annotations.compose(text);
+    if (threadId()) {
+      const scope = currentSession();
+      if (threadPosting().has(scope)) return;
+      setInput("");
+      if (textareaRef) textareaRef.style.height = "auto";
+      try {
+        await postThread(message.text);
+        if (scope === currentSession()) message.sent();
+      } catch {
+        if (scope === currentSession() && !input()) setInput(text);
+      }
+      return;
+    }
     if (main) {
       submittingDurableDraft = true;
       setDurableSendError("");
@@ -933,7 +1024,7 @@ export function ChatView() {
   };
 
   const handleStop = async (unbound = false) => {
-    const result = await session.stop(unbound);
+    const result = await session.stop(unbound || (!!threadId() && threadPosting().has(currentSession()) && !feed()?.live()));
     if (result.error) setUploadError(result.error);
     if (result.status === "already_finished") showToast("Run already finished.");
   };
@@ -958,23 +1049,44 @@ export function ChatView() {
     requestAnimationFrame(() => textareaRef?.focus());
   };
 
-  const openDashboardFromUrl = (gateway?: string) => {
-    appViews.openFrame({ kind: "dashboard", id: dashboardFromUrl!, title: "Dashboard", ...(gateway ? { gateway } : {}) });
-    setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
-  };
-  // A remote agent ID has the form `name@gateway`. Its dashboard belongs to the gateway that the loaded agent names.
-  const remoteDashboardPending = () => !!dashboardFromUrl && params.agentId.includes("@");
-  onMount(() => {
-    if (dashboardFromUrl && !remoteDashboardPending()) openDashboardFromUrl();
-  });
-  let remoteDashboardOpened = false;
+  let openedDashboard: string | undefined;
   createEffect(() => {
-    if (!remoteDashboardPending() || remoteDashboardOpened || agent.loading) return;
-    remoteDashboardOpened = true;
-    // A failed agent read opens nothing: the dashboard gateway would be a guess.
-    if (agent.error) setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
-    else openDashboardFromUrl(agent()?.gateway);
+    const id = dashboardFromUrl();
+    if (!id) { openedDashboard = undefined; return; }
+    const agentId = params.agentId;
+    const link = agentId + "\n" + id;
+    const mainLink = !explicitSessionId() && searchParams.new !== "1";
+    if (openedDashboard === link || ((agentId.includes("@") || mainLink) && agent.loading)) return;
+    openedDashboard = link;
+    const gateway = chatGateway();
+    const open = (title: string) => {
+      if (params.agentId !== agentId || openedDashboard !== link) return;
+      if (!agent.error) {
+        appViews.openFrame({ kind: "dashboard", id, title, ...(gateway ? { gateway } : {}) });
+        setMemoryActive(false);
+      }
+      setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
+    };
+    if (mainLink && durableMain()) {
+      void fetchAgentDashboards(agentId, undefined, AbortSignal.timeout(3000)).then(
+        (rows) => open(Array.isArray(rows) ? rows.find((row) => row.id === id)?.title ?? "Dashboard" : "Dashboard"),
+        () => open("Dashboard"),
+      );
+    } else untrack(() => open("Dashboard"));
   });
+  const activeDashboardTitle = () => {
+    const frame = appViews.frame();
+    if (frame) return frame.title === "Dashboard" ? "this dashboard" : frame.title;
+    const view = appViews.panel()?.latest.result?.view;
+    if (view?.resourceUri === "ui://yoplai/dashboard") return view.title ?? "this dashboard";
+  };
+  function jumpToMemoryRef(id: string) {
+    const query = new URLSearchParams(location.search);
+    query.delete("thread");
+    const target = location.pathname + (query.size ? `?${query}` : "") + `#m=${encodeURIComponent(id)}`;
+    navigate(target, { scroll: false, state: { ...location.state, feedSearch: Date.now() } });
+  }
+
 
   let draftMessageUsed = false;
   createEffect(() => {
@@ -1121,6 +1233,22 @@ export function ChatView() {
             </Show>
           </ChatToolbarOverflow>
         </Show>
+        <Show when={shell()}>
+          <button type="button" class="new-chat-btn memory-toolbar-button" aria-label="Memory"
+            title={`What ${agent()?.name ?? "the agent"} remembers`} aria-pressed={memoryShown() && memoryActive()}
+            onClick={() => {
+              if (memoryShown() && memoryActive()) { setMemoryOpen(false); return; }
+              setMemoryOpen(true);
+              setMemoryActive(true);
+              void refreshMemory();
+            }}>
+            <span class="memory-ring" aria-hidden="true"
+              classList={{ "memory-full": memoryFraction(memory()?.data?.gauge) >= 0.7 }}
+              style={{ "--memory-fill": `${memoryFraction(memory()?.data?.gauge) * 100}%` }} />
+            <span>Memory</span>
+          </button>
+        </Show>
+        <Show when={!shell()}>
         <button
           class="new-chat-btn"
           aria-label="Start a new chat"
@@ -1141,6 +1269,7 @@ export function ChatView() {
           </svg>
           <span class="new-chat-label">New chat</span>
         </button>
+        </Show>
         <button type="button" class="agent-settings-btn" classList={{ "agent-settings-active": settingsOpen() }}
           aria-label="Agent settings" title="Agent settings" aria-expanded={settingsOpen()} ref={settingsButton}
           onClick={() => settingsOpen() ? requestSettingsClose() : setSettingsOpen(true)}>
@@ -1163,6 +1292,9 @@ export function ChatView() {
       }}
     >
       <div class="chat-main">
+      <Show when={shell()}>
+        <DurableThreadTabs agentId={params.agentId} threads={threads} />
+      </Show>
       <Show when={firstChat.failed() || missingModel()}>
         <div class="desktop-chat-repair">
           <Show when={firstChat.failed()}><p role="alert">Yoplai could not complete the first turn.</p></Show>
@@ -1235,7 +1367,9 @@ export function ChatView() {
             <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
           }>
             {(chat) => <FeedTranscript agentId={params.agentId} sessionId={DURABLE_MAIN_SESSION_ID} mode={viewMode()}
-              feed={chat.feed} details={chat.details} appViews={appViews} flashing={flashing()} onUserMessage={handleViewMessage} />}
+              feed={chat.feed} details={chat.details} appViews={appViews} flashing={flashing()} onUserMessage={handleViewMessage}
+              showUserActions={shell()} onStartThread={shell() && !threadId() && !impersonationStatus()?.active ? threads.start : undefined}
+              threadActionBusy={threads.busy()} />}
           </Show>
           <Show when={agent()?.gateway}>
             <DeviceApprovalCards
@@ -1341,6 +1475,7 @@ export function ChatView() {
           <Show when={isFileDragActive() && activeDropZone() === "composer"}>
             <div class="input-drop-hint">Drop files to attach</div>
           </Show>
+        <Show when={!threadId()}>
         <button
           type="button"
           class="pill-btn attach-btn"
@@ -1363,6 +1498,7 @@ export function ChatView() {
             />
           </svg>
         </button>
+        </Show>
           <textarea
             ref={textareaRef}
             class="input"
@@ -1370,7 +1506,7 @@ export function ChatView() {
             placeholder={
               impersonationStatus()?.active
                 ? "Read-only — exit impersonation to send."
-                : "Message..."
+                : shell() && activeDashboardTitle() ? `Message about ${activeDashboardTitle()}…` : "Message..."
             }
             value={input()}
             disabled={impersonationStatus()?.active}
@@ -1382,7 +1518,7 @@ export function ChatView() {
             onPaste={handlePaste}
             rows={1}
           />
-          <Show when={contextUsage()}>
+          <Show when={!shell() && contextUsage()}>
             {(usage) => <ContextUsageRing inputTokens={usage().inputTokens} maxTokens={usage().maxTokens} />}
           </Show>
           <Show
@@ -1464,9 +1600,19 @@ export function ChatView() {
         {(warning) => <div class="context-warning">{warning()}</div>}
       </Show>
       </div>
-      <Show when={appViews.tabs().length > 0}>
-        <ChatSidePanel>
-          <ChatPanelTabs appViews={appViews} agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} sessionId={session.appSessionId()} onUserMessage={handleViewMessage} />
+      <Show when={memoryShown() || appViews.tabs().length > 0}>
+        <ChatSidePanel durableShell={shell()}>
+          <ChatPanelTabs appViews={appViews} agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading}
+            sessionId={session.appSessionId()} onUserMessage={handleViewMessage}
+            onSelectView={() => setMemoryActive(false)}
+            memory={memoryShown() ? {
+              active: memoryActive(),
+              activate: () => setMemoryActive(true),
+              close: () => { setMemoryOpen(false); setMemoryActive(false); },
+              content: <MemoryPanel agentName={agent()?.name ?? "the agent"}
+                data={memory()?.data} fetchedAt={memory()?.fetchedAt} loading={memoryRead.loading} error={memory()?.error}
+                retry={() => void refreshMemory()} jump={jumpToMemoryRef} openThread={(id) => void threads.open(id)} />,
+            } : undefined} />
         </ChatSidePanel>
       </Show>
 

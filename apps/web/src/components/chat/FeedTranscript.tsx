@@ -13,7 +13,7 @@ import type { createFeedWindow } from "./feed-window";
 
 type Assistant = Extract<FeedItem, { role: "assistant" }>;
 
-export function createFeedDetails(agentId: string, beforeChange: () => void) {
+export function createFeedDetails(agentId: string, beforeChange: () => void, threadId?: string) {
   type Cached = { text: string; count: number; activity?: string; detail?: FeedDetail; controller: AbortController };
   const cache = new Map<string, Cached>();
   const [revision, setRevision] = createSignal(0);
@@ -45,7 +45,7 @@ export function createFeedDetails(agentId: string, beforeChange: () => void) {
       const controller = new AbortController();
       const entry = { text: item.text, count: item.toolCallCount, activity, controller, detail };
       cache.set(item.id, entry);
-      void fetchFeedDetail(agentId, item.id, controller.signal).then((detail) => {
+      void fetchFeedDetail(agentId, item.id, controller.signal, threadId).then((detail) => {
         if (controller.signal.aborted) return;
         beforeChange();
         cache.set(item.id, { ...entry, detail });
@@ -145,17 +145,26 @@ function seamDescription(item: Extract<FeedItem, { role: "seam" }>) {
   return `${reasons[item.reason]} · ${count === 0 ? "No older requests" : `${count} older request${count === 1 ? "" : "s"}`} carried`;
 }
 
-const stepLabels = { pending: "Pending", in_progress: "In progress", completed: "Completed" };
+const stepLabels = { pending: "Pending", in_progress: "In progress", completed: "Completed", attention: "Needs attention" };
 
 function TurnChecklist(props: { plan: TurnPlan }) {
   return <div class="feed-plan">
+    <div class="feed-plan-header">
+      <strong>Plan for this task</strong>
+      <span>{props.plan.steps.filter((step) => step.status === "completed").length} of {props.plan.steps.length} done</span>
+    </div>
     <Show when={props.plan.explanation}>
       {(caption) => <div class="feed-plan-caption" title={caption()}>{caption()}</div>}
     </Show>
     <ul role="list" aria-label="Turn plan">
       <Index each={props.plan.steps}>{(step) => <li>
-        <span class="feed-plan-box" role="img" aria-label={stepLabels[step().status]} data-status={step().status} />
-        <span>{step().text}</span>
+        <span class="feed-plan-box" role="img" aria-label={stepLabels[step().status]} data-status={step().status}>
+          <Show when={step().status === "attention"}><i class="fa-solid fa-exclamation" aria-hidden="true" /></Show>
+        </span>
+        <div>
+          <span>{step().text}</span>
+          <Show when={step().note}>{(note) => <div class="feed-plan-note">{note()}</div>}</Show>
+        </div>
       </li>}</Index>
     </ul>
   </div>;
@@ -165,6 +174,9 @@ export function FeedTranscript(props: TranscriptProps & {
   feed: ReturnType<typeof createFeedWindow>;
   details: ReturnType<typeof createFeedDetails>;
   flashing?: string;
+  showUserActions?: boolean;
+  onStartThread?: (messageId: string) => void;
+  threadActionBusy?: boolean;
 }) {
   const items = createMemo(() => new Map(props.feed.items().map((item) => [item.id, item])));
   const visible = new Map<Element, (visible: boolean) => void>();
@@ -187,6 +199,15 @@ export function FeedTranscript(props: TranscriptProps & {
     return current && JSON.stringify([current.runId, current.toolCalls.map(({ id, status }) => [id, status])]);
   });
   const liveCalls = createMemo(() => new Set(live()?.toolCalls.map(({ id }) => id)));
+
+  const StartThreadButton = (button: { id: string }) => (
+    <Show when={props.onStartThread}>
+      <button type="button" class="copy-button feed-branch-button" disabled={props.threadActionBusy}
+        title="Start a thread from here" aria-label="Start a thread from here" onClick={() => props.onStartThread?.(button.id)}>
+        <i class="fa-solid fa-code-branch" aria-hidden="true" />
+      </button>
+    </Show>
+  );
 
   return <>
     <Show when={props.feed.status() === "loading" && !props.feed.items().length}>
@@ -228,12 +249,20 @@ export function FeedTranscript(props: TranscriptProps & {
       };
       return <div ref={observe} class="feed-row" data-feed-message={id} classList={{ "feed-flash": props.flashing === id }}>
         <Show when={user()}>
-          {(message) => <div class="message user no-anim">
-            <div class="content">{message().text}</div>
-            <div class="message-time">
-              {message().sender}{message().surface && message().surface !== "web" ? ` · ${message().surface}` : ""} · {formatTimestamp(message().timestamp)}
+          {(message) => <>
+            <div class="message user no-anim">
+              <div class="content">{message().text}</div>
+              <div class="message-time">
+                {message().sender}{message().surface && message().surface !== "web" ? ` · ${message().surface}` : ""} · {formatTimestamp(message().timestamp)}
+              </div>
             </div>
-          </div>}
+            <Show when={props.showUserActions}>
+              <div class="feed-user-actions">
+                <CopyButton label="Copy message" copy={() => writeReplyClipboard(formatReplyClipboard([message().text]))} />
+                <StartThreadButton id={id} />
+              </div>
+            </Show>
+          </>}
         </Show>
         <Show when={assistant()}>
           {(message) => <>
@@ -254,6 +283,7 @@ export function FeedTranscript(props: TranscriptProps & {
                   <For each={message().deliveries}>{(delivery) => <span>{delivery.surface} · {delivery.state}</span>}</For>
                   <Show when={message().text}>
                     <CopyButton label="Copy reply" copy={() => writeReplyClipboard(formatReplyClipboard([message().text]))} />
+                    <StartThreadButton id={id} />
                   </Show>
                 </div>
               </div>

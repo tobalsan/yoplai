@@ -33,6 +33,8 @@ export async function dashboardChatHref(
   actor: DashboardActor,
   sessionExists: DashboardListContext["sessionExists"]
 ): Promise<string | null> {
+  if (!actor.hasAgentAccess) return null;
+  if (actor.durableChat) return `/chat/${encodeURIComponent(entry.agentId)}?dashboard=${encodeURIComponent(entry.id)}`;
   const target = await dashboardChatTarget(entry, actor, sessionExists);
   if (!target) return null;
   const agent = encodeURIComponent(target.agentId);

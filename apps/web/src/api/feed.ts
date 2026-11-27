@@ -10,13 +10,15 @@ async function readFeed<T>(agentId: string, path: string, signal?: AbortSignal):
   return response.json();
 }
 
-export function fetchFeedWindow(agentId: string, selector: FeedSelector, limit: number, signal?: AbortSignal) {
+export function fetchFeedWindow(agentId: string, selector: FeedSelector, limit: number, signal?: AbortSignal, threadId?: string) {
   const query = new URLSearchParams({ limit: String(limit), ...selector });
+  if (threadId) query.set("thread", threadId);
   return readFeed<FeedWindow>(agentId, `?${query}`, signal);
 }
 
-export function fetchFeedDetail(agentId: string, id: string, signal: AbortSignal) {
-  return readFeed<FeedDetail>(agentId, `/messages/${encodeURIComponent(id)}`, signal);
+export function fetchFeedDetail(agentId: string, id: string, signal: AbortSignal, threadId?: string) {
+  const query = threadId ? `?thread=${encodeURIComponent(threadId)}` : "";
+  return readFeed<FeedDetail>(agentId, `/messages/${encodeURIComponent(id)}${query}`, signal);
 }
 
 export async function searchFeed(agentId: string, text: string, signal: AbortSignal) {

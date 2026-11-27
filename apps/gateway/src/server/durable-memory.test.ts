@@ -721,3 +721,79 @@ it("skips a user message followed by private rounds, then catches it on an idle 
     complete.mockRestore();
   }
 }, 20_000);
+
+it("serves each account's own memory with public references, plan, and context gauge", async () => {
+  const gateway = await startDurableTestGateway({
+    multiUser: true, fauxLimits: { contextWindow: 100_000, maxTokens: 4_000 },
+    keeper: { idleMs: 60_000, turns: 1 },
+  });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const complete = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation(async ({ prompt }) => {
+    const { messages } = JSON.parse(prompt);
+    return JSON.stringify({ topics: messages.some(({ text }: { text: string }) => text === "Reserve the cedar rack.") ? [
+      { kind: "open", title: "Cedar rack", note: "Wait for the delivery.", refs: [messages[0].id, "m_900001"] },
+    ] : [] });
+  });
+  const route = "/api/agents/pilot/memory";
+  const get = async (user: "alice" | "bob") => {
+    const response = await gateway.request(user, route);
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  const post = (route: string, body: object) => gateway.request("alice", route, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  try {
+    expect(await get("alice")).toEqual({
+      topics: [], plan: { goals: [], nextSteps: [], updatedAt: null },
+      gauge: { inputTokens: 0, ceilingTokens: 72_000 },
+    });
+    gateway.script(
+      { tool: "plan_update", args: { goals: ["Store the cedar"], nextSteps: ["Clear the rack"] } }, "I will reserve it.",
+      { tool: "plan_update", args: { goals: ["Store the maple"], nextSteps: [] } }, "The maple is ready.",
+      "The rack has two shelves.",
+    );
+    expect((await gateway.send("alice", "Reserve the cedar rack.", { clientSendId: "cedar" })).status).toBe(200);
+    expect((await gateway.send("bob", "Check the maple.", { clientSendId: "maple" })).status).toBe(200);
+    const source: FeedWindow = await (await gateway.request("alice", feed)).json();
+    const ref = source.items[0]!;
+    await vi.waitFor(async () => expect(await get("alice")).toMatchObject({
+      topics: [{
+        kind: "open", title: "Cedar rack", note: "Wait for the delivery.",
+        refs: [{ id: ref.id, role: "user", timestamp: ref.timestamp, text: "Reserve the cedar rack." }],
+        updatedAt: ref.timestamp,
+      }],
+      plan: { goals: ["Store the cedar"], nextSteps: ["Clear the rack"], updatedAt: expect.any(Number) },
+      gauge: { inputTokens: expect.any(Number), ceilingTokens: 72_000 },
+    }));
+    expect((await get("alice")).gauge.inputTokens).toBeGreaterThan(0);
+    expect(await get("bob")).toMatchObject({ topics: [], plan: { goals: ["Store the maple"], nextSteps: [] } });
+
+    const created = await post("/api/agents/pilot/threads", { title: "Rack dimensions" });
+    expect(created.status).toBe(201);
+    const thread = await created.json();
+    expect((await gateway.send("alice", "Measure the rack.", {
+      clientSendId: "dimensions", sessionId: "thread:" + thread.id,
+    })).status).toBe(200);
+    expect((await post("/api/agents/pilot/threads/" + thread.id + "/close", { generation: thread.generation })).status).toBe(200);
+    expect((await get("alice")).topics).toContainEqual(expect.objectContaining({
+      id: "th_" + thread.id, kind: "digest", threadId: thread.id, refs: [], updatedAt: null,
+    }));
+    expect((await get("bob")).topics).toEqual([]);
+
+    const setPublic = (isPublic: boolean) => gateway.request("alice", "/api/admin/forks/pilot/visibility", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ public: isPublic }),
+    });
+    expect((await setPublic(false)).status).toBe(200);
+    const denied = await gateway.request("bob", route);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: "Agent access denied" });
+    expect((await setPublic(true)).status).toBe(200);
+
+    await gateway.setDurableMode("bob", false);
+    expect((await gateway.request("bob", route)).status).toBe(404);
+  } finally {
+    await gateway.close();
+    complete.mockRestore();
+  }
+}, 20_000);

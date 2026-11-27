@@ -655,12 +655,15 @@ it("gives the model a tool error for invalid turn plans and leaves the feed clea
       } },
       { tool: "turn_plan", id: "bad-status", args: { steps: [{ id: "tray", text: "Check the tray", status: "ready" }] } },
       { tool: "turn_plan", id: "empty-text", args: { steps: [{ id: "tray", text: "", status: "pending" }] } },
+      { tool: "turn_plan", id: "empty-note", args: { steps: [{ id: "tray", text: "Check the tray", status: "attention", note: "" }] } },
+      { tool: "turn_plan", id: "long-note", args: { steps: [{ id: "tray", text: "Check the tray", status: "attention", note: "a".repeat(201) }] } },
+      { tool: "turn_plan", id: "multiline-note", args: { steps: [{ id: "tray", text: "Check the tray", status: "attention", note: "Inspect again.\n" }] } },
       "The tray is ready.",
     );
     expect((await gateway.send("local", "Check the tray", { clientSendId: "check-tray" })).status).toBe(200);
     const errors = gateway.requests.at(-1)?.messages.flatMap((message) =>
       message.role === "toolResult" && message.toolName === "turn_plan" && message.isError ? [message.toolCallId] : []);
-    expect(errors).toEqual(["too-many", "bad-status", "empty-text"]);
+    expect(errors).toEqual(["too-many", "bad-status", "empty-text", "empty-note", "long-note", "multiline-note"]);
     expect((await (await gateway.request("local", feed + "?limit=1")).json()).items).toEqual([{
       id: expect.any(String), role: "assistant", timestamp: expect.any(Number),
       text: "The tray is ready.", toolCallCount: 0,

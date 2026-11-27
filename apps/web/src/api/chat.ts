@@ -81,11 +81,11 @@ export async function postAbort(
   });
 }
 
-export async function postDurableStop(agentId: string, runId?: string): Promise<DurableStopResult> {
+export async function postDurableStop(agentId: string, runId?: string, threadId?: string): Promise<DurableStopResult> {
   const response = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}/stop`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ runId }),
+    body: JSON.stringify({ runId, threadId }),
   });
   if (!response.ok) throw new Error("Failed to stop run");
   return response.json();

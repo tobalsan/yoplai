@@ -15,6 +15,8 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
+import { useDurableMode } from "../api/durable-mode";
+import { DurableAgentList } from "./DurableAgentList";
 import { SidebarTheme } from "./SidebarTheme";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { isDesktopWindow } from "../lib/desktop-window";
@@ -101,6 +103,7 @@ function groupLabel(timestamp: number, currentTime: number): string {
 }
 
 export function AgentSidebar(props: AgentSidebarProps) {
+  const shell = useDurableMode();
   const desktopWindow = isDesktopWindow();
   const location = useLocation();
   const navigate = useNavigate();
@@ -232,7 +235,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   let pollStopped = false;
 
   const refreshSessions = async () => {
-    if (pollStopped || document.visibilityState !== "visible") return;
+    if (shell() || pollStopped || document.visibilityState !== "visible") return;
     const userId = capabilities.user?.id;
     const readsAtStart = captureChatReads();
     try {
@@ -249,7 +252,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
   };
 
   const refreshProjects = async () => {
-    if (pollStopped || document.visibilityState !== "visible") return;
+    if (shell() || pollStopped || document.visibilityState !== "visible") return;
     try { setProjects((await fetchChatProjects()).items); }
     catch { setSessionError("Unable to load projects. Try again."); }
   };
@@ -564,6 +567,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
               </A>
             </Show>
           </nav>
+          <Show when={shell()} fallback={
           <section class="sidebar-sessions" aria-label="Sessions">
             <Show when={sessionError()}>
               <div role="alert">{sessionError()}</div>
@@ -652,6 +656,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
               </For>
             </div>
           </section>
+          }>
+            <DurableAgentList selectedId={selectedChat().agentId}
+              readingId={/^\/chat\//.test(stripBase(location.pathname)) && !currentChat().sessionId &&
+                !new URLSearchParams(location.search).has("thread") ? currentChat().agentId : undefined}
+              now={currentTime()} relativeTime={relativeTime} Menu={SidebarMenu} />
+          </Show>
         </div>
         <Show when={showCreateProject()}>
           <CreateProjectModal
@@ -871,7 +881,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
         <div class="sidebar-footer">
           <Show when={capabilities.multiUser}>
             <Suspense>
-              <LazySidebarAccountPanel collapsed={props.collapsed} />
+              <LazySidebarAccountPanel collapsed={props.collapsed} hideArchive={shell()} />
             </Suspense>
           </Show>
           <Show when={!capabilities.multiUser}>
@@ -891,10 +901,12 @@ export function AgentSidebar(props: AgentSidebarProps) {
                   Link gateway
                 </A>
               </Show>
-              <A href="/archive" class="account-menu-item" role="menuitem">
-                <i class="fa-solid fa-box-archive" aria-hidden="true" />
-                Archive
-              </A>
+              <Show when={!shell()}>
+                <A href="/archive" class="account-menu-item" role="menuitem">
+                  <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                  Archive
+                </A>
+              </Show>
               <A href="/account/settings" class="account-menu-item" role="menuitem">
                 <i class="fa-solid fa-gear" aria-hidden="true" />
                 Account settings

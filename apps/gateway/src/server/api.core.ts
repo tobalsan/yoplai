@@ -106,6 +106,7 @@ import { resolveSessionDataFile } from "../sessions/files.js";
 import { createOAuthRoutes } from "../oauth/routes.js";
 import { createMainAgentRoutes } from "../main-agent/routes.js";
 import { createDurableModeRoutes } from "../durable-mode/routes.js";
+import { createSidebarOrderRoutes } from "../durable-mode/sidebar-order.js";
 import { durableModeFor } from "../durable-mode/resolve.js";
 import { createChatProjectRoutes } from "../chat-projects/routes.js";
 import { createSkillRoutes } from "../skills/routes.js";
@@ -628,6 +629,12 @@ function contentDispositionFilename(filename: string): string {
 // OAuth connect framework (authorize + callback + status/disconnect).
 api.route("/", createMainAgentRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, getEligibleAgents: getEligibleMainAgents }));
 api.route("/", createDurableModeRoutes({ dataDir: CONFIG_DIR, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
+api.route("/", createSidebarOrderRoutes({
+  dataDir: CONFIG_DIR,
+  getUserId: getRequestUserId,
+  isMultiUser: () => isExtensionLoaded("multiUser"),
+  getVisibleAgentIds: async (c) => (await getVisibleAgents(c)).map((agent) => agent.id),
+}));
 api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, getUserId: getRequestUserId, isMultiUser: () => isExtensionLoaded("multiUser") }));
 api.route("/", createChatProjectRoutes({ getUserId: getRequestUserId, getAgentIds: () => loadConfig().agents.map((agent) => agent.id) }));
 api.route("/", createSkillRoutes({
@@ -857,6 +864,7 @@ api.route("/", createMcpAppRoutes({ getConfig: loadConfig, getRuntime: getExtens
 
 // GET /api/agents - list all agents (respects single-agent mode)
 api.get("/agents", async (c) => {
+  const userId = await getRequestUserId(c);
   const agents = await getVisibleAgents(c);
   const includePrivateMeta = await canViewAgentPrivateMeta(c);
   const configDefaultId = resolveDefaultProjectManager(loadConfig());
@@ -864,20 +872,21 @@ api.get("/agents", async (c) => {
     ? configDefaultId
     : (agents[0]?.id ?? null);
   return c.json(
-    agents.map((a) => ({
+    await Promise.all(agents.map(async (a) => ({
       id: a.id,
       name: a.name,
       description: a.description,
       avatar: resolveAvatarForApi(a),
       ...(includePrivateMeta ? { model: a.model } : {}),
       sdk: a.sdk ?? "pi",
+      ...(await durableModeFor(userId, a) ? { durable: true } : {}),
       ...(includePrivateMeta && a.workspace
         ? { workspace: resolveWorkspaceDir(a.workspace) }
         : {}),
       authMode: a.auth?.mode,
       queueMode: a.queueMode ?? "queue",
       isDefaultProjectManager: a.id === visibleDefaultId,
-    }))
+    })))
   );
 });
 
@@ -1701,6 +1710,11 @@ async function stopDurable(c: Context, host: DurableHost, principal: string, run
   const result = await host.stop(principal, runId, threadId);
   return "forbidden" in result ? c.json({ error: "Agent access denied" }, 403) : c.json(result);
 }
+
+api.get("/agents/:id/memory", (c) => durableRoute(c, async (open, principal) => {
+  const memory = await (await open()).readMemory(principal);
+  return "forbidden" in memory ? c.json({ error: "Agent access denied" }, 403) : c.json(memory);
+}));
 
 api.get("/agents/:id/feed", (c) => durableRoute(c, async (open, principal) => {
   const limit = Number(c.req.query("limit") ?? 50);

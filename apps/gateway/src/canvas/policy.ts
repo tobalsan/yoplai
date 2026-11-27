@@ -6,6 +6,7 @@ export type DashboardActor = {
   eligible: boolean;
   superadmin?: boolean;
   hasAgentAccess?: boolean;
+  durableChat?: boolean;
 };
 
 export class DashboardAccessPolicy {

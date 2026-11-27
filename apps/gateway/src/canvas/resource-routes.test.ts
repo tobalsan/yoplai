@@ -416,11 +416,12 @@ it("shared viewers get new chats only with agent access and lost-access creators
   await registry.replaceShares(entry.id, [{ kind: "all", mode: "read" }]);
   let userId = "bob";
   let hasAgentAccess = true;
+  let durableChat = false;
   const checks: string[][] = [];
   const resources = createDashboardResourceRoutes({
     getConfig: () => config, getAgent: () => agent, registry, pins,
     authenticate: async () => ({}),
-    resolveActor: async () => ({ userId, eligible: true, hasAgentAccess }),
+    resolveActor: async () => ({ userId, eligible: true, hasAgentAccess, durableChat }),
     hasAgentAccess: async () => hasAgentAccess,
     sessionExists: async (...ids) => { checks.push(ids); return true; },
   });
@@ -428,6 +429,16 @@ it("shared viewers get new chats only with agent access and lost-access creators
     shared: [{ id: entry.id, chatHref: `/chat/agent?dashboard=${entry.id}&new=1` }],
   });
   expect(checks).toEqual([]);
+  durableChat = true;
+  expect(await (await resources.request("/")).json()).toMatchObject({
+    shared: [{ id: entry.id, chatHref: `/chat/agent?dashboard=${entry.id}` }],
+  });
+  userId = "alice";
+  expect(await (await resources.request("/")).json()).toMatchObject({
+    owned: [{ id: entry.id, chatHref: `/chat/agent?dashboard=${entry.id}` }],
+  });
+  expect(checks).toEqual([]);
+  userId = "bob";
   hasAgentAccess = false;
   expect(await (await resources.request("/")).json()).toMatchObject({ shared: [{ id: entry.id, chatHref: null }] });
   userId = "alice";

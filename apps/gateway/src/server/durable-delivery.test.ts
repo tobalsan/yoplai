@@ -290,19 +290,24 @@ it("deduplicates real Mattermost post events before and after restart and accept
     await gateway.restart();
     await bot.handleEvent(event(post));
     expect(gateway.callCount()).toBe(1);
-    gateway.script("The ferns have been watered.");
+    gateway.script({
+      tool: "turn_plan", args: { steps: [
+        { id: "ferns", text: "Water the ferns", status: "completed" },
+        { id: "trays", text: "Verify the trays", status: "attention", note: "Check the bottom shelf." },
+      ] },
+    }, "The ferns have been watered.");
     const repeat = server.addPost({ channel_id: DM_CHANNEL, user_id: ALICE.id, message: "Water the ferns." });
     await bot.handleEvent(event(repeat));
     await vi.waitFor(() => expect(server.created()).toEqual([
       { channel_id: DM_CHANNEL, message: "The seedlings are ready." },
-      { channel_id: DM_CHANNEL, message: "The ferns have been watered." },
+      { channel_id: DM_CHANNEL, message: "The ferns have been watered.\n\n- [x] Water the ferns\n- [ ] Verify the trays (needs attention)\n  Check the bottom shelf." },
     ]));
     const { items } = await (await gateway.request("local", feed)).json();
     expect(items.filter((item: { role: string }) => item.role === "user")).toMatchObject([
       { sender: "alice", surface: "mattermost", text: "Water the ferns." },
       { sender: "alice", surface: "mattermost", text: "Water the ferns." },
     ]);
-    expect(gateway.callCount()).toBe(2);
+    expect(gateway.callCount()).toBe(3);
     expect(requestIds).toEqual([
       `mm:${listenUrl}:${post.id}`, `mm:${listenUrl}:${post.id}`, `mm:${listenUrl}:${repeat.id}`,
     ]);
@@ -907,7 +912,7 @@ it("appends the grouped turn plan to one Slack reply", async () => {
         steps: [
           { id: "count", text: "Count the trays", status: "completed" },
           { id: "water", text: "Water the trays", status: "in_progress" },
-          { id: "move", text: "Move them outside", status: "pending" },
+          { id: "move", text: "Move them outside", status: "attention", note: "Check for frost first." },
         ],
       } },
       "The seedlings are ready.",
@@ -915,12 +920,15 @@ it("appends the grouped turn plan to one Slack reply", async () => {
     expect(await gateway.submit()).toEqual({ status: "admitted", duplicate: false });
     const text = [
       "The seedlings are ready.", "", "Nursery checklist",
-      "- [x] Count the trays", "- [ ] Water the trays (in progress)", "- [ ] Move them outside",
+      "- [x] Count the trays", "- [ ] Water the trays (in progress)", "- [ ] Move them outside (needs attention)", "  Check for frost first.",
     ].join("\n");
     await vi.waitFor(async () => {
       const answer = (await gateway.window()).items.at(-1);
       expect(answer).toMatchObject({
         role: "assistant", text: "The seedlings are ready.", toolCallCount: 0,
+        plan: { steps: [
+          { status: "completed" }, { status: "in_progress" }, { status: "attention", note: "Check for frost first." },
+        ] },
         deliveries: [{ surface: "slack", state: "sent" }],
       });
       expect(await gateway.posts()).toEqual([{ ingress: slackDm.route.ingress, text }]);

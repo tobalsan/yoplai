@@ -11,6 +11,7 @@ const turnPlanInstructions = [
   "## Turn plan",
   "Call `turn_plan` directly before the first action of a multi-step task (edits plus commands, or three or more steps). Use a top-level call outside Code Mode.",
   "Send the full checklist on each update. Keep exactly one step `in_progress` while working and leave none `in_progress` at the end.",
+  "Add a short step `note` when a mid-task user message changes that step. If a step may be unfinished, for example after a restart, set it to `attention` with a short note and leave it out of completed steps.",
   "Single-command answers and plain conversation need no plan. Use `plan_update` for long-lived goals and `turn_plan` for this turn's steps.",
 ].join("\n");
 

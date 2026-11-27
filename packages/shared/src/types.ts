@@ -2765,7 +2765,7 @@ type FeedMessage = { id: string; text: string; timestamp: number };
 export type FeedDelivery = { surface: ChannelSurface; state: "pending" | "sent" | "uncertain" };
 
 export type TurnPlan = {
-  steps: { id: string; text: string; status: "pending" | "in_progress" | "completed" }[];
+  steps: { id: string; text: string; status: "pending" | "in_progress" | "completed" | "attention"; note?: string }[];
   explanation?: string;
 };
 
@@ -2775,6 +2775,20 @@ export type FeedItem = FeedMessage & (
   | { role: "failure"; kind: RunFailureKind }
   | { role: "seam"; reason: "manual" | "threshold" | "overflow"; carried: { firstKept: string; indexed: number } }
 );
+
+export type AgentMemory = {
+  topics: {
+    id: string;
+    kind: "open" | "decision" | "digest";
+    title: string;
+    note: string;
+    refs: (FeedMessage & { role: "user" | "assistant"; sender?: string })[];
+    updatedAt: number | null;
+    threadId?: string;
+  }[];
+  plan: { goals: string[]; nextSteps: string[]; updatedAt: number | null };
+  gauge: { inputTokens: number; ceilingTokens: number | null };
+};
 
 export type FeedToolCall = {
   id: string;

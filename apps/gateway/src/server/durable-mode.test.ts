@@ -79,6 +79,11 @@ it("keeps each account's setting, HTTP and WebSocket replies, and feed separate 
     expect(await (await gateway.request("bob", route)).json()).toEqual({ enabled: false });
     expect(await (await gateway.request("alice", "/api/agents/pilot")).json()).toHaveProperty("durable", true);
     expect(await (await gateway.request("bob", "/api/agents/pilot")).json()).not.toHaveProperty("durable");
+    expect(await (await gateway.request("alice", "/api/agents")).json()).toContainEqual(
+      expect.objectContaining({ id: "pilot", durable: true }),
+    );
+    const bobAgents = await (await gateway.request("bob", "/api/agents")).json();
+    expect(bobAgents.find((agent: { id: string }) => agent.id === "pilot")).not.toHaveProperty("durable");
 
     gateway.script("The basil is ready.", "The mint is ready.");
     const alice = await gateway.send("alice", "Check the basil", { clientSendId: "basil-http" });

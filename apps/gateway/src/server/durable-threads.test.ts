@@ -359,7 +359,9 @@ it.each(["endpoint", "/stop", "/abort"])("stops a live thread via %s and leaves 
     expect(await (await sending).json()).toMatchObject({ meta: { aborted: true, sessionId: "thread:" + thread.id } });
     await idle(gateway, thread.id);
     await observer.flush();
-    expect(observer.events.filter(({ type }) => type === "active_turn" || type === "history_updated")).toEqual([]);
+    const updates = observer.events.filter((event) => event.type === "active_turn" || event.type === "history_updated");
+    expect(updates).toContainEqual({ type: "history_updated", agentId: "pilot", sessionId: "thread:" + thread.id });
+    expect(updates.map(({ sessionId }) => sessionId)).not.toContain("durable-main");
     expect((await feed(gateway)).items).toEqual([]);
   } finally {
     release.resolve();
@@ -661,6 +663,73 @@ it("leaves kept inputs archived at startup and runs them when reopened", async (
   } finally {
     release.resolve();
     queuedClient.abort();
+    await gateway.close();
+  }
+}, 20_000);
+
+it("delivers Main and thread events to the owner's Main subscriber with separate session ids", async () => {
+  const gateway = await startDurableTestGateway({ multiUser: true, tokensPerSecond: 45 });
+  try {
+    const thread = await create(gateway, {}, "alice");
+    const alice = await gateway.subscribe("alice");
+    const bob = await gateway.subscribe("bob");
+    gateway.script("The packing bench is clear.", "The cedar box is finished.");
+    await send(gateway, "Check the packing bench.", undefined, "alice");
+    await vi.waitFor(() => {
+      expect(alice.events).toContainEqual(expect.objectContaining({ type: "active_turn", sessionId: "durable-main" }));
+      expect(alice.events).toContainEqual({ type: "history_updated", agentId: "pilot", sessionId: "durable-main" });
+    });
+    const threadSession = "thread:" + thread.id;
+    await send(gateway, "Finish the cedar box.", thread.id, "alice");
+    await vi.waitFor(() => {
+      expect(alice.events).toContainEqual(expect.objectContaining({ type: "active_turn", sessionId: threadSession }));
+      expect(alice.events).toContainEqual({ type: "history_updated", agentId: "pilot", sessionId: threadSession });
+    });
+    expect(bob.events.filter((event) => event.type === "active_turn" || event.type === "history_updated")).toEqual([]);
+  } finally {
+    await gateway.close();
+  }
+}, 20_000);
+
+it("stops publishing a running thread to an owner who loses agent access", async () => {
+  const release = deferred<void>();
+  const gateway = await startDurableTestGateway({
+    multiUser: true,
+    extraYaml: "toolDeferral: { enabled: false }",
+    fixture: { extension: defineExtension({
+      name: "thread-access-fixture",
+      tools: [defineTool({
+        name: "hold_report", description: "Wait for the report", parameters: { type: "object" },
+        async execute() {
+          await release.promise;
+          return { output: [{ type: "text", text: "The report is ready." }] };
+        },
+      })],
+    }) },
+  });
+  try {
+    const thread = await create(gateway, {}, "bob");
+    const observer = await gateway.subscribe("bob");
+    await observer.flush();
+    gateway.script({ tool: "hold_report", id: "report" }, "The inventory report is ready.");
+    const sessionId = "thread:" + thread.id;
+    const sending = gateway.send("bob", "Read the inventory report.", { sessionId, clientSendId: "report" });
+    await vi.waitFor(() => expect(observer.events).toContainEqual(expect.objectContaining({
+      type: "active_turn", sessionId, toolCalls: [expect.objectContaining({ id: "report", status: "running" })],
+    })));
+    const denied = await gateway.request("alice", "/api/admin/forks/pilot/visibility", {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: '{"public":false}',
+    });
+    expect(denied.status).toBe(200);
+    await observer.flush();
+    const before = observer.events.length;
+    release.resolve();
+    await sending;
+    await observer.flush();
+    expect(observer.events.slice(before).filter((event) => event.type === "active_turn" || event.type === "history_updated")).toEqual([]);
+    expect((await gateway.request("bob", agent + "/feed?thread=" + thread.id)).status).toBe(403);
+  } finally {
+    release.resolve();
     await gateway.close();
   }
 }, 20_000);
