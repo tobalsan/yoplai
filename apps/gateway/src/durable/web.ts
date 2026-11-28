@@ -64,7 +64,7 @@ export class DurableWeb {
   }
 
   private onRoomEvent(event: RoomEvent) {
-    if (!this.rooms || this.closing || event.type === "memberRemoved") return;
+    if (!this.rooms || this.closing || event.type === "memberRemoved" || event.type === "agentStatus") return;
     const { roomId } = event;
     const wake = (agentId: string, host: ReturnType<DurableWeb["host"]> | undefined) => {
       void host?.then((opened) => opened.wakeRoom(roomId)).catch((error: unknown) => {
@@ -84,6 +84,23 @@ export class DurableWeb {
       const agent = getAgent(agentId);
       if (durableAgentEligible(agent)) wake(agentId, this.host(agent));
     }
+  }
+
+  async roomDetail(roomId: string, agentId: string, ref: { conversationId: number; answerId: number }) {
+    if (!this.rooms?.membership(roomId, agentId) || this.closing) return;
+    const agent = getAgent(agentId);
+    if (durableAgentEligible(agent)) return (await this.host(agent)).roomDetail(roomId, ref);
+  }
+
+  async stopRoom(roomId: string, agentId: string, userId: string, runId?: string) {
+    const membership = this.rooms?.membership(roomId, agentId);
+    if (!membership) return;
+    const eligible = () => this.rooms?.membership(roomId, agentId)?.generation === membership.generation &&
+      this.rooms.mayAccess(roomId, userId);
+    if (!eligible()) return;
+    const agent = getAgent(agentId);
+    if (this.closing || !durableAgentEligible(agent)) return { status: "already_finished" as const };
+    return (await this.host(agent)).stopRoom(roomId, eligible, runId);
   }
 
   private async backgroundAgent(agentId: string, owner: string) {

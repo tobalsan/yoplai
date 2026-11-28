@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState } from "@earendil-works/pi-durable";
+import { AgentDoc, AssistantEntry, LiveDoc, ToolResultEntry, type Conversation, type ConversationView, type Cursor, type EntryId, type EntryQuery, type EntryRecord, type Harness, type LiveState, type RunFailure, type SubmissionId, type Tx } from "@earendil-works/pi-durable";
 import type { AgentConfig, FeedLive, FeedWindow, TurnPlan } from "@yoplai/shared";
-import { activeDurableContextUsage, feedBoundary, feedItems, isFeedMessage, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
+import { activeDurableContextUsage, feedBoundary, feedDetail, feedItems, isFeedMessage, projectLive, projectRecords, projectReplyRounds, publicText } from "./feed-projection.js";
 import { ThreadError } from "./contract.js";
 import { AbortedRuns, ReviewDoc } from "./state.js";
 import type { DeliveryQueue } from "./outbox.js";
@@ -30,6 +30,16 @@ export async function runIdFor(harness: Harness, conversation: Conversation, run
   // the aborts that preceded this generation, even when the first entry is reused.
   const count = stopped?.byFirst[run.first]?.filter((lastTask) => lastTask < run.taskId).length ?? 0;
   return `${run.first}-${count}`;
+}
+
+export async function continueStoppedRun(tx: Tx, conversation: Conversation, next: SubmissionId, failed?: RunFailure) {
+  // A continue can reuse the aborted run's first entry. Record the cutoff
+  // in the same commit as the submission so the new run has a distinct ID.
+  if (failed?.first !== undefined) {
+    const stopped = await tx.doc(AbortedRuns, conversation.id);
+    stopped.byFirst[failed.first] = [...(stopped.byFirst[failed.first] ?? []), failed.taskId];
+  }
+  await conversation.submit(tx, { type: "continue", requestId: "stop:keep:" + next });
 }
 
 export function observeFeed(view: ConversationView) {
@@ -181,12 +191,22 @@ export class DurableFeed {
     return { ...await this.project(conversation, entries, observation?.selected), entries, contextUsage: activeDurableContextUsage(entries) };
   }
 
-  async answerPlan(conversation: Conversation, answerId: EntryId) {
+  private async answerProjection(conversation: Conversation, answerId: EntryId) {
     const entries = await this.scan(conversation, { order: "descending", maxEntryId: answerId }, 1);
     const { records } = await this.project(conversation, entries.reverse());
     const round = records.find((record) => record.kind === "assistant" && record.entryId === answerId);
     if (round?.kind !== "assistant") return;
-    const answer = feedItems(records).find((item) => item.id === round.id);
+    return { records, id: round.id };
+  }
+
+  async answerDetail(conversation: Conversation, answerId: EntryId) {
+    const answer = await this.answerProjection(conversation, answerId);
+    return answer && feedDetail(answer.records, answer.id);
+  }
+
+  async answerPlan(conversation: Conversation, answerId: EntryId) {
+    const projection = await this.answerProjection(conversation, answerId);
+    const answer = projection && feedItems(projection.records).find((item) => item.id === projection.id);
     if (answer?.role === "assistant") return answer.plan;
   }
 

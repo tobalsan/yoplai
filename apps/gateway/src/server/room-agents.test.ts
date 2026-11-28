@@ -35,9 +35,11 @@ it("stores unmentioned context and publishes one answer to a room mention with D
     await vi.waitFor(() => expect(watcher.events[1]).toMatchObject({ upsert: [{ text: "Pear trees are ready." }] }));
     expect(gateway.callCount()).toBe(0);
     await post(gateway, "local", room.path + "/messages", { clientSendId: "ask", message: "@PILOT. What should we plant?" });
-    await vi.waitFor(() => expect(watcher.events.at(-1)).toMatchObject({
-      type: "feed_delta", upsert: [{ id: "r_3", role: "assistant", sender: "pilot", text: "The seedlings are ready." }],
-    }));
+    await vi.waitFor(() => expect(watcher.events.flatMap((frame) =>
+      frame.type === "feed_delta" ? frame.upsert : frame.type === "feed_snapshot" ? frame.items : [],
+    )).toContainEqual(expect.objectContaining({
+      id: "r_3", role: "assistant", sender: "pilot", text: "The seedlings are ready.",
+    })));
     expect(gateway.callCount()).toBe(1);
     expect(modelInputs(gateway, 0)?.join("\n\n")).toBe(
       "[from Local user via web]\nPear trees are ready.\n\n[from Local user via web]\n@PILOT. What should we plant?",
@@ -419,7 +421,7 @@ it("catches up on startup when an eligible room agent has never opened a Durable
   }
 }, 12_000);
 
-it("publishes a resumed mention queued during after-run work without another room event", async () => {
+it.each(["restart", "stop"] as const)("publishes a mention queued during after-run work after %s", async (action) => {
   const afterRun = latch();
   const queued = latch();
   let hold = true;
@@ -452,7 +454,15 @@ it("publishes a resumed mention queued during after-run work without another roo
     await queued.promise;
     expect(gateway.callCount()).toBe(1);
     hold = false;
-    await gateway.restart();
+    if (action === "restart") {
+      await gateway.restart();
+    } else {
+      const response = await gateway.request("local", room.path + "/agents/pilot/stop", {
+        method: "POST", signal: AbortSignal.timeout(3000),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: "stopped" });
+    }
     await vi.waitFor(async () => expect((await feed(gateway, "local", room.path)).map(({ text }) => text)).toEqual([
       "@pilot Check the first bed.", "The first bed is ready.", "@pilot Check the second bed.", "The second bed is ready.",
     ]));
@@ -503,3 +513,278 @@ it("leaves kept unmentioned context idle after a tagged turn fails", async () =>
     await gateway.close();
   }
 }, 12_000);
+
+it("shows a room run beside its first mention and clears it when the answer settles", async () => {
+  const release = latch();
+  const delivery = latch();
+  const admitted = latch();
+  const gateway = await startDurableTestGateway({
+    async afterRoomCommit({ lastSeq }) {
+      if (lastSeq !== 1) return;
+      admitted.resolve();
+      await delivery.promise;
+    },
+  });
+  try {
+    const room = await roomFor(gateway, "local");
+    const watcher = await gateway.socket();
+    watcher.send({ type: "subscribeRoomFeed", roomId: room.id });
+    await vi.waitFor(() => expect(watcher.events[0]).toMatchObject({ type: "feed_snapshot" }));
+    await post(gateway, "local", room.path + "/agents", { agentId: "pilot" });
+    gateway.script(async () => {
+      await release.promise;
+      return "Water the east bed.";
+    });
+    await say(gateway, "local", room.path, "hold-delivery", "The orchard opens today.");
+    await admitted.promise;
+    await say(gateway, "local", room.path, "context", "The east bed is dry.");
+    await say(gateway, "local", room.path, "mention", "@pilot Check the beds.");
+    await vi.waitFor(() => {
+      const frame = watcher.events.at(-1);
+      expect(frame).toMatchObject({ roomRuns: [] });
+      expect(frame?.type === "feed_snapshot" ? frame.items : frame?.type === "feed_delta" ? frame.upsert : [])
+        .toContainEqual(expect.objectContaining({ id: "r_3" }));
+    });
+    delivery.resolve();
+    const expected = [{ agentId: "pilot", messageId: "r_3", runId: expect.stringMatching(/^\S+$/) }];
+    await vi.waitFor(async () => {
+      const window = await (await gateway.request("local", room.path + "/feed")).json();
+      expect(window.roomRuns).toEqual(expected);
+    });
+    await vi.waitFor(() => expect(watcher.events).toContainEqual(expect.objectContaining({
+      type: "feed_delta", upsert: [], live: null, roomRuns: expected,
+    })));
+    await vi.waitFor(() => expect(modelInputs(gateway, 0)?.at(-1)).toBe(
+      "[from Local user via web]\nThe east bed is dry.\n\n[from Local user via web]\n@pilot Check the beds.",
+    ));
+    release.resolve();
+    await vi.waitFor(async () => {
+      const window = await (await gateway.request("local", room.path + "/feed")).json();
+      expect(window.items.at(-1)).toMatchObject({ text: "Water the east bed." });
+      expect(window.roomRuns).toEqual([]);
+    });
+    await vi.waitFor(() => expect(watcher.events.at(-1)).toMatchObject({ roomRuns: [] }));
+  } finally {
+    delivery.resolve();
+    release.resolve();
+    await gateway.close();
+  }
+});
+
+it("returns each room answer's public trace to current room members", async () => {
+  const release = latch();
+  release.resolve();
+  const tool = blockedTool(release);
+  const gateway = await startDurableTestGateway({ multiUser: true, fixture: tool.fixture });
+  try {
+    const room = await roomFor(gateway, "alice");
+    await post(gateway, "alice", room.path + "/members", { userId: gateway.accountId("bob") });
+    await post(gateway, "alice", room.path + "/agents", { agentId: "pilot" });
+    gateway.script(
+      [{ thinking: "Check whether the orchard is ready." }, { tool: "hold_orchard", id: "orchard-check" }],
+      "The orchard is ready.",
+      [{ thinking: "Put pears in the east bed." }, { tool: "hold_orchard", id: "east-check" }],
+      "Plant the pears.",
+    );
+    await say(gateway, "bob", room.path, "first", "@pilot Is the orchard ready?");
+    await vi.waitFor(async () => expect((await feed(gateway, "bob", room.path)).at(-1)).toMatchObject({ id: "r_2", text: "The orchard is ready." }));
+    await say(gateway, "alice", room.path, "second", "@pilot What goes in the east bed?");
+    await vi.waitFor(async () => expect((await feed(gateway, "bob", room.path)).at(-1)).toMatchObject({ id: "r_4", text: "Plant the pears." }));
+
+    for (const [id, text, thinking, toolId] of [
+      ["r_2", "The orchard is ready.", "Check whether the orchard is ready.", "orchard-check"],
+      ["r_4", "Plant the pears.", "Put pears in the east bed.", "east-check"],
+    ]) {
+      const path = room.path + "/feed/messages/" + id;
+      const response = await gateway.request("bob", path);
+      expect(response.status).toBe(200);
+      const detail = await response.json();
+      expect(detail).toMatchObject({ id, text, reasoning: [thinking], toolCalls: [
+        { id: toolId, name: "hold_orchard", status: "done", result: { text: "Orchard checked." } },
+      ] });
+      expect((await gateway.request("carol", path)).status).toBe(404);
+    }
+    expect((await gateway.request("bob", room.path + "/feed/messages/r_99")).status).toBe(404);
+    expect((await gateway.request("alice", room.path + "/members/" + gateway.accountId("bob"), { method: "DELETE" })).status).toBe(200);
+    expect((await gateway.request("bob", room.path + "/feed/messages/r_4")).status).toBe(404);
+    expect((await gateway.request("alice", room.path + "/agents/pilot", { method: "DELETE" })).status).toBe(200);
+    const historical = await (await gateway.request("alice", room.path + "/feed/messages/r_4")).json();
+    expect(historical).toMatchObject({ id: "r_4", text: "Plant the pears.", reasoning: [], toolCalls: [] });
+  } finally {
+    await gateway.close();
+  }
+}, 15_000);
+
+it.each([true, false])("lets a member stop a run with kept mention=%s", async (mentioned) => {
+  const release = latch();
+  const followUp = latch();
+  const queued = latch();
+  const tool = blockedTool(release);
+  const gateway = await startDurableTestGateway({
+    multiUser: true, fixture: tool.fixture,
+    afterRoomCommit({ lastSeq }) {
+      if (lastSeq === 2) queued.resolve();
+    },
+  });
+  try {
+    const room = await roomFor(gateway, "alice");
+    await post(gateway, "alice", room.path + "/members", { userId: gateway.accountId("bob") });
+    await post(gateway, "alice", room.path + "/agents", { agentId: "pilot" });
+    const bob = await gateway.socket("bob");
+    bob.send({ type: "subscribeRoomFeed", roomId: room.id });
+    gateway.script({ tool: "hold_orchard" }, async () => {
+      await followUp.promise;
+      return "The pears are ready.";
+    });
+    const getRuns = async (user: User) => {
+      const window = await (await gateway.request(user, room.path + "/feed")).json() as import("@yoplai/shared").FeedWindow;
+      return window.roomRuns;
+    };
+    const stopPath = room.path + "/agents/pilot/stop";
+    const stop = (user: User, body?: object) => gateway.request(user, stopPath, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: body && JSON.stringify(body), signal: AbortSignal.timeout(3000),
+    });
+    await say(gateway, "bob", room.path, "held", "@pilot Wait for the orchard check.");
+    await vi.waitFor(() => expect(tool.executions()).toBe(1));
+    const [original] = await vi.waitFor(async () => {
+      const runs = await getRuns("bob");
+      expect(runs).toEqual([{ agentId: "pilot", messageId: "r_1", runId: expect.any(String) }]);
+      return runs!;
+    });
+    await vi.waitFor(() => expect(bob.events).toContainEqual(expect.objectContaining({ roomRuns: [original] })));
+    const outsider = await gateway.socket("carol");
+    outsider.send({ type: "subscribeRoomFeed", roomId: room.id });
+    const denied = [{ type: "error", message: "Room not found" }];
+    await vi.waitFor(() => expect(outsider.events).toEqual(denied));
+    expect((await gateway.request("carol", room.path + "/feed")).status).toBe(404);
+    expect((await stop("carol", { runId: original!.runId })).status).toBe(404);
+
+    const pending = mentioned ? "@pilot Check the pears." : "The east bed is dry.";
+    await say(gateway, "alice", room.path, "kept", pending);
+    await queued.promise;
+    expect((await stop("bob", { runId: "" })).status).toBe(400);
+    const stopped = await stop("bob", { runId: original!.runId });
+    expect(stopped.status).toBe(200);
+    expect(await stopped.json()).toEqual({ status: "stopped" });
+    expect(tool.aborts()).toBe(1);
+
+    const bobId = gateway.accountId("bob");
+    expect((await gateway.request("alice", room.path + "/members/" + bobId, { method: "DELETE" })).status).toBe(200);
+    await vi.waitFor(() => expect(bob.events.at(-1)).toEqual({ type: "feed_end", roomId: room.id, reason: "forbidden" }));
+    const lastBobFrame = bob.events.length;
+    expect((await stop("bob")).status).toBe(404);
+    expect((await gateway.request("bob", room.path + "/feed")).status).toBe(404);
+    if (!mentioned) {
+      await vi.waitFor(async () => expect(await getRuns("alice")).toEqual([]));
+      expect(await (await stop("alice")).json()).toEqual({ status: "already_finished" });
+      expect(gateway.callCount()).toBe(1);
+      await say(gateway, "alice", room.path, "new", "@pilot Check the pears.");
+    }
+    await vi.waitFor(() => expect(gateway.callCount()).toBe(2));
+    await vi.waitFor(async () => expect(await getRuns("alice")).toEqual([
+      { agentId: "pilot", messageId: mentioned ? "r_2" : "r_3", runId: expect.any(String) },
+    ]));
+    expect((await getRuns("alice"))?.[0]?.runId).not.toBe(original!.runId);
+    expect(await (await stop("alice", { runId: original!.runId })).json()).toEqual({ status: "already_finished" });
+    expect(modelInputs(gateway, 1)?.slice(1)).toEqual([
+      "[from alice via web]\n" + pending,
+      ...(!mentioned ? ["[from alice via web]\n@pilot Check the pears."] : []),
+    ]);
+    followUp.resolve();
+    await vi.waitFor(async () => expect((await feed(gateway, "alice", room.path)).filter(({ role }) => role === "assistant"))
+      .toEqual([expect.objectContaining({ text: "The pears are ready." })]));
+    await vi.waitFor(async () => expect(await getRuns("alice")).toEqual([]));
+    expect(await (await stop("alice")).json()).toEqual({ status: "already_finished" });
+    await bob.flush();
+    expect(bob.events).toHaveLength(lastBobFrame);
+    await outsider.flush();
+    expect(outsider.events).toEqual(denied);
+    expect((await gateway.request("alice", room.path + "/agents/pilot", { method: "DELETE" })).status).toBe(200);
+    expect((await stop("alice")).status).toBe(404);
+  } finally {
+    release.resolve();
+    followUp.resolve();
+    await gateway.close();
+  }
+}, 15_000);
+
+it("keeps a plan and keeper topics in the agent's room across restart", async () => {
+  const onBatch = vi.fn();
+  const gateway = await startDurableTestGateway({
+    multiUser: true, keeper: { idleMs: 60_000, turns: 1, onBatch },
+    additionalAgents: [{ id: "scout", model: { provider: "faux", model: "fixture" } }],
+  });
+  const { MaintenanceCompletion } = await import("../maintenance/completion.js");
+  const complete = vi.spyOn(MaintenanceCompletion, "complete").mockImplementation(async ({ agentId, prompt }) => {
+    const { messages } = JSON.parse(prompt);
+    const seed = messages.find(({ text }: { text: string }) => text.includes("@pilot Plan the orchard."));
+    return seed && agentId === "pilot" ? JSON.stringify({ topics: [
+      { kind: "decision", title: "Pear harvest", note: "Use the east bed.", refs: [seed.id] },
+    ] }) : '{"topics":[]}';
+  });
+  try {
+    const room = await roomFor(gateway, "alice");
+    const separate = await roomFor(gateway, "alice");
+    await post(gateway, "alice", room.path + "/members", { userId: gateway.accountId("bob") });
+    await post(gateway, "alice", room.path + "/agents", { agentId: "pilot" });
+    await post(gateway, "alice", room.path + "/agents", { agentId: "scout" });
+    await post(gateway, "alice", separate.path + "/agents", { agentId: "pilot" });
+    const readMain = async (user: User) => {
+      const response = await gateway.request(user, "/api/agents/pilot/memory");
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    gateway.script(
+      { tool: "plan_update", args: { goals: ["Order a private parcel."], nextSteps: [] } },
+      "Private plan saved.",
+    );
+    expect((await gateway.send("alice", "Save my private plan.", { clientSendId: "private-plan" })).status).toBe(200);
+    await vi.waitFor(() => expect(onBatch.mock.calls).toEqual([["committed"]]));
+    const alicesMain = await readMain("alice");
+    const bobsMain = await readMain("bob");
+    expect(alicesMain).toMatchObject({ plan: { goals: ["Order a private parcel."] } });
+    const beforeRoomCall = gateway.callCount();
+    gateway.script(
+      { tool: "plan_get", id: "before-room-plan" },
+      { tool: "plan_update", args: { goals: ["Harvest pears."], nextSteps: ["Find a basket."] } },
+      "Start in the east bed.",
+    );
+    await say(gateway, "bob", room.path, "plan", "@pilot Plan the orchard.");
+    await vi.waitFor(() => expect(gateway.offeredTools(beforeRoomCall)).toContain("plan_update"));
+    await vi.waitFor(async () => expect((await feed(gateway, "bob", room.path)).at(-1)).toMatchObject({ text: "Start in the east bed." }));
+    const result = (id: string) => {
+      const message = gateway.requests.at(-1)?.messages.find((message) => message.role === "toolResult" && message.toolCallId === id);
+      const block = message?.role === "toolResult" ? message.content[0] : undefined;
+      if (block?.type !== "text") throw new Error("Missing memory result for " + id);
+      return JSON.parse(block.text);
+    };
+    expect(result("before-room-plan")).toMatchObject({ plan: { goals: [], nextSteps: [] } });
+    await vi.waitFor(() => expect(complete.mock.calls.some(([{ prompt }]) =>
+      prompt.includes("[from bob via web]") && prompt.includes("Start in the east bed."))).toBe(true));
+    await vi.waitFor(() => expect(onBatch.mock.calls).toEqual([["committed"], ["committed"]]));
+    await gateway.restart();
+
+    const readRoom = async (path: string, agent: string, key: string) => {
+      gateway.script(
+        [{ tool: "plan_get", id: key + "-plan" }, { tool: "topics_get", id: key + "-topics" }],
+        "Memory checked for " + key + ".",
+      );
+      await say(gateway, "alice", path, key, "@" + agent + " Check the plan and topics.");
+      await vi.waitFor(async () => expect((await feed(gateway, "alice", path)).at(-1)).toMatchObject({ text: "Memory checked for " + key + "." }));
+      return { ...result(key + "-plan"), ...result(key + "-topics") };
+    };
+    expect(await readRoom(room.path, "pilot", "orchard")).toMatchObject({
+      plan: { goals: ["Harvest pears."], nextSteps: ["Find a basket."] },
+      topics: [{ kind: "decision", title: "Pear harvest", note: "Use the east bed.", refs: [] }],
+    });
+    const empty = { plan: { goals: [], nextSteps: [] }, topics: [] };
+    expect(await readRoom(room.path, "scout", "other-agent")).toMatchObject(empty);
+    expect(await readRoom(separate.path, "pilot", "other-room")).toMatchObject(empty);
+    expect(await readMain("alice")).toEqual(alicesMain);
+    expect(await readMain("bob")).toEqual(bobsMain);
+  } finally {
+    await gateway.close();
+    complete.mockRestore();
+  }
+}, 20_000);

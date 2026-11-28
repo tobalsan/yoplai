@@ -2810,14 +2810,17 @@ export type FeedDetail = FeedMessage & { reasoning: string[]; toolCalls: FeedToo
 export type FeedHit = Pick<FeedMessage, "id" | "timestamp"> & { role: "user" | "assistant"; snippet: string };
 export type FeedLive = Pick<FeedDetail, "text" | "reasoning" | "toolCalls"> & { runId?: string; plan?: TurnPlan };
 
+export type RoomRunStatus = { agentId: string; messageId: string; runId: string };
+
 export type FeedWindow = {
   items: FeedItem[];
   hasBefore: boolean;
   hasAfter: boolean;
   live: FeedLive | null;
+  roomRuns?: RoomRunStatus[];
 };
 
-type FeedFrame = Pick<FeedWindow, "hasBefore" | "live"> & { seq: number };
+type FeedFrame = Pick<FeedWindow, "hasBefore" | "live" | "roomRuns"> & { seq: number };
 export type WsFeedMessage<Scope = { agentId: string }> = Scope & (
   | (FeedFrame & { type: "feed_snapshot"; items: FeedItem[] })
   | (FeedFrame & { type: "feed_delta"; upsert: FeedItem[]; dropBefore?: string })

@@ -34,7 +34,7 @@ it("keeps an existing project private and opens its room for the local owner", a
       { id: project.id, name: "Orchard", ownerUserId: "local", role: "owner" },
     ] });
     expect(await (await gateway.request("local", room + "/feed")).json()).toEqual({
-      items: [], hasBefore: false, hasAfter: false, live: null,
+      items: [], hasBefore: false, hasAfter: false, live: null, roomRuns: [],
     });
     expect((await gateway.request("local", "/api/chat-projects/" + project.id)).status).toBe(200);
   } finally {
@@ -70,7 +70,7 @@ it("persists each valid local send once, including concurrent retries and retrie
       id: "r_1", role: "user", sender: "Local user", surface: "web", text: "Pick pears", timestamp: expect.any(Number),
     };
     expect(await (await gateway.request("local", room + "/feed")).json()).toEqual({
-      items: [item], hasBefore: false, hasAfter: false, live: null,
+      items: [item], hasBefore: false, hasAfter: false, live: null, roomRuns: [],
     });
 
     await gateway.restart();
@@ -207,7 +207,7 @@ it("streams room messages only to current members and rejects excluded reconnect
     watcher.send(subscribe);
     owner.send(subscribe);
     const snapshot = {
-      type: "feed_snapshot", roomId: id, seq: 1, items: [], hasBefore: false, live: null,
+      type: "feed_snapshot", roomId: id, seq: 1, items: [], hasBefore: false, live: null, roomRuns: [],
     };
     await vi.waitFor(() => {
       expect(watcher.events).toEqual([snapshot]);
@@ -216,7 +216,7 @@ it("streams room messages only to current members and rejects excluded reconnect
     const first = jsonPost({ clientSendId: "pear", message: "Pear trees" });
     expect((await gateway.request("alice", room + "/messages", first)).status).toBe(200);
     const delta = {
-      type: "feed_delta", roomId: id, seq: 2, hasBefore: false, live: null,
+      type: "feed_delta", roomId: id, seq: 2, hasBefore: false, live: null, roomRuns: [],
       upsert: [{ id: "r_1", role: "user", sender: "alice", surface: "web", text: "Pear trees", timestamp: expect.any(Number) }],
     };
     await vi.waitFor(() => expect(watcher.events).toEqual([snapshot, delta]));
@@ -291,7 +291,7 @@ it("stops an open room feed when the member's account loses access", async () =>
     const watcher = await gateway.socket("bob");
     const subscribe = { type: "subscribeRoomFeed", roomId: id } as const;
     watcher.send(subscribe);
-    const snapshot = { type: "feed_snapshot", roomId: id, seq: 1, items: [], hasBefore: false, live: null };
+    const snapshot = { type: "feed_snapshot", roomId: id, seq: 1, items: [], hasBefore: false, live: null, roomRuns: [] };
     await vi.waitFor(() => expect(watcher.events).toEqual([snapshot]));
 
     expect((await gateway.request("alice", "/api/admin/users/" + userId, {

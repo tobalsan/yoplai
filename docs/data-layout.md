@@ -60,7 +60,20 @@ Each agent's Durable store maps `room:<roomId>` to a room conversation. Its
 conversation document stores the membership generation, delivered room sequence
 and examined-answer cursor. The delivered sequence commits with the model input
 or passive context that covers it. Answer publication uses an idempotent room
-log key so recovery can replay an interrupted publication.
+log key so recovery can replay an interrupted publication. Each
+`yoplai.room-input` entry stores the delivered event IDs and a `mentioned` flag.
+Mentioned inputs also store the first mentioned event's `r_<seq>` ID. Older
+entries without `mentioned` are passive when deciding whether to continue
+after a stop. For a stopped run's continuation, the conversation document
+records the new anchor alongside the aborted generation so recovery can
+restore the correct status.
+
+The same agent store holds a memory document keyed `room:<roomId>` in the
+Durable memory family. It stores topics, drift notes, the plan, and the keeper
+cursor. The document survives agent removal and re-addition. Room activity
+uses this key for memory tools, keeper updates, and compaction summaries.
+`user:<owner>` documents remain private to each user's conversations. Room
+memory omits message references and private thread digests.
 
 ## Project data
 

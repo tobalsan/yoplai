@@ -254,7 +254,8 @@ export class MemoryKeeper {
 
         phase = "result";
         seen.reply = text;
-        const knownIds = new Set([
+        // Room feed IDs come from the room log, not this agent’s transcript.
+        const knownIds = new Set(key.startsWith("room:") ? [] : [
           ...messages.map(({ id }) => id),
           ...memory.topics.flatMap(({ refs }) => refs),
           ...memory.drift.flatMap(({ refs }) => refs),

@@ -100,13 +100,14 @@ export class WsFeed {
     this.pending = undefined;
     const delta = !snapshot && this.previous && feedDelta(this.previous.items, window.items);
     if (delta && !delta.upsert.length && delta.dropBefore === undefined &&
-        this.previous?.hasBefore === window.hasBefore && JSON.stringify(this.previous.live) === JSON.stringify(window.live)) {
+        this.previous?.hasBefore === window.hasBefore && JSON.stringify(this.previous.live) === JSON.stringify(window.live) &&
+        JSON.stringify(this.previous.roomRuns) === JSON.stringify(window.roomRuns)) {
       this.busy = false;
       this.flush();
       return;
     }
 
-    const base = { ...this.scope, seq: ++this.seq, hasBefore: window.hasBefore, live: window.live };
+    const base = { ...this.scope, seq: ++this.seq, hasBefore: window.hasBefore, live: window.live, roomRuns: window.roomRuns };
     const frame: FeedDataFrame = delta ? { ...base, type: "feed_delta", ...delta }
       : { ...base, type: "feed_snapshot", items: window.items };
     this.previous = window;

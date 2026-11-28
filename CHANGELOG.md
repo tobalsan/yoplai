@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Room members can see which message started each active agent run, inspect a published answer’s tool calls and reasoning, and stop an agent while preserving queued mentions. Each agent keeps a topic map and plan for each room.
+
 - Agents in shared rooms can list, search, and read the current room's message history. Room tools use the agent's team credentials and keep members' personal credentials, Main files, and private history out of the room.
 
 - Set an optional Role when creating or editing an agent. It appears under the agent name, with Description as the fallback. Description still seeds the initial instructions.

@@ -28,7 +28,7 @@ export function watchRoomFeed(
       if (event.roomId !== roomId) return;
       if (event.type === "roomDeleted" || (event.type === "memberRemoved" && event.userId === userId)) {
         forbid();
-      } else if (event.type === "appended") {
+      } else if (event.type === "appended" || event.type === "agentStatus") {
         publishWindow(false);
       }
     });

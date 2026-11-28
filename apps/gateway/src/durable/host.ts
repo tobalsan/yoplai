@@ -33,7 +33,7 @@ import { DurableAttachmentError, ThreadError, type DurableWebInput, type WebSend
 import { requireActorExecution, type ExtensionRuntime } from "../extensions/runtime.js";
 import { feedDetail, feedItems, feedSearch, isFeedMessage } from "./feed-projection.js";
 import { getMcpAppView } from "../mcp-apps/capture.js";
-import { DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
+import { continueStoppedRun, DurableFeed, emptyFeedWindow, entryId, observeFeed, runIdFor, type FeedSelector } from "./feed.js";
 import { createReplyReview, draftDigest, WITHHELD_REPLY } from "./review.js";
 import { abortWithoutFallback, durableFailureKind, getModelPolicy, originalFallbackInput, reserveFallback, setModelPolicy, settleFallback } from "./fallback.js";
 import { durableExecutionEnv } from "./env.js";
@@ -44,7 +44,7 @@ import { createMemoryTools } from "./memory-tools.js";
 import { emptyMemory, MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
 import { durableHistoryIds, durableSessionHistory, type ReadableConversation } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
-import { AbortedRuns, ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type BackgroundChild, type MainIdentityMap, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
+import { ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type BackgroundChild, type MainIdentityMap, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
 import { describeThread, firstLine, threadRef } from "./threads.js";
 import { durableStorePath } from "./store-path.js";
 import { DeliveryQueue, type DeliveryFixture } from "./outbox.js";
@@ -316,7 +316,15 @@ export class DurableHost {
   }
 
   private memoryKey(id: ConversationId) {
-    return this.rooms?.sessionRef(id) ? undefined : userMemoryKey(this.owners.get(id));
+    return this.rooms?.sessionRef(id) ?? userMemoryKey(this.owners.get(id));
+  }
+
+  async roomDetail(roomId: string, ref: { conversationId: number; answerId: number }) {
+    const conversation = await this.rooms?.conversationFor(roomId);
+    if (!conversation || conversation.id !== ref.conversationId) return;
+    const detail = await this.feed.answerDetail(conversation, ref.answerId as EntryId);
+    // Removal or a config change can occur while the transcript is read.
+    if (this.rooms?.mayRun(conversation.id)) return detail;
   }
 
   wakeRoom(roomId: string) {
@@ -962,7 +970,7 @@ export class DurableHost {
       thinkingLevel: agent.reasoning ?? agent.thinkLevel ?? null,
       extensions: [
         this.review.extension, ...(principal.room ? [] : [CodingTools]), this.tools.gate, this.boundary,
-        ...(principal.room || principal.background ? [] : [this.memoryTools]),
+        ...(principal.background ? [] : [this.memoryTools]),
         ...(principal.sessionId === DURABLE_MAIN_SESSION_ID ? [turnPlanTools] : []), ...installed,
         ...(this.options.fixture ? [this.options.fixture.extension] : []),
         ...(!principal.room && agent.codemode ? [this.codemode] : []),
@@ -1002,13 +1010,7 @@ export class DurableHost {
     const threadId = this.threadIds.get(id);
     await conversation.commit(async (tx) => {
       if (threadId !== undefined && (await tx.doc(ThreadMap)).threads[threadId]?.closed) return;
-      // A continue can reuse the failed run's first entry. Persist its cutoff
-      // in the same commit as the new run so recovery cannot reuse the old ID.
-      if (failed?.first !== undefined) {
-        const stopped = await tx.doc(AbortedRuns, id);
-        stopped.byFirst[failed.first] = [...(stopped.byFirst[failed.first] ?? []), failed.taskId];
-      }
-      await conversation.submit(tx, { type: "continue", requestId: "stop:keep:" + next.id });
+      await continueStoppedRun(tx, conversation, next.id, failed);
     }, context);
   }
 
@@ -1373,6 +1375,10 @@ export class DurableHost {
   async stop(principal: string, runId?: string, threadId?: string): Promise<DurableStopResult | { forbidden: true }> {
     const conversation = await this.feedConversation(principal, threadId);
     return this.stopConversation(conversation, principal, () => this.mayReadFeed(principal, principal), runId);
+  }
+
+  stopRoom(roomId: string, eligible: () => boolean, runId?: string) {
+    return this.rooms?.stop(roomId, eligible, runId);
   }
 
   async stopChannel({ owner, route: { ingress } }: ChannelCommand, eligible: () => Promise<boolean>): Promise<ChannelCommandResult> {
