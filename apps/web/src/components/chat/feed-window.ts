@@ -6,6 +6,7 @@ export const FEED_PAGE_SIZE = 50;
 const WINDOW_LIMIT = 200;
 
 const empty: FeedWindow = { items: [], hasBefore: false, hasAfter: false, live: null };
+type PendingSend = { text: string; timestamp: number };
 
 function mergeSnapshot(window: FeedWindow, tail: FeedWindow): FeedWindow {
   const existing = new Map(window.items.map((item, index) => [item.id, index]));
@@ -32,6 +33,8 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
   const [status, setStatus] = createSignal<"loading" | "ready" | "error" | "not-found">("loading");
   const [flash, setFlash] = createSignal<{ id: string }>();
   const [newCount, setNewCount] = createSignal(0);
+  const [pendingSends, setPendingSends] = createSignal<PendingSend[]>([]);
+  const echoAlternatives = new WeakMap<PendingSend, PendingSend[]>();
   let tail: FeedWindow | undefined;
   let receivedSnapshot = false;
   let ended = false;
@@ -43,6 +46,44 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
   const paging = { before: -1, after: -1 };
   let baseline: Set<string> | undefined;
   const arrivals = new Set<string>();
+
+  const addPendingSend = (text: string) => {
+    const send = { text, timestamp: Date.now() };
+    beforeChange?.();
+    setPendingSends((pending) => [...pending, send]);
+    return (rejected = false) => {
+      const pending = pendingSends();
+      let remove: PendingSend | undefined = send;
+      if (!pending.includes(send)) {
+        // Identical sends can echo out of order. A rejected send cannot own the echo.
+        const alternatives = rejected ? echoAlternatives.get(send) : undefined;
+        echoAlternatives.delete(send);
+        remove = alternatives?.find((item) => pending.includes(item));
+        if (remove && alternatives) echoAlternatives.set(remove, alternatives.filter((item) => item !== remove));
+      }
+      if (!remove) return;
+      beforeChange?.();
+      setPendingSends(pending.filter((item) => item !== remove));
+    };
+  };
+
+  const setTail = (window: FeedWindow) => {
+    if (pendingSends().length) {
+      const existing = new Set((tail?.items ?? view().items).map(({ id }) => id));
+      const remaining = [...pendingSends()];
+      for (const item of window.items) {
+        if (item.role !== "user" || existing.has(item.id)) continue;
+        const match = remaining.findIndex(({ text }) => item.text === text || item.text.startsWith(text + "\n\nAttachments: "));
+        if (match === -1) continue;
+        const echoed = remaining[match]!;
+        remaining.splice(match, 1);
+        const alternatives = remaining.filter(({ text }) => text === echoed.text);
+        if (alternatives.length) echoAlternatives.set(echoed, alternatives);
+      }
+      if (remaining.length !== pendingSends().length) setPendingSends(remaining);
+    }
+    tail = window;
+  };
 
   const show = (window: FeedWindow, preserve: "before" | "after" = "after") => {
     if (window.items.length > WINDOW_LIMIT) {
@@ -66,11 +107,11 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
     if (receivedSnapshot && tail && tail.items.some(({ id }) => id === last)) {
       return mergeSnapshot(window, tail);
     }
-    tail = {
+    setTail({
       ...window, live,
       items: window.items.slice(-FEED_PAGE_SIZE),
       hasBefore: window.hasBefore || window.items.length > FEED_PAGE_SIZE,
-    };
+    });
     tailCurrent = true;
     setLive(live);
     return window;
@@ -106,7 +147,7 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
       if (!page || request !== generation || ended || !resolveTailFromSocket) return;
       batch(() => {
         followNextTail = false;
-        tail = page;
+        setTail(page);
         tailCurrent = true;
         show(page);
         setLive(page.live);
@@ -201,10 +242,10 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
       if (index >= 0) items = items.slice(index);
     }
     tailCurrent = true;
-    tail = { items, hasBefore: frame.hasBefore, hasAfter: false, live: frame.live };
     if (frame.type === "feed_snapshot") receivedSnapshot = true;
 
     batch(() => {
+      setTail({ items, hasBefore: frame.hasBefore, hasAfter: false, live: frame.live });
       setLive(frame.live);
       if (followNextTail) {
         followNextTail = false;
@@ -245,6 +286,8 @@ export function createFeedWindow(read: (selector: FeedSelector) => Promise<FeedW
     status,
     flash,
     newCount,
+    pendingSends,
+    addPendingSend,
     openTail,
     openAround,
     jumpToLatest: openTail,

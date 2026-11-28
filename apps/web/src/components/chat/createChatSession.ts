@@ -86,7 +86,7 @@ type SendRequest = {
   text: string;
   turnId?: string;
   onTaggedError?: () => void;
-  onRejected?: () => void;
+  onDurableFailure?: (code?: string) => void;
   // The composer captures this before restore/compaction; later selections belong to the next send.
   pendingFiles: readonly PendingFile[];
 };
@@ -1329,7 +1329,7 @@ export function createChatSession(input: ChatSessionInput) {
   const restoreArchived = () => restoreSession("Failed to restore session.");
 
   const performSend = async (
-    { text, pendingFiles, turnId, onTaggedError, onRejected }: SendRequest,
+    { text, pendingFiles, turnId, onTaggedError, onDurableFailure }: SendRequest,
     resolve: (result: SendResult) => void,
     beforeSubmit?: () => void,
   ): Promise<void> => {
@@ -1377,7 +1377,7 @@ export function createChatSession(input: ChatSessionInput) {
     const isDurableSend = durableMain();
     const reportDurableError = (error: string, code?: string) => {
       input.onDurableError?.(error);
-      if (code === "send_rejected") onRejected?.();
+      onDurableFailure?.(code);
     };
     const streamOptions = {
       ...(isDurableSend ? { retryOnDisconnect: true } : {}),

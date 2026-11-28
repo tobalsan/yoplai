@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, getByRole, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
+import { fireEvent, getByRole, getByText, queryAllByRole, queryAllByText, queryByRole, queryByText, queryByTitle } from "@testing-library/dom";
 import { createSignal } from "solid-js";
 import { delegateEvents, render } from "solid-js/web";
 import { ChatView, ThinkingLine } from "./ChatView";
@@ -10,7 +10,7 @@ import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
 import type { StreamCallbacks } from "../api/chat";
 import type { FullHistoryMessage } from "../api/types";
-import type { FeedItem, FeedWindow, McpAppFile, WsFeedMessage } from "@yoplai/shared/types";
+import type { FeedDetail, FeedItem, FeedWindow, McpAppFile, WsFeedMessage } from "@yoplai/shared/types";
 import type { WsDeviceApprovalRequest } from "@yoplai/shared";
 import { ToastHost } from "../lib/toast";
 import { defaultAvatarUrl } from "../lib/default-avatar";
@@ -2038,10 +2038,13 @@ describe("ChatView abort handling", () => {
       container.querySelector<HTMLButtonElement>(".send-btn")!.click();
       await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
       expect(streamMessageMock.mock.calls[0][1]).toBe("Attached file(s).");
+      expect(queryByText(container, "Attached file(s).")).not.toBeNull();
       expect(pendingFile()).toBeNull();
 
       if (nextText) fireEvent.input(composer, { target: { value: nextText } });
       streamMessageMock.mock.calls[0][5](reason, code);
+      expect(queryByText(container, "Attached file(s).")).toBeNull();
+      expect(queryByRole(container, "status", { name: "Working" })).toBeNull();
       expect(composer.value).toBe(nextText);
       expect(!!pendingFile()).toBe(restored);
       expect(container.querySelector(".upload-error")?.textContent).toBe(reason);
@@ -2071,13 +2074,42 @@ describe("ChatView abort handling", () => {
       fireEvent.keyDown(composer, { key: "Enter" });
       await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
 
+      expect(queryByText(container, "First send")).not.toBeNull();
+      expect(queryByText(container, "Second send")).not.toBeNull();
       rejectFirstSend?.();
+      expect(queryByText(container, "First send")).toBeNull();
+      expect(queryByText(container, "Second send")).not.toBeNull();
       expect(composer.value).toBe("First send");
       expect(queryByRole(container, "button", { name: "Remove concurrent.txt" })).not.toBeNull();
       expect(container.querySelector(".upload-error")?.textContent).toBe("Forbidden");
     } finally {
       dispose();
     }
+  });
+
+  it("reconciles overlapping identical Main sends when the accepted send echoes first", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1)]))));
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+    const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+    const send = () => {
+      fireEvent.input(composer, { target: { value: "Check the orchard." } });
+      fireEvent.keyDown(composer, { key: "Enter" });
+    };
+    send();
+    await waitFor(() => expect(composer.value).toBe(""));
+    send();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledTimes(2));
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false,
+      items: [feedMessage(1), { ...feedMessage(2), text: "Check the orchard." }], live: null,
+    });
+    expect(queryAllByText(container, "Check the orchard.")).toHaveLength(2);
+    streamMessageMock.mock.calls[0][5]("First send was rejected.", "send_rejected");
+    expect(queryAllByText(container, "Check the orchard.")).toHaveLength(1);
+    expect(composer.value).toBe("Check the orchard.");
   });
 
   it("keeps a failed Durable Main turn visible after the chat reloads history", async () => {
@@ -2853,6 +2885,7 @@ describe("ChatView abort handling", () => {
     let answer = "Testing the glaze.";
     let live = true;
     let failNextRead = false;
+    let threadMessage: FeedItem | undefined;
     const sendIds: string[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -2869,7 +2902,9 @@ describe("ChatView abort handling", () => {
         return new Response(null, { status: 503 });
       }
       if (url === threadPath) return Response.json({
-        ...feedWindow(live ? [] : [{ id: "m_9", role: "assistant", text: answer, timestamp: 9, toolCallCount: 0 }]),
+        ...feedWindow(threadMessage ? [threadMessage] : live ? [] : [
+          { id: "m_9", role: "assistant", text: answer, timestamp: 9, toolCallCount: 0 },
+        ]),
         live: live ? { runId: "glaze-run", text: answer, reasoning: [], toolCalls: [] } : null,
       });
       return Response.json(feedWindow([feedMessage(1)]));
@@ -2898,6 +2933,8 @@ describe("ChatView abort handling", () => {
       composer.value = "Try a second coat.";
       fireEvent.input(composer);
       fireEvent.keyDown(composer, { key: "Enter" });
+      expect(queryByText(container, "Try a second coat.")).not.toBeNull();
+      expect(queryByRole(container, "status", { name: "Working" })).not.toBeNull();
       await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => {
         if (url !== "/api/agents/agent-1/messages" || !init?.body) return false;
         expect(JSON.parse(String(init.body))).toMatchObject({
@@ -2906,10 +2943,20 @@ describe("ChatView abort handling", () => {
         return true;
       })).toBe(true));
       await waitFor(() => expect(composer.value).toBe("Try a second coat."));
+      expect(queryByText(container, "Try a second coat.")).toBeNull();
+      expect(queryByRole(container, "status", { name: "Working" })).toBeNull();
       expect(queryByText(container, "Could not send. Try again.")).not.toBeNull();
       fireEvent.keyDown(composer, { key: "Enter" });
       await waitFor(() => expect(sendIds).toHaveLength(2));
       expect(sendIds[1]).toBe(sendIds[0]);
+      expect(queryByText(container, "Try a second coat.")).not.toBeNull();
+      threadMessage = { ...feedMessage(10), text: "Try a second coat." };
+      live = true;
+      answer = "Applying a second coat.";
+      callbacks.onHistoryUpdated?.("thread:glaze");
+      await waitFor(() => expect(queryByText(container, "Applying a second coat.")).not.toBeNull());
+      expect(queryAllByText(container, "Try a second coat.")).toHaveLength(1);
+      expect(queryByRole(container, "status", { name: "Working" })).toBeNull();
       expect(streamMessageMock).not.toHaveBeenCalled();
       expect(queryByRole(container, "tab", { name: "Main" })).not.toBeNull();
     } finally {
@@ -3105,6 +3152,38 @@ describe("ChatView abort handling", () => {
     expect(queryAllByText(container, "Weighing pears")).toHaveLength(1);
   });
 
+  it.each([
+    { text: "The pears are ripe.", reasoning: [], toolCalls: [] },
+    { text: "", reasoning: ["Check their weight."], toolCalls: [] },
+    { text: "", reasoning: [], toolCalls: [{ id: "weigh", name: "weigh_pears", status: "running" as const, isError: false }] },
+  ])("shows a Main send before the feed and replaces the dots with live content (%#)", async (live) => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1)]))));
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+
+    const composer = getByRole(container, "textbox");
+    fireEvent.input(composer, { target: { value: "Weigh these pears" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+    expect(queryByText(container, "Weigh these pears")).not.toBeNull();
+    expect(queryByRole(container, "status", { name: "Working" })).not.toBeNull();
+
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false,
+      items: [feedMessage(1), { ...feedMessage(2), text: "Weigh these pears" }], live: null,
+    });
+    expect(queryAllByText(container, "Weigh these pears")).toHaveLength(1);
+    expect(queryByRole(container, "status", { name: "Working" })).not.toBeNull();
+    socket().frame({
+      type: "feed_delta", agentId: "agent-1", seq: 2, hasBefore: false, upsert: [],
+      live: { runId: "pears", ...live },
+    });
+    expect(queryByRole(container, "status", { name: "Working" })).toBeNull();
+    if (live.text) expect(queryByText(container, live.text)).not.toBeNull();
+    else expect(queryByRole(container, "button", { name: /^Working/ })).not.toBeNull();
+  });
+
   it("shows a tool once live and loads its settled result even when the reply text is unchanged", async () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     routeState.view = "full";
@@ -3138,6 +3217,99 @@ describe("ChatView abort handling", () => {
     getByRole(container, "button", { name: "Called tools" }).click();
     getByRole(container, "button", { name: /weigh[ _]pears/i }).click();
     await waitFor(() => expect(queryByText(container, "Pears weigh six kilograms")).not.toBeNull());
+  });
+
+  it("keeps one expanded Main trace across tool rounds and the first stored answer", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    routeState.view = "full";
+    const socket = installFeedSocket();
+    const user = feedMessage(1);
+    const first = { id: "weigh", name: "weigh_pears", status: "running" as const, isError: false };
+    const second = { id: "pack", name: "pack_pears", status: "running" as const, isError: false };
+    const answer: FeedItem = { id: "m_2", role: "assistant", text: "", timestamp: 2, toolCallCount: 1 };
+    const detail = { id: "m_2", timestamp: 2, text: "", reasoning: ["Check the weight first."] };
+    let releaseSecond!: (detail: FeedDetail) => void;
+    const secondDetail = new Promise<FeedDetail>((resolve) => { releaseSecond = resolve; });
+    const readAnswer = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ...detail, toolCalls: [first] }))
+      .mockImplementation(async () => Response.json(await secondDetail));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/messages/m_2")
+      ? readAnswer()
+      : Response.json(feedWindow([user]))));
+    observeFeedRows();
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+    const live = { runId: "pear-run", text: "", reasoning: [], toolCalls: [] };
+    const frame = (seq: number, items: FeedItem[], activity: FeedWindow["live"]) => socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq, hasBefore: false, items, live: activity,
+    });
+    frame(1, [user], { ...live, reasoning: ["Check the weight first."] });
+    const trace = getByRole(container, "button", { name: "Working" });
+
+    frame(2, [user, answer], { ...live, toolCalls: [first] });
+    await waitFor(() => expect(readAnswer).toHaveBeenCalled());
+    expect(getByRole(container, "button", { name: "Working · 1 tool call" })).toBe(trace);
+    trace.click();
+    frame(3, [user, answer], live);
+    expect(queryByRole(container, "button", { name: "Calling tools" })).toBeNull();
+    expect(getByRole(container, "button", { name: "Working · 1 tool call" })).toBe(trace);
+    trace.click();
+    getByRole(container, "button", { name: "Calling tools" }).click();
+    expect(queryByRole(container, "button", { name: /weigh[ _]pears/i })).not.toBeNull();
+
+    frame(4, [user, { ...answer, toolCallCount: 2 }], { ...live, toolCalls: [second] });
+    const expectRunningTrace = () => {
+      expect(queryAllByRole(container, "button", { name: /^Working|^Worked/ })).toEqual([trace]);
+      expect(getByRole(container, "button", { name: "Working · 2 tool calls" })).toBe(trace);
+      expect(queryByRole(container, "button", { name: /weigh[ _]pears/i })).not.toBeNull();
+      expect(queryByRole(container, "button", { name: /pack[ _]pears/i })).not.toBeNull();
+      expect(queryByRole(container, "status", { name: "Working" })).toBeNull();
+    };
+    expectRunningTrace();
+    releaseSecond({
+      ...detail,
+      toolCalls: [{ ...first, status: "done", result: { text: "Six kilograms" } }, second],
+    });
+    getByRole(container, "button", { name: /weigh[ _]pears/i }).click();
+    await waitFor(() => expect(queryByText(container, "Six kilograms")).not.toBeNull());
+    expectRunningTrace();
+
+    frame(5, [user, { ...answer, text: "The pears are ready.", toolCallCount: 2 }], null);
+    const settled = getByRole(container, "button", { name: "Worked · 2 tool calls" });
+    expect(settled).toBe(trace);
+    expect(settled.compareDocumentPosition(getByText(container, "The pears are ready.")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("uses the persisted tool list for the settled trace after showing nested live activity", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
+    const socket = installFeedSocket();
+    const call = { id: "parent", name: "orchard_execute", status: "running" as const, isError: false };
+    const child = { id: "child", name: "read", parentToolCallId: "parent", status: "done" as const, isError: false };
+    const answer: FeedItem = { id: "m_2", role: "assistant", text: "", timestamp: 2, toolCallCount: 1 };
+    const user = feedMessage(1);
+    let finish!: () => void;
+    const settled = new Promise<void>((resolve) => { finish = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/messages/m_2")) return Response.json(feedWindow([user]));
+      await settled;
+      return Response.json({ id: "m_2", timestamp: 2, text: "Orchard checked.", reasoning: [],
+        toolCalls: [{ ...call, status: "done" }],
+      });
+    }));
+    observeFeedRows();
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+    socket().frame({
+      type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false, items: [user, answer],
+      live: { runId: "orchard", text: "", reasoning: [], toolCalls: [call, child] },
+    });
+    const trace = getByRole(container, "button", { name: "Working · 2 tool calls" });
+    socket().frame({
+      type: "feed_delta", agentId: "agent-1", seq: 2, hasBefore: false, live: null,
+      upsert: [{ ...answer, text: "Orchard checked." }],
+    });
+    finish();
+    await waitFor(() => expect(queryByRole(container, "button", { name: "Worked · 1 tool call" })).toBe(trace));
   });
 
   it("renders one turn checklist through plan-only, streaming and settled frames", async () => {
