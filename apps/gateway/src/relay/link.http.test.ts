@@ -609,4 +609,43 @@ describe("browser link between two real gateways", () => {
     await expect(fs.stat(installed)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await liveRoute()).status).toBe(404);
   }, 30_000);
+
+  it("restores mixed sidebar slots across a device restart and syncs an offline save on reconnect", async () => {
+    const route = "/api/me/sidebar-order";
+    const plainBase = `http://127.0.0.1:${plain.port}`;
+    const save = async (agentIds: string[]) => {
+      const response = await fetch(localBase + route, {
+        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentIds }),
+      });
+      expect(response.status).toBe(200);
+      return json(response);
+    };
+    const stop = async (gateway: Running) => {
+      const exited = once(gateway.child, "exit", { signal: AbortSignal.timeout(5_000) });
+      process.kill(-gateway.child.pid!, "SIGKILL");
+      await exited;
+    };
+
+    createFileRemoteGatewayStore(localStorePath).remove("open");
+    const linkName = "sidebar-peer";
+    expect(await json(await startLink(linkName, undefined, plainBase))).toEqual({ status: "linked", name: linkName });
+    await until(async () => (await deviceStates()).some((state) => state.name === linkName && state.connected));
+    await stop(plain);
+
+    const agentIds = ["pom@sidebar-peer", "pom"];
+    const saved = await save(agentIds);
+    expect(saved).toMatchObject({ agentIds, updatedAt: expect.any(String) });
+    expect(await json(await fetch(localBase + route))).toEqual(saved);
+    await stop(local);
+    local = await startGateway("local", "local", local.port);
+    expect(await json(await fetch(localBase + route))).toEqual(saved);
+
+    plain = await startGateway("plain", "local", plain.port);
+    const synced = await until(async () => {
+      const peer = await json(await fetch(plainBase + route + "?local=1"));
+      return peer.updatedAt === saved.updatedAt && peer;
+    }, 10_000);
+    expect(synced).toEqual({ agentIds: ["pom"], updatedAt: saved.updatedAt });
+    expect(await json(await fetch(localBase + route))).toEqual(saved);
+  }, 45_000);
 });
