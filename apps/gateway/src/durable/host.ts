@@ -42,7 +42,7 @@ import { turnPlanTools } from "./turn-plan.js";
 import { MemoryKeeper, type KeeperOptions } from "./keeper.js";
 import { createMemoryTools } from "./memory-tools.js";
 import { emptyMemory, MemoryDoc, putThreadDigest, renderMemory, threadDigest } from "./memory.js";
-import { durableSessionHistory, type ReadableConversation } from "./session-history.js";
+import { durableHistoryIds, durableSessionHistory, type ReadableConversation } from "./session-history.js";
 import { createDurableTools, DurableAccessDenied } from "./tools.js";
 import { AbortedRuns, ChildDigestEntry, ChildInputEntry, ChildSeedEntry, type BackgroundChild, type MainIdentityMap, FailureNoteEntry, InputEntry, MainMap, ReviewDoc, ThreadMap, ThreadNoteEntry, ThreadSeedEntry, type ThreadRecord } from "./state.js";
 import { describeThread, firstLine, threadRef } from "./threads.js";
@@ -1518,7 +1518,8 @@ export class DurableHost {
   }
 
   private async historyAudience(caller: ConversationId) {
-    if (this.rooms?.sessionRef(caller)) return [];
+    const room = this.rooms?.historyAudience(caller);
+    if (room) return room;
     const owner = this.owners.get(caller);
     if (owner === undefined || !await this.mayReadFeed(owner, owner)) return [];
     const main = await this.mainFor(owner);
@@ -1526,17 +1527,25 @@ export class DurableHost {
     const audience: ReadableConversation[] = [{
       ref: DURABLE_MAIN_SESSION_ID,
       current: main?.id === caller,
-      read: async () => main ? this.feed.read(main) : { records: [] },
+      messageIds: durableHistoryIds,
+      read: () => this.historyFeed(main),
     }];
     for (const [id, record] of Object.entries(threads)) {
       audience.push({
         ref: threadRef(id),
         current: record.conversationId === caller,
+        messageIds: durableHistoryIds,
         thread: { id, record },
-        read: async () => this.feed.read(await this.threadConversation(record)),
+        read: async () => this.historyFeed(await this.threadConversation(record)),
       });
     }
     return audience;
+  }
+
+  private async historyFeed(conversation: Conversation | undefined) {
+    if (!conversation) return { items: [] };
+    const { records } = await this.feed.read(conversation);
+    return { items: feedItems(records), detail: (id: string) => feedDetail(records, id) };
   }
 
   private async sessionHistory(caller: ConversationId, args: unknown) {
