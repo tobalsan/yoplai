@@ -33,7 +33,7 @@ export function McpExtensionCard(props: { server: McpServer; agentId: string; sy
   const href = () => mcpServerPath(props.agentId, props.server.name);
   const active = () => !props.server.shared || props.server.enabled;
   return (
-    <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={`mcp:${props.server.name}`}>
+    <li class="edit-agent-ext-item">
       <A href={href()} class="edit-agent-ext-open">
         <McpIcon src={props.server.iconUrl} />
         <div class="edit-agent-ext-body">

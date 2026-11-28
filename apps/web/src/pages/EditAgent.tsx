@@ -623,7 +623,7 @@ export function EditAgent() {
   return (
     <Show when={requester().ready}>
       <div class="edit-agent">
-        <A href={backTo() ?? "/agents"} class="edit-agent-back" data-tour="back-to-agents">
+        <A href={backTo() ?? "/agents"} class="edit-agent-back">
           {backTo() ? "← Back to chat" : "← Back to agents"}
         </A>
 
@@ -696,8 +696,8 @@ export function EditAgent() {
           <div class="edit-agent-tabs-row">
             <div class="edit-agent-tabs" role="tablist" aria-label="Agent sections">
               <button type="button" role="tab" aria-selected={tab() === "extensions"} onClick={() => setTab("extensions")}>Extensions</button>
-              <button type="button" role="tab" data-tour="tab-connections" aria-selected={tab() === "connections"} onClick={() => setTab("connections")}>My connections</button>
-              <Show when={dashboardAgentId()}><button type="button" role="tab" data-tour="tab-dashboards" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
+              <button type="button" role="tab" aria-selected={tab() === "connections"} onClick={() => setTab("connections")}>My connections</button>
+              <Show when={dashboardAgentId()}><button type="button" role="tab" aria-selected={tab() === "dashboards"} onClick={() => setTab("dashboards")}>Dashboards</button></Show>
               <Show when={dashboardAgentId() && requester().isExtensionEnabled("scheduler")}><button type="button" role="tab" aria-selected={tab() === "schedules"} onClick={() => setTab("schedules")}>Scheduled jobs</button></Show>
             </div>
             <Show when={isSuperadmin() && (tab() === "dashboards" || tab() === "schedules")}>
@@ -714,7 +714,7 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "connections"}>
-          <div data-tour="panel-connections">
+          <div>
             <Show when={dashboardAgentId()} fallback={<p>No runnable agent is available for connections yet.</p>}>
               {(id) => <AgentConnectionsPanel agentId={id()} gateway={gateway()} includeMcp extensions={extensionCatalog()} />}
             </Show>
@@ -726,7 +726,7 @@ export function EditAgent() {
         </Show>
 
         <Show when={agent() && tab() === "dashboards" && dashboardAgentId()}>
-          <section class="edit-agent-dashboards" role="tabpanel" data-tour="panel-dashboards">
+          <section class="edit-agent-dashboards" role="tabpanel">
             <Show when={dashboards.loading}><p>Loading dashboards…</p></Show>
             <Show when={dashboards.error}><p>Failed to load dashboards.</p></Show>
             <Show when={!dashboards.loading && !dashboards.error && visibleAgentDashboards().length === 0}>
@@ -849,7 +849,7 @@ export function EditAgent() {
                     />
                   }>
                     {(ext) => (
-                  <li class="edit-agent-ext-item" data-tour="ext-card" data-tour-ext={ext.id}>
+                  <li class="edit-agent-ext-item">
                     <A
                       href={extensionPath(ext)}
                       class="edit-agent-ext-open"
@@ -898,8 +898,6 @@ export function EditAgent() {
                         <A
                           href={extensionPath(ext)}
                           class="edit-agent-ext-add"
-                          data-tour="ext-add"
-                          data-tour-ext={ext.id}
                           aria-label={`Set up ${ext.displayName}`}
                           title={`Set up ${ext.displayName}`}
                         >

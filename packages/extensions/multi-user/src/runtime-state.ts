@@ -6,7 +6,6 @@ import type { MultiUserAuth } from "./auth.js";
 import type { ForkStore } from "./forks.js";
 import type { GatewayLinkService } from "./gateway-link.js";
 import type { MembershipStore } from "./membership.js";
-import type { OnboardingStore } from "./onboarding.js";
 import type { ConnectPromptStore } from "./connect-prompt.js";
 import type { TeamStore } from "./teams.js";
 
@@ -17,7 +16,6 @@ export type MultiUserRuntime = {
   teams: TeamStore;
   membership: MembershipStore;
   forks: ForkStore;
-  onboarding: OnboardingStore;
   connectPrompt: ConnectPromptStore;
   access: AccessResolver;
   /** Set after crash recovery ran. Absent in a runtime that never started the link service. */

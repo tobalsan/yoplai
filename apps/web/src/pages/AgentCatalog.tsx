@@ -79,13 +79,12 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
       </Show>
 
       <Show when={loadedAgents()}>
-        <div class="catalog-grid" data-tour="agent-grid">
+        <div class="catalog-grid">
           <For each={sortedAgents()}>
-            {(agent, index) => (
+            {(agent) => (
               <div
                 class="catalog-card"
                 classList={{ "is-main": isMainCard(agent.id) }}
-                data-tour={index() === 0 ? "agent-card" : undefined}
                 // Whole-card click starts a chat; the Chat link stays the keyboard path.
                 onClick={(event) => {
                   if ((event.target as Element).closest("a, button")) return;
@@ -96,7 +95,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                 <A
                   href={`/agents/${agent.id}/edit`}
                   class="catalog-edit"
-                  data-tour={index() === 0 ? "agent-edit" : undefined}
                   aria-label={`Edit ${agent.name}`}
                   title="Edit agent"
                 >
@@ -145,7 +143,6 @@ export function AgentCatalog(props: { hideHeading?: boolean }) {
                 <A
                   href={`/chat/${agent.id}`}
                   class="catalog-chat-link"
-                  data-tour={index() === 0 ? "agent-chat" : undefined}
                   onClick={() => startNewChat(agent.id)}
                 >
                   Chat

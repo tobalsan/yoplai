@@ -254,7 +254,6 @@ export function OAuthConnectCard(props: {
             fallback={
               <button
                 class="oauth-btn oauth-btn-primary"
-                data-tour="oauth-connect"
                 disabled={!props.agentId || pendingConnect()}
                 onClick={() => void connect()}
               >
@@ -263,7 +262,7 @@ export function OAuthConnectCard(props: {
             }
           >
             <Match when={connected()}>
-              <div class="oauth-actions" data-tour="oauth-connected">
+              <div class="oauth-actions">
                 <button class="oauth-btn" onClick={() => void refreshStatus()}>
                   Refresh
                 </button>
@@ -277,7 +276,7 @@ export function OAuthConnectCard(props: {
             </Match>
             <Match when={needsGrant()}>
               <div class="oauth-actions">
-                <button class="oauth-btn oauth-btn-primary" data-tour="oauth-grant" disabled={pendingConnect()} onClick={() => void connect()}>
+                <button class="oauth-btn oauth-btn-primary" disabled={pendingConnect()} onClick={() => void connect()}>
                   {pendingConnect() ? connectingLabel() : `Grant ${props.label} access`}
                 </button>
                 <button

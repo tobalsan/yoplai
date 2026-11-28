@@ -222,6 +222,8 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("EditAgent", () => {
+  const mcpCardSelector = '.edit-agent-ext-item:has(a.edit-agent-ext-open[href^="/agents/scribe/mcp-servers/"])';
+
   it("loads the settings page of a remote agent from its relay id", async () => {
     setCapabilitiesForTests({ multiUser: false, extensions: { mcp: true } });
     setSession("superadmin");
@@ -1055,11 +1057,11 @@ describe("EditAgent", () => {
     expect(Array.from(container.querySelectorAll(".edit-agent-ext-name")).map((node) => node.textContent)).toEqual(["Docs", "Local", "Notion"]);
     expect(container.querySelector('[aria-label="Set up docs"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="local connected"]')).not.toBeNull();
-    expect(container.querySelector('[data-tour-ext="mcp:docs"] a.edit-agent-ext-open')?.getAttribute("href")).toBe("/agents/scribe/mcp-servers/docs");
-    expect(container.querySelector('[data-tour-ext="mcp:docs"] a.edit-agent-ext-add')?.getAttribute("href")).toBe("/agents/scribe/mcp-servers/docs");
-    expect(container.querySelectorAll('[data-tour-ext^="mcp:"] button').length).toBe(0);
-    expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon svg')).not.toBeNull();
-    expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon img')).toBeNull();
+    expect(getByRole(container, "link", { name: /Docs https:/ })?.getAttribute("href")).toBe("/agents/scribe/mcp-servers/docs");
+    expect(getByRole(container, "link", { name: "Set up docs" })?.getAttribute("href")).toBe("/agents/scribe/mcp-servers/docs");
+    expect(container.querySelectorAll(`${mcpCardSelector} button`).length).toBe(0);
+    expect(container.querySelector(`${mcpCardSelector} .edit-agent-ext-icon svg`)).not.toBeNull();
+    expect(container.querySelector(`${mcpCardSelector} .edit-agent-ext-icon img`)).toBeNull();
   });
 
   it("shows a loading state until both extensions and MCP servers load, then the ordered list", async () => {
@@ -1113,14 +1115,14 @@ describe("EditAgent", () => {
     dispose = render(() => <Suspense fallback={<p class="suspended">Loading</p>}><EditAgent /></Suspense>, container);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const card = container.querySelector('[data-tour-ext^="mcp:"]');
+    const card = container.querySelector(mcpCardSelector);
     expect(card).not.toBeNull();
 
     fetchMcpServersMock.mockReturnValue(new Promise(() => {}));
     window.dispatchEvent(new Event("focus"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector(".suspended")).toBeNull();
-    expect(container.querySelector('[data-tour-ext^="mcp:"]')).toBe(card);
+    expect(container.querySelector(mcpCardSelector)).toBe(card);
   });
 
   it("keeps regular extensions visible when MCP loading fails and can retry", async () => {
@@ -1151,11 +1153,11 @@ describe("EditAgent", () => {
       { name: "docs", type: "http", iconUrl: "https://docs.test/favicon.ico", auth: "none", state: "connected", readOnly: true },
     ] });
     await mountEdit("scribe");
-    const icon = container.querySelector<HTMLImageElement>('[data-tour-ext^="mcp:"] .edit-agent-ext-icon img')!;
+    const icon = container.querySelector<HTMLImageElement>(`${mcpCardSelector} .edit-agent-ext-icon img`)!;
     expect(icon).not.toBeNull();
     icon.dispatchEvent(new Event("error"));
-    expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon img')).toBeNull();
-    expect(container.querySelector('[data-tour-ext^="mcp:"] .edit-agent-ext-icon svg')).not.toBeNull();
+    expect(container.querySelector(`${mcpCardSelector} .edit-agent-ext-icon img`)).toBeNull();
+    expect(container.querySelector(`${mcpCardSelector} .edit-agent-ext-icon svg`)).not.toBeNull();
   });
 
   it("redirects after the add request completes and keeps a canceled server disconnected", async () => {

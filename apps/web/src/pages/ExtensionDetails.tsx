@@ -124,7 +124,7 @@ export function ExtensionDetails(props: {
   return (
     <>
       <div class="ext-details">
-        <A href={backHref()} class="ext-details-back" data-tour="back-to-agent">
+        <A href={backHref()} class="ext-details-back">
           ← Back to agent
         </A>
 

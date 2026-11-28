@@ -190,6 +190,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Removed
 
+- Removed the first-run onboarding tour and its **Restart tour** link. **Connect tools** is available from the chat sidebar.
+
 - Removed the agent Role field. Existing `role:` keys in `agent.yaml` are ignored.
 
 ## v0.29.1 — Image generation and resumable compaction

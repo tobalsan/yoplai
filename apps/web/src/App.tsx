@@ -18,7 +18,6 @@ import {
 import { fetchAgents } from "./api";
 import { PageNavigationContext } from "./api/core";
 import { ChatView } from "./components/ChatView";
-import { OnboardingTour } from "./onboarding/OnboardingTour";
 import { ConnectToolsPrompt } from "./components/ConnectToolsPrompt";
 import { SessionSearch } from "./components/SessionSearch";
 import { TurnNotifier } from "./components/TurnNotifier";
@@ -157,7 +156,6 @@ function Layout(props: { children?: JSX.Element }) {
           "desktop-wizard": desktopWindow && stripBase(location.pathname) === "/setup" }}>
           <ImpersonationBanner />
           <SetupGate>{props.children}</SetupGate>
-          <OnboardingTour />
           <ConnectToolsPrompt />
           <SessionSearch />
           <TurnNotifier enabled={!isLoginPage()} />

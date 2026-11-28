@@ -120,7 +120,6 @@ describe("REST per-agent access gating (multi-user)", () => {
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
     const db = new Database(":memory:");
@@ -132,7 +131,6 @@ describe("REST per-agent access gating (multi-user)", () => {
     dbMod.ensureTeamsTable(db);
     dbMod.ensureTeamMembersTable(db);
     dbMod.ensureAgentForksTable(db);
-    dbMod.ensureUserOnboardingTable(db);
     dbMod.ensureUserAgentConnectPromptTable(db);
     for (const [id, name] of [["team-red", "Red"], ["team-blue", "Blue"]]) {
       db.prepare("INSERT INTO teams (id, name, createdBy) VALUES (?, ?, ?)").run(id, name, "root");
@@ -151,7 +149,6 @@ describe("REST per-agent access gating (multi-user)", () => {
       forks,
       membership,
       access,
-      onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
     } as unknown as MultiUserRuntime);
     clearRuntime = () => {
@@ -504,23 +501,6 @@ describe("REST per-agent access gating (multi-user)", () => {
     } finally {
       runtime.membership.setMembers("team-red", { mode: "list", userIds: ["alice", "red-admin"] }, "root");
     }
-  });
-
-  it("stores onboarding status per authenticated user", async () => {
-    const url = `http://127.0.0.1:${port}/api/me/onboarding`;
-    const json = (h: Record<string, string>) => ({ ...h, "content-type": "application/json" });
-    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toEqual({
-      supported: true, status: null, at: null,
-    });
-    expect((await fetch(url, { headers: {} })).status).toBe(200);
-    const bad = await fetch(url, { method: "PUT", headers: json(authHeader("alice")), body: JSON.stringify({ status: "x" }) });
-    expect(bad.status).toBe(400);
-    const put = await fetch(url, { method: "PUT", headers: json(authHeader("alice")), body: JSON.stringify({ status: "skipped" }) });
-    expect(await put.json()).toMatchObject({ status: "skipped" });
-    expect(await (await fetch(url, { headers: authHeader("bob") })).json()).toMatchObject({ status: null });
-    expect(await (await fetch(url, { headers: authHeader("alice") })).json()).toMatchObject({ status: "skipped" });
-    const del = await fetch(url, { method: "DELETE", headers: authHeader("alice") });
-    expect(await del.json()).toMatchObject({ status: null });
   });
 
   it("stores connect-prompt seen state per user and agent", async () => {
