@@ -8,6 +8,7 @@ import { buildHandoff } from "../history/handoff.js";
 import { logError } from "../logging.js";
 import { roomHandoffTranscript, roomInput } from "../rooms/context.js";
 import type { RoomMembership, RoomStore } from "../rooms/store.js";
+import { roomHistoryIds, type ReadableConversation } from "./session-history.js";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -73,6 +74,18 @@ export class RoomConversations {
   sessionRef(id: ConversationId) {
     const room = this.byConversation.get(id);
     return room && "room:" + room.roomId;
+  }
+
+  historyAudience(id: ConversationId): ReadableConversation[] | undefined {
+    const room = this.byConversation.get(id);
+    if (!room) return;
+    if (!this.current(room)) return [];
+    return [{
+      ref: "room:" + room.roomId,
+      current: true,
+      messageIds: roomHistoryIds,
+      read: async () => this.store.window(room.roomId, Infinity),
+    }];
   }
 
   mayRun(id: ConversationId): boolean | undefined {

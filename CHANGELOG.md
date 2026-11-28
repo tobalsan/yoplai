@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Agents in shared rooms can list, search, and read the current room's message history. Room tools use the agent's team credentials and keep members' personal credentials, Main files, and private history out of the room.
+
 - Set an optional Role when creating or editing an agent. It appears under the agent name, with Description as the fallback. Description still seeds the initial instructions.
 
 - Choose a custom folder when creating an agent on a linked gateway. The gateway updates discovery as needed and loads the agent immediately.

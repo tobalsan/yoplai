@@ -58,16 +58,29 @@ export function createDurableTools(
     const descriptors = await getExtensionAgentTools(agent, config, runtime, principal.userId, { ...principal, env: durableExtensionEnv(agent, config) });
     const names = new Set(["read", "write", "edit", "bash", "tool_search", "codemode", "topics_get", "plan_get", "plan_update", TURN_PLAN]);
     const all: Array<Omit<ExtensionAgentTool, "execute"> & { extensionId: string; extensionDescription?: string; kind: "extension" | "core" }> = [
-      ...descriptors.filter(({ extensionId, name }) =>
-        (!principal.room || name !== "session_history") &&
+      ...descriptors.filter(({ extensionId }) =>
         runtime.isEnabled(extensionId, config) && agent.extensions?.[extensionId]?.enabled !== false)
-        .map((tool) => ({
-          ...tool,
-          kind: "extension" as const,
-          description: legacyHistoryEnabled && tool.extensionId === "sessionHistory" && tool.name === "session_history"
-            ? tool.description + " Older chats from before Durable are in legacy_history."
-            : tool.description,
-        })),
+        .map((tool) => {
+          const descriptor = { ...tool, kind: "extension" as const };
+          if (tool.extensionId !== "sessionHistory" || tool.name !== "session_history") return descriptor;
+          if (principal.room) return {
+            ...descriptor,
+            description: "Read-only history for this room only. List the room, search with a case-insensitive substring and role/date filters, or read by r_<n> message IDs. Use from/to for an inclusive range, around+n for neighbors, or full for one message. Follow more: lines to continue.",
+            parameters: {
+              ...tool.parameters,
+              properties: {
+                ...tool.parameters.properties as Record<string, unknown>,
+                session: { type: "string", description: "Optional room:<roomId> reference. Defaults to this room." },
+                from: { type: "string", description: "read: first r_<n> message ID, inclusive" },
+                to: { type: "string", description: "read: last r_<n> message ID, inclusive" },
+                around: { type: "string", description: "read: center r_<n> message ID" },
+                full: { type: "string", description: "read: expand the text of one r_<n> message ID" },
+              },
+            },
+          };
+          if (legacyHistoryEnabled) descriptor.description += " Older chats from before Durable are in legacy_history.";
+          return descriptor;
+        }),
       ...(principal.room ? [] : durableCoreTools(config, legacyHistoryEnabled))
         .map((tool) => ({ ...tool, kind: "core" as const, extensionId: "core", core: true })),
     ];

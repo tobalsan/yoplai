@@ -1,32 +1,44 @@
 import { z } from "zod";
-import type { FeedItem } from "@yoplai/shared";
+import type { FeedDetail, FeedItem } from "@yoplai/shared";
 import { DEFAULT_OUTPUT_BUDGET, DEFAULT_TEXT_LIMIT, formatTime, FULL_MESSAGE_CAP, truncateMessageText } from "../history/condense.js";
 import { day, invalidResult, parseDate, SessionHistoryArgsSchema } from "../session-history/arguments.js";
-import { feedDetail, feedItems, isFeedMessage, searchFeedMessages } from "./feed-projection.js";
+import { isFeedMessage, searchFeedMessages } from "./feed-projection.js";
 import type { ThreadRecord } from "./state.js";
 import { describeThread, firstLine, threadMessages } from "./threads.js";
-import { entryId, type DurableFeed } from "./feed.js";
+import { entryId } from "./feed.js";
 
 const CURRENT_NOTE =
   "[current conversation — older messages may have been cut out of your context; every message can be read here]";
 const CURRENT_MARK = " ★ CURRENT CONVERSATION";
 
+function historyMessageIds(example: string, parse: (id: string) => number | undefined) {
+  const messageId = z.string()
+    .refine((id) => parse(id) !== undefined, `Expected a message ID like ${example}`)
+    .optional();
+  const args = SessionHistoryArgsSchema.extend({
+    from: messageId, to: messageId, around: messageId, full: messageId,
+  });
+  return { args, parse };
+}
+
+export const durableHistoryIds = historyMessageIds("m_123", entryId);
+export const roomHistoryIds = historyMessageIds("r_123", (id) => {
+  if (!/^r_[1-9]\d*$/.test(id)) return;
+  const sequence = Number(id.slice(2));
+  if (Number.isSafeInteger(sequence)) return sequence;
+});
+
 export type ReadableConversation = {
   ref: string;
   current: boolean;
+  messageIds: ReturnType<typeof historyMessageIds>;
   thread?: { id: string; record: ThreadRecord };
-  read: () => Promise<Pick<Awaited<ReturnType<DurableFeed["read"]>>, "records">>;
+  read: () => Promise<{ items: FeedItem[]; detail?: (id: string) => FeedDetail | undefined }>;
 };
 
-const messageId = z.string()
-  .refine((id) => entryId(id) !== undefined, "Expected a message ID like m_123")
-  .optional();
-const DurableArgsSchema = SessionHistoryArgsSchema.extend({
-  from: messageId, to: messageId, around: messageId, full: messageId,
-});
-
 export async function durableSessionHistory(raw: unknown, audience: ReadableConversation[]) {
-  const parsed = DurableArgsSchema.safeParse(raw);
+  const ids = audience[0]?.messageIds ?? durableHistoryIds;
+  const parsed = ids.args.safeParse(raw);
   if (!parsed.success) return invalidResult(parsed.error.message);
   const args = parsed.data;
   const scoped = args.session === undefined ? audience : audience.filter(({ ref }) => ref === args.session);
@@ -50,15 +62,15 @@ export async function durableSessionHistory(raw: unknown, audience: ReadableConv
     const query = args.query;
     if (!query) return invalidResult("search requires `query`");
     const limit = args.limit ?? 15;
-    const byConversation = await Promise.all(scoped.map(async ({ ref, current, thread, read }) => {
-      const items = feedItems((await read()).records);
+    const byConversation = await Promise.all(scoped.map(async ({ ref, current, thread, read, messageIds }) => {
+      const { items } = await read();
       const messages = thread && scoped.length > 1 ? threadMessages(thread.record, items) : items.filter(isFeedMessage);
       const matching = messages.filter(({ role, timestamp }) =>
         (!args.role || role === args.role) && timestamp >= since && timestamp <= until);
-      return searchFeedMessages(matching, query, Infinity).map((hit) => ({ ref, current, hit }));
+      return searchFeedMessages(matching, query, Infinity).map((hit) => ({ ref, current, hit, position: messageIds.parse(hit.id) ?? 0 }));
     }));
     const hits = byConversation.flat().sort((a, b) =>
-      b.hit.timestamp - a.hit.timestamp || (entryId(b.hit.id) ?? 0) - (entryId(a.hit.id) ?? 0));
+      b.hit.timestamp - a.hit.timestamp || b.position - a.position);
     const lines: string[] = [];
     let previous: string | undefined;
     for (const { ref, current, hit: { id, role, timestamp, snippet } } of hits.slice(0, limit)) {
@@ -80,7 +92,7 @@ export async function durableSessionHistory(raw: unknown, audience: ReadableConv
   const offset = Math.max(0, Number.parseInt(args.cursor ?? "", 10) || 0);
   const limit = args.limit ?? 10;
   const rows = await Promise.all(scoped.map(async ({ ref, current, thread, read }) => {
-    const items = feedItems((await read()).records);
+    const { items } = await read();
     if (thread) {
       const { title, lastActivityAt, closed } = describeThread(thread.id, thread.record, items);
       const count = threadMessages(thread.record, items).length;
@@ -105,7 +117,7 @@ export async function durableSessionHistory(raw: unknown, audience: ReadableConv
   return page.join("\n") || "no conversations";
 }
 
-type ReadArgs = ReturnType<typeof DurableArgsSchema.parse>;
+type ReadArgs = ReturnType<typeof durableHistoryIds.args.parse>;
 type Message = Extract<FeedItem, { role: "user" | "assistant" }>;
 const SEAM = "— context was cut here —";
 
@@ -116,8 +128,7 @@ function messageLine(item: Message, text: string) {
 }
 
 async function readConversation(args: ReadArgs, { ref, current, read }: ReadableConversation) {
-  const { records } = await read();
-  const items = feedItems(records);
+  const { items, detail } = await read();
   const messages = items.flatMap((item, position) => isFeedMessage(item) ? [{ item, position }] : []);
   const indexes = new Map(messages.map(({ item }, index) => [item.id, index]));
   const header = (shown: string) => [
@@ -133,7 +144,7 @@ async function readConversation(args: ReadArgs, { ref, current, read }: Readable
     const text = item.text.trim();
     const body = text.length > FULL_MESSAGE_CAP
       ? `${text.slice(0, FULL_MESSAGE_CAP)}… [truncated at ${FULL_MESSAGE_CAP} chars]` : text;
-    const tools = (feedDetail(records, item.id)?.toolCalls ?? []).map(({ name }) => `    → ${name}`);
+    const tools = (detail?.(item.id)?.toolCalls ?? []).map(({ name }) => `    → ${name}`);
     return [...header(`[${item.id}]`), messageLine(item, body), ...tools].join("\n");
   }
 
