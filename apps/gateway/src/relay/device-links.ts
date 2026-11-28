@@ -1,4 +1,6 @@
 import { CONFIG_DIR } from "../config/index.js";
+import { SidebarOrderStore } from "../durable-mode/sidebar-order-store.js";
+import { sidebarOrderSync } from "../durable-mode/sidebar-order-sync.js";
 import { DurableModeStore } from "../durable-mode/store.js";
 import { durableModeSync } from "../durable-mode/sync.js";
 import { getDeviceApprovals } from "./device-approvals.js";
@@ -13,12 +15,14 @@ let manager: DeviceLinkManager | undefined;
 export function startDeviceLinks(): () => void {
   manager?.stop();
   const durableMode = new DurableModeStore(CONFIG_DIR);
+  const sidebarOrder = new SidebarOrderStore(CONFIG_DIR);
   const started = new DeviceLinkManager({
     executor: new DeviceExecutor({ settings: getDeviceSettingsStore(), approvals: getDeviceApprovals() }),
     getGateways: getLinkedGateways,
     isRelayEnabled,
     onConnected: (gateway) => {
       void durableModeSync.reconcile(durableMode, { gateway, force: true }).catch(() => undefined);
+      void sidebarOrderSync.reconcile(sidebarOrder, { gateway, force: true }).catch(() => undefined);
     },
   });
   manager = started;

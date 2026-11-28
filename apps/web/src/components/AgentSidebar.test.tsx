@@ -99,15 +99,20 @@ async function openSidebarMenu(container: HTMLElement, label = "Session menu") {
 }
 
 describe("AgentSidebar", () => {
-  it("reorders local agents by keyboard, drag, and menu and leaves linked agents out of the saved order", async () => {
+  it("reorders local and linked agents together and closes gaps when a link is down", async () => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "sidebar-order-dummy" } });
-    fetchAgentsMock.mockResolvedValue([
+    const localAgents = [
       { id: "maple", name: "Maple", description: "Support" },
       { id: "cedar@local", name: "Cedar", description: "Planning", durable: true },
       { id: "pine", name: "Pine", description: "Inventory" },
+    ];
+    const allAgents = [
+      ...localAgents,
       { id: "birch@remote", name: "Birch", role: "Dock Coordinator", description: "Plans dock arrivals.", gateway: "remote", durable: true },
-    ]);
+    ];
+    fetchAgentsMock.mockResolvedValue(allAgents);
     const writes: string[][] = [];
+    let storedOrder = ["pine", "cedar@local"];
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
@@ -115,9 +120,9 @@ describe("AgentSidebar", () => {
         if (init?.method === "PUT") {
           const { agentIds } = JSON.parse(String(init.body));
           writes.push(agentIds);
-          return Response.json({ agentIds });
+          storedOrder = agentIds;
         }
-        return Response.json({ agentIds: ["pine", "cedar@local"] });
+        return Response.json({ agentIds: storedOrder });
       }
       return Response.json({ items: [{ timestamp: 1860000000000 }], live: null });
     });
@@ -129,27 +134,41 @@ describe("AgentSidebar", () => {
       await vi.waitFor(() => expect(order()).toEqual(["/chat/pine", "/chat/cedar%40local", "/chat/maple", "/chat/birch%40remote"]));
       expect(queryByRole(container, "region", { name: "Recent" })).toBeNull();
       expect(list().getByRole("link", { name: /cedar/i }).textContent).toContain("Planning");
-      const birch = list().getByRole("link", { name: /birch/i });
-      expect(birch.textContent).toContain("Dock Coordinator");
-      expect(birch.textContent).not.toContain("Plans dock arrivals.");
+
+      const birchGrip = list().getByRole("button", { name: "Drag Birch to reorder" });
       const cedar = list().getByRole("link", { name: /cedar/i });
-      fireEvent.keyDown(cedar, { key: "ArrowUp", altKey: true });
-      await vi.waitFor(() => expect(writes[0]).toEqual(["cedar@local", "pine", "maple"]));
-      const mapleGrip = list().getByRole("button", { name: "Drag Maple to reorder" });
-      await vi.waitFor(() => expect(mapleGrip.getAttribute("draggable")).toBe("true"));
+      await vi.waitFor(() => expect(birchGrip.getAttribute("draggable")).toBe("true"));
       const transfer = { setData() {}, effectAllowed: "", dropEffect: "" };
-      fireEvent.dragStart(mapleGrip, { dataTransfer: transfer });
+      fireEvent.dragStart(birchGrip, { dataTransfer: transfer });
       fireEvent.dragOver(cedar, { dataTransfer: transfer, clientY: -1 });
       fireEvent.drop(cedar, { dataTransfer: transfer, clientY: -1 });
-      await vi.waitFor(() => expect(writes[1]).toEqual(["maple", "cedar@local", "pine"]));
-      const menu = list().getByLabelText("Cedar menu");
+      await vi.waitFor(() => expect(writes[0]).toEqual(["pine", "birch@remote", "cedar@local", "maple"]));
+      expect(order()).toEqual(["/chat/pine", "/chat/birch%40remote", "/chat/cedar%40local", "/chat/maple"]);
+
+      const menu = list().getByLabelText("Birch menu");
       menu.click();
       await vi.waitFor(() => expect(getByRole(document.body, "button", { name: "Move down" })).toBeTruthy());
       getByRole(document.body, "button", { name: "Move down" }).click();
-      await vi.waitFor(() => expect(writes[2]).toEqual(["maple", "pine", "cedar@local"]));
-      expect(list().queryByLabelText("Birch menu")).toBeNull();
+      await vi.waitFor(() => expect(writes[1]).toEqual(["pine", "cedar@local", "birch@remote", "maple"]));
+
+      const birch = list().getByRole("link", { name: /birch/i });
+      expect(birch.textContent).toContain("Dock Coordinator");
+      expect(birch.textContent).not.toContain("Plans dock arrivals.");
+      await vi.waitFor(() => expect(birchGrip.getAttribute("draggable")).toBe("true"));
+      fireEvent.keyDown(birch, { key: "ArrowUp", altKey: true });
+      await vi.waitFor(() => expect(writes[2]).toEqual(["pine", "birch@remote", "cedar@local", "maple"]));
+
+      fetchAgentsMock.mockResolvedValue(localAgents);
+      fireEvent.focus(window);
+      await vi.waitFor(() => expect(order()).toEqual(["/chat/pine", "/chat/cedar%40local", "/chat/maple"]));
+
+      storedOrder = ["pine", "cedar@local", "maple", "birch@remote"];
+      fetchAgentsMock.mockResolvedValue(allAgents);
+      fireEvent.focus(window);
+      await vi.waitFor(() => expect(order()).toEqual(["/chat/pine", "/chat/cedar%40local", "/chat/maple", "/chat/birch%40remote"]));
     } finally {
       dispose();
+      container.remove();
       resetCapabilitiesForTests();
       fetch.mockRestore();
     }
