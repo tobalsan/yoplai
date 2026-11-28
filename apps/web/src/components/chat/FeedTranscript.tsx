@@ -93,6 +93,8 @@ export function feedAppViewCalls(
 
 type TranscriptProps = {
   agentId: string;
+  gateway?: string;
+  gatewayPending?: boolean;
   sessionId?: string;
   mode: HistoryViewMode;
   appViews: AppViews;
@@ -178,7 +180,7 @@ function FeedActivity(props: TranscriptProps & {
       <ActivityGroup items={rows().activity} simple={props.mode === "simple"} streaming={running()} working={running()} />
     </Show>
     <Index each={rows().apps}>
-      {(call) => <McpAppToolRow agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
+      {(call) => <McpAppToolRow agentId={props.agentId} gateway={props.gateway} gatewayPending={props.gatewayPending} sessionId={props.sessionId} appViews={props.appViews}
           onUserMessage={props.onUserMessage} toolCallId={call().id} name={call().name}
           arguments={call().arguments} result={call().result} />}
     </Index>
@@ -346,7 +348,7 @@ export function FeedTranscript(props: TranscriptProps & {
           </>}
         </Show>
         <Show when={key.startsWith("answer:")}>
-          <FeedActivity agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
+          <FeedActivity agentId={props.agentId} gateway={props.gateway} gatewayPending={props.gatewayPending} sessionId={props.sessionId} appViews={props.appViews}
             onUserMessage={props.onUserMessage} mode={props.mode} live={activity()}
             detail={detail()} settled={settledDetail()} timestamp={assistant()?.timestamp ?? timestamp}
             waiting={!!activity() && !text() && !assistant()?.toolCallCount} />

@@ -106,6 +106,7 @@ type ChatSessionInput = {
   onSessionReset: (newSessionId: string) => void;
   onRemoteReset: () => Promise<void>;
   preservePrependScroll: (prepend: () => void) => void;
+  durableMainEnabled: Accessor<boolean>;
   durableLive?: Accessor<{ runId?: string } | null | undefined>;
   durableThreadId?: Accessor<string | undefined>;
   onDurableEvent?: (type: "active_turn" | "history_updated", sessionId?: string) => void;
@@ -127,11 +128,9 @@ function isRemoteAgent(agentId: string): boolean {
 export function createChatSession(input: ChatSessionInput) {
   const { agent, sessionKey, viewMode, explicitSessionId } = input;
   const durableSession = createMemo(() => {
-    const current = agent();
-    if (current?.id !== input.agentId() || current.gateway || current.durable !== true) return;
+    if (!input.durableMainEnabled()) return;
     const thread = input.durableThreadId?.();
-    if (thread) return "thread:" + thread;
-    if (targetsDurableMain(true, explicitSessionId())) return DURABLE_MAIN_SESSION_ID;
+    return thread ? "thread:" + thread : DURABLE_MAIN_SESSION_ID;
   });
   const durableMain = () => durableSession() !== undefined;
   const [historyLoaded, setHistoryLoaded] = createSignal<HistoryLoaded>();
@@ -664,7 +663,8 @@ export function createChatSession(input: ChatSessionInput) {
   const [newChatCount, setNewChatCount] = createSignal(0);
   const deviceChatName = () => {
     newChatCount();
-    return explicitSessionId() ? `session:${explicitSessionId()}` : `key:${sessionKey()}`;
+    const sessionId = durableSession() ?? explicitSessionId();
+    return sessionId ? `session:${sessionId}` : `key:${sessionKey()}`;
   };
   /** The socket of a message that got the request. An answer goes back on the same socket. */
   const approvalAnswerers = new Map<string, (approvalId: string, approve: boolean) => boolean>();
@@ -836,7 +836,7 @@ export function createChatSession(input: ChatSessionInput) {
   // Do not track isStreaming here: reloading on stream end can wipe optimistic
   // user/error messages for failed runs before history is persisted.
   createEffect(
-    on([agent, viewMode, explicitSessionId], ([currentAgent, mode]) => {
+    on([agent, viewMode, explicitSessionId, durableSession], ([currentAgent, mode, , durable], previous) => {
       if (!currentAgent) return;
       const nextSession = currentSession();
       const followsReset = pendingResetSession === nextSession;
@@ -852,10 +852,14 @@ export function createChatSession(input: ChatSessionInput) {
       }
       if (followsReset) pendingResetSession = null;
       displayedSession = nextSession;
-      if (durableMain()) {
+      if (durable) {
+        appSessionLookup?.abort();
+        appSessionLookup = undefined;
+        setResolvedSessionId(durable);
+        setAppSessionFailed(false);
         setLoading(false);
-        adoptSessionId(durableSession()!);
       } else {
+        if (previous?.[3]) setResolvedSessionId(undefined);
         void loadHistory(mode);
       }
     })
@@ -1374,7 +1378,9 @@ export function createChatSession(input: ChatSessionInput) {
     const levelToSend = pendingThinkLevel() ?? thinkingLevel();
     const currentAgent = agent();
     const queueMode = currentAgent?.queueMode ?? "queue";
-    const isDurableSend = durableMain();
+    const durable = durableSession();
+    const isDurableSend = durable !== undefined;
+    const targetSessionId = durable ?? explicitSessionId();
     const reportDurableError = (error: string, code?: string) => {
       input.onDurableError?.(error);
       onDurableFailure?.(code);
@@ -1385,8 +1391,8 @@ export function createChatSession(input: ChatSessionInput) {
       ...(input.projectId() ? { projectId: input.projectId() } : {}),
       ...(attachments?.length ? { attachments } : {}),
       ...(levelToSend ? { thinkLevel: levelToSend } : {}),
-      ...((!isResetCommand || currentAgent?.durable) && explicitSessionId()
-        ? { sessionId: explicitSessionId() }
+      ...((!isResetCommand || currentAgent?.durable) && targetSessionId
+        ? { sessionId: targetSessionId }
         : {}),
     };
 
@@ -1918,7 +1924,7 @@ export function createChatSession(input: ChatSessionInput) {
         },
         ...messageApprovalCallbacks(input.agentId()),
         onSessionReset: (sessionId) => {
-          if (!isCurrentDirectStream()) return;
+          if (!isCurrentDirectStream() || isDurableSend) return;
           resetFromSession = streamSession;
           streamSession = isRemoteAgent(input.agentId()) ? currentSession() : sessionScope(sessionId);
           directStreamSession = streamSession;

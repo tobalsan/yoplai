@@ -7,6 +7,7 @@ import { Route, Router } from "@solidjs/router";
 import { ChatView } from "./ChatView";
 import { ToolbarOnlyShell } from "./ChatView.test-shell";
 import { resetCapabilitiesForTests, setCapabilitiesForTests } from "../lib/capabilities";
+import { getDurableMode } from "../api/durable-mode";
 
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
@@ -91,14 +92,17 @@ it("keeps a linked dashboard active beside saved frames through the real reload 
   } finally { measure.mockRestore(); }
 });
 
-it("keeps the restored Main when New Chat is clicked and admits one rapid composer submission", async () => {
+it("restores Main with a rotated classic key and admits one rapid composer submission", async () => {
+  setCapabilitiesForTests({ multiUser: true, user: { id: "main-router" } });
   history.replaceState({}, "", "/chat/sage");
   localStorage.setItem("yoplai:sessionKey:sage", "web-greenhouse");
   const fetchStub = vi.mocked(fetch);
   const fallback = fetchStub.getMockImplementation()!;
   fetchStub.mockImplementation(async (input, init) => {
     const path = String(input);
+    if (path === "/api/me/durable-mode") return Response.json({ enabled: true });
     if (path === "/api/agents/sage") return Response.json({ id: "sage", name: "Sage", durable: true });
+    if (path === "/api/agents/sage/threads") return Response.json([]);
     if (path === "/api/agents/sage/feed?limit=50") {
       requests.push(path);
       return Response.json({
@@ -111,6 +115,7 @@ it("keeps the restored Main when New Chat is clicked and admits one rapid compos
     }
     return fallback(input, init);
   });
+  await getDurableMode();
   dispose = render(() => <Router>
     <Route path="/chat/:agentId" component={() => <Suspense><ToolbarOnlyShell><ChatView /></ToolbarOnlyShell></Suspense>} />
   </Router>, root);
@@ -118,8 +123,7 @@ it("keeps the restored Main when New Chat is clicked and admits one rapid compos
   expect(root.textContent).toContain("Check the greenhouse");
   expect(requests).toContain("/api/agents/sage/feed?limit=50");
   expect(requests.some((path) => path.includes("/history?"))).toBe(false);
-  getByRole(root, "button", { name: "Start a new chat" }).click();
-  expect(root.textContent).toContain("The seedlings are ready.");
+  expect(queryByRole(root, "button", { name: "Start a new chat" })).toBeNull();
 
   const composer = getByRole(root, "textbox") as HTMLTextAreaElement;
   const send = () => composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -128,7 +132,7 @@ it("keeps the restored Main when New Chat is clicked and admits one rapid compos
   send();
   send();
   await vi.waitFor(() => expect(wsMessages.filter((message) => message.type === "send")).toEqual([
-    expect.objectContaining({ message: "Water the basil", clientSendId: expect.any(String) }),
+    expect.objectContaining({ message: "Water the basil", sessionId: "durable-main", clientSendId: expect.any(String) }),
   ]));
 });
 
@@ -173,7 +177,7 @@ it("opens Durable Main beside a dashboard and follows memory references to Main 
   await vi.waitFor(() => expect(getByTitle(root, "Garden inventory dashboard").getAttribute("src")).toBe("/d/garden"));
   expect(getByRole(root, "tab", { name: "Main" }).getAttribute("aria-selected")).toBe("true");
   expect((getByRole(root, "textbox") as HTMLTextAreaElement).placeholder).toContain("Garden inventory");
-  expect(requests.some((path) => path.includes("/history?"))).toBe(false);
+  await vi.waitFor(() => expect(getByText(root, "Check the cedar rack.")).toBeTruthy());
 
   getByRole(root, "button", { name: "Memory" }).click();
   await vi.waitFor(() => expect(root.textContent).toContain("Getting full"));

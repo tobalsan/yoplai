@@ -10,7 +10,7 @@ import type { RemoteGateway } from "./store.js";
 
 type PageMessage = { type?: string; agentId?: string } & Record<string, unknown>;
 
-/** `chat` is false while the link serves status messages only. */
+/** `chat` marks a session subscription or a direct send. */
 type RemoteLink = { socket: WebSocket; queue: string[]; chat: boolean; generation: string | undefined };
 
 export const CONNECT_TIMEOUT_MS = 10_000;
@@ -29,6 +29,7 @@ export class RelayWsBridge {
   private readonly trusted: boolean;
   /** The gateway of the active session subscription. Unset means a local agent or none. */
   private subscribedGateway: string | undefined;
+  private feedGateway: string | undefined;
   /** The remote agent and local chat name of the page subscription. Device approvals for them go to the page. */
   private subscription: { agentId: string; chat: string } | undefined;
   private readonly sendLinks = new Set<RemoteLink>();
@@ -93,8 +94,17 @@ export class RelayWsBridge {
       return true;
     }
     if (!this.trusted) return false;
+    if (message.type === "unsubscribeFeed") {
+      this.feedGateway = undefined;
+      this.sendToOpenLinks(raw);
+      return false;
+    }
+    if (message.type === "subscribeRoomFeed") {
+      this.replaceFeed(undefined);
+      return false;
+    }
     const gateways = getLinkedGateways();
-    if (gateways.length === 0) return false;
+    if (gateways.length === 0 && message.type !== "subscribeFeed") return false;
 
     if (message.type === "subscribeStatus") {
       this.stopStatusRetries();
@@ -114,10 +124,11 @@ export class RelayWsBridge {
       this.subscription = undefined;
       return false;
     }
-    if (message.type !== "subscribe" && message.type !== "send") return false;
+    if (message.type !== "subscribe" && message.type !== "send" && message.type !== "subscribeFeed") return false;
     if (typeof message.agentId !== "string") return false;
     const target = resolveRemoteAgent(message.agentId, gateways);
     const gateway = gateways.find((item) => item.name === target.gateway);
+    if (message.type === "subscribeFeed") this.replaceFeed(gateway?.name);
     if (message.type === "subscribe") {
       this.replaceSubscription(gateway?.name);
       this.subscription = gateway
@@ -150,7 +161,7 @@ export class RelayWsBridge {
       this.sendTo(gateway, forwarded, true, token);
       return true;
     }
-    this.sendTo(gateway, forwarded, true);
+    this.sendTo(gateway, forwarded, message.type === "subscribe");
     return true;
   }
 
@@ -192,6 +203,14 @@ export class RelayWsBridge {
     if (link) link.chat = false;
   }
 
+  private replaceFeed(gatewayName: string | undefined): void {
+    const previous = this.feedGateway;
+    this.feedGateway = gatewayName;
+    if (previous === undefined || previous === gatewayName) return;
+    const link = this.links.get(previous);
+    if (link) this.deliver(link, JSON.stringify({ type: "unsubscribeFeed" }));
+  }
+
   private sendToOpenLinks(payload: string): void {
     for (const link of this.links.values()) this.deliver(link, payload);
   }
@@ -213,6 +232,7 @@ export class RelayWsBridge {
     let existing = turnToken === undefined ? this.links.get(gateway.name) : undefined;
     if (existing && existing.generation !== gateway.generation) {
       // A link that replaced this name made the retained socket obsolete. It ends quietly, and the new link opens its own.
+      if (this.feedGateway === gateway.name && message.type !== "subscribeFeed") this.page.close();
       this.links.delete(gateway.name);
       existing.chat = false;
       existing.socket.close();
@@ -261,15 +281,16 @@ export class RelayWsBridge {
         if (isRelayEnabled()) this.page.close();
       }
     });
-    // A failed chat stream looks like a local agent whose socket closes: the page sees the close.
+    // Closing the page socket makes the client resubscribe to a lost chat or feed.
     // A failed status link stays silent, so one offline gateway does not interrupt the page.
     socket.on("close", () => {
-      if (this.links.get(gateway.name) === link) this.links.delete(gateway.name);
+      const activeLink = this.links.get(gateway.name) === link;
+      if (activeLink) this.links.delete(gateway.name);
       if (turnToken !== undefined) {
         this.sendLinks.delete(link);
         if (!finished && isRelayEnabled()) this.page.close();
-      } else if (isRelayEnabled()) {
-        if (link.chat) this.page.close();
+      } else if (!this.closed && isRelayEnabled()) {
+        if (link.chat || (activeLink && this.feedGateway === gateway.name)) this.page.close();
         else this.retryStatus(gateway);
       }
     });

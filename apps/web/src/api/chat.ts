@@ -278,20 +278,22 @@ export function streamMessage(
     callbacks?.onDeviceApprovalClosed?.();
   };
 
-  const answerApproval = (approvalId: string, approve: boolean) => {
-    if (terminated || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve }));
-    return true;
-  };
-
   function connect() {
     const socket = new WebSocket(getWsUrl());
     ws = socket;
+    approvalsClosed = false;
+    const answerApproval = (approvalId: string, approve: boolean) => {
+      if (socket !== ws || terminated || socket.readyState !== WebSocket.OPEN) return false;
+      socket.send(JSON.stringify({ type: "device_approval_answer", approvalId, approve }));
+      return true;
+    };
     socket.onopen = () => {
       if (socket === ws && !terminated) socket.send(payload);
     };
     const lost = (message: string) => {
       if (socket !== ws || terminated) return;
+      // Pending approvals belong to this socket or a matching session subscription.
+      closeApprovals();
       if (canRetry) {
         canRetry = false;
         replayPrefix = receivedText;
@@ -299,7 +301,6 @@ export function streamMessage(
         if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
         return;
       }
-      closeApprovals();
       terminated = true;
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
       onError(message);
