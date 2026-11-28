@@ -242,7 +242,10 @@ export class WsBroker {
       return;
     }
     const tagged = msg.type === "send" && msg.turnId !== undefined;
-    if (!tagged && bridge.handle(raw)) return;
+    if (!tagged && bridge.handle(raw)) {
+      if (msg.type === "subscribeFeed") this.feeds.get(ws)?.stop();
+      return;
+    }
     const authContext = this.authContexts.get(ws) ?? null;
 
     if (msg.type === "subscribeFeed" || msg.type === "subscribeRoomFeed") {

@@ -71,6 +71,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Linked-gateway agents show the Durable Main feed, thread tabs, and Memory when Durable mode is enabled on both ends. The feed catches up after reconnecting.
 - Main and private threads show messages and working feedback immediately, and keep one activity trace across tool rounds.
 - Device commands in Durable Main use the connected chat's approval settings and workspace folder.
 - Attach images and documents in Durable Main on web and desktop. Refused sends restore the draft and show the gateway's reason.

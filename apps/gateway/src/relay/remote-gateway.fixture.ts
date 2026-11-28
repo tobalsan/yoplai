@@ -10,7 +10,7 @@ process.env.YOPLAI_HOME = path.join(home, ".yoplai");
 process.env.HOME = home;
 
 await writeTestV3Config(process.env.YOPLAI_HOME, {
-  agents: (process.env.FIXTURE_AGENTS ?? "").split(",").map((id) => ({ id })),
+  agents: (process.env.FIXTURE_AGENTS ?? "").split(",").map((id) => ({ id, model: { provider: "faux", model: "fixture" } })),
 });
 
 const { piAdapter } = await import("../sdk/pi/adapter.js");
@@ -24,7 +24,10 @@ piAdapter.run = async (params) => {
 };
 
 const { startServer } = await import("../server/index.js");
-const server = startServer(0, "127.0.0.1");
+const { createDurableFaux } = await import("../durable/faux.js");
+const faux = createDurableFaux();
+faux.script("The linked orchard has three crates.");
+const server = startServer(0, "127.0.0.1", undefined, { createModels: faux.createModels });
 server.once("listening", () => {
   console.log(`PORT ${(server.address() as AddressInfo).port}`);
 });

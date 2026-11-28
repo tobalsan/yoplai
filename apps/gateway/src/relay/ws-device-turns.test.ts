@@ -20,7 +20,9 @@ vi.mock("../config/index.js", () => ({ getAgent: () => undefined }));
 vi.mock("./state.js", () => ({
   isTrustedRequest: () => true, isRelayEnabled: () => state.enabled,
   getLinkedGateways: () => state.enabled ? [{ name: "remote", url: "http://synthetic.invalid", generation: state.generation }] : [],
-  resolveRemoteAgent: () => ({ agentId: "pom", gateway: "remote" }),
+  resolveRemoteAgent: (agentId: string) => agentId === "pom@remote"
+    ? { agentId: "pom", gateway: "remote" }
+    : { agentId },
 }));
 vi.mock("./remote.js", () => ({
   remoteDeviceUrl: () => "ws://synthetic.invalid/device",
@@ -32,6 +34,59 @@ import { RelayWsBridge } from "./ws.js";
 import { getDeviceTurns, TURN_TOKEN_TTL_MS } from "./device-turns.js";
 import { getLinkedGateways, isRelayEnabled } from "./state.js";
 afterEach(() => { vi.useRealTimers(); state.sockets.length = 0; state.generation = "remote-1"; state.enabled = true; });
+
+it("relays a linked agent's feed without replacing the session subscription", () => {
+  const page = { readyState: 1, send: vi.fn(), close: vi.fn() };
+  const dropLocalSession = vi.fn();
+  const bridge = new RelayWsBridge(page as never, {}, dropLocalSession);
+  try {
+    const session = { type: "subscribe", agentId: "pom@remote", sessionId: "durable-main" };
+    const feed = { type: "subscribeFeed", agentId: "pom@remote", limit: 30 };
+    const unsubscribe = { type: "unsubscribeFeed" };
+    expect(bridge.handle(JSON.stringify({ ...feed, agentId: "cedar" }))).toBe(false);
+    expect(state.sockets.flatMap((socket) => socket.sent)).toEqual([]);
+    expect(bridge.handle(JSON.stringify(session))).toBe(true);
+    expect(bridge.handle(JSON.stringify(feed))).toBe(true);
+    for (const socket of state.sockets) socket.emit("open");
+    expect(state.sockets.flatMap((socket) => socket.sent)).toEqual(expect.arrayContaining([
+      { ...session, agentId: "pom" },
+      { ...feed, agentId: "pom" },
+    ]));
+    expect(dropLocalSession).toHaveBeenCalledTimes(1);
+    const upstream = state.sockets.find((socket) => socket.sent.some((frame) => frame.type === "subscribeFeed"))!;
+    const snapshot = { type: "feed_snapshot", agentId: "pom", items: [], live: null };
+    upstream.emit("message", Buffer.from(JSON.stringify(snapshot)));
+    expect(page.send).toHaveBeenCalledWith(JSON.stringify({ ...snapshot, agentId: "pom@remote" }));
+    expect(bridge.handle(JSON.stringify(unsubscribe))).toBe(false);
+    expect(upstream.sent.at(-1)).toEqual(unsubscribe);
+    expect(page.close).not.toHaveBeenCalled();
+  } finally {
+    bridge.close();
+  }
+});
+
+it.each([
+  ["still subscribed", undefined, true],
+  ["unsubscribed", { type: "unsubscribeFeed" }, false],
+  ["switched to local", { type: "subscribeFeed", agentId: "cedar" }, false],
+  ["switched to a room", { type: "subscribeRoomFeed", roomId: "project" }, false],
+] as const)("handles a feed-only link closing while %s", (_, switchTo, closesPage) => {
+  const page = { readyState: 1, send: vi.fn(), close: vi.fn() };
+  const bridge = new RelayWsBridge(page as never, {}, () => {});
+  try {
+    expect(bridge.handle(JSON.stringify({ type: "subscribeFeed", agentId: "pom@remote" }))).toBe(true);
+    const upstream = state.sockets[0];
+    upstream.emit("open");
+    if (switchTo) {
+      expect(bridge.handle(JSON.stringify(switchTo))).toBe(false);
+      expect(upstream.sent.at(-1)).toEqual({ type: "unsubscribeFeed" });
+    }
+    upstream.emit("close");
+    expect(page.close).toHaveBeenCalledTimes(closesPage ? 1 : 0);
+  } finally {
+    bridge.close();
+  }
+});
 
 it("discards a pending subscription when the relay is disabled before open", () => {
   const page = { readyState: 1, send: vi.fn(), close: vi.fn() };

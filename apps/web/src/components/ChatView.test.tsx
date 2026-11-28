@@ -8,7 +8,8 @@ import { ToolbarOnlyShell } from "./ChatView.test-shell";
 import { TurnNotifier } from "./TurnNotifier";
 import { setImpersonationStatus } from "./ImpersonationBanner";
 import type { SubscriptionCallbacks } from "../api/realtime";
-import type { StreamCallbacks } from "../api/chat";
+import { streamMessage as streamOnSocket, type StreamCallbacks } from "../api/chat";
+import { saveDurableMode } from "../api/durable-mode";
 import type { FullHistoryMessage } from "../api/types";
 import type { FeedDetail, FeedItem, FeedWindow, McpAppFile, WsFeedMessage } from "@yoplai/shared/types";
 import type { WsDeviceApprovalRequest } from "@yoplai/shared";
@@ -217,15 +218,20 @@ function installFeedSocket() {
   class FeedSocket {
     static OPEN = 1;
     readyState = 1;
+    sent: unknown[] = [];
     onmessage?: (event: { data: string }) => void;
     onopen?: () => void;
+    onclose?: () => void;
     constructor() {
       sockets.push(this);
       queueMicrotask(() => this.onopen?.());
     }
-    send() {}
-    close() { this.readyState = 3; }
-    frame(frame: WsFeedMessage) {
+    send(raw: string) { this.sent.push(JSON.parse(raw)); }
+    close() {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+    frame(frame: WsFeedMessage | WsDeviceApprovalRequest) {
       this.onmessage?.({ data: JSON.stringify(frame) });
     }
   }
@@ -276,6 +282,27 @@ async function openAgentSettingsHref(container: HTMLElement): Promise<string | n
 }
 
 describe("ChatView abort handling", () => {
+  let seededDurableMode = false;
+  async function seedDurableMode(enabled: boolean) {
+    const previousFetch = fetch;
+    vi.stubGlobal("fetch", async () => Response.json({ enabled }));
+    try {
+      await saveDurableMode(enabled);
+      seededDurableMode = enabled;
+    } finally {
+      vi.stubGlobal("fetch", previousFetch);
+    }
+  }
+
+  async function renderDurableView() {
+    await seedDurableMode(true);
+    const fetchFixture = fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/threads") ? Response.json([]) : fetchFixture(input, init),
+    );
+    return renderView();
+  }
+
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
@@ -352,12 +379,13 @@ describe("ChatView abort handling", () => {
     setRouteAgentVersion(0);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     mountedViews.forEach((dispose) => dispose());
     setImpersonationStatus(null);
     document.body.innerHTML = "";
     history.replaceState({}, "", "/");
     resetCapabilitiesForTests();
+    if (seededDurableMode) await seedDurableMode(false);
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1065,9 +1093,9 @@ describe("ChatView abort handling", () => {
         return json(relay.settings);
       }));
     }
-    async function renderRemote(agentName = "Pom (remote)") {
+    async function renderRemote(agentName = "Pom (remote)", durable?: true) {
       routeState.agentId = "pom@ams";
-      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: agentName, gateway: "ams", model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
+      fetchAgentMock.mockResolvedValue({ id: "pom@ams", name: agentName, gateway: "ams", durable, model: { provider: "openai", model: "gpt-5" }, queueMode: "queue" });
       subscribeToSessionMock.mockImplementation((_id, _key, next) => { subscription = next; return Object.assign(() => {}, { send }); });
       const view = renderView();
       await waitFor(() => expect(queryByRole(view.container, "button", { name: "Chat settings" })).not.toBeNull());
@@ -1244,6 +1272,49 @@ describe("ChatView abort handling", () => {
       await waitFor(() => expect(queryByText(container, "A remote agent wants to run a command on this device")).not.toBeNull());
       expect(queryByText(container, "ls -la")).not.toBeNull();
       dispose();
+    });
+
+    it("shows and answers a linked Main send's approval again after reconnect with a rotated key", async () => {
+      const account = { multiUser: true, user: { id: "linked-main-approval" } };
+      setCapabilitiesForTests(account);
+      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["pom@ams"], ...account });
+      getSessionKeyMock.mockReturnValue("fresh-key");
+      const latestSocket = installFeedSocket();
+      streamMessageMock.mockImplementation(streamOnSocket);
+      const relayFetch = fetch;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+        if (url.includes("/feed?")) return Response.json(feedWindow([feedMessage(1)]));
+        if (url.endsWith("/threads")) return Response.json([]);
+        return relayFetch(input, init);
+      });
+      const { container } = await renderRemote("Pom", true);
+      await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+      const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+      composer.value = "Get the working directory";
+      fireEvent.input(composer);
+      getByRole(container, "button", { name: "Send message" }).click();
+      await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+      const sender = latestSocket();
+      const sendFrame = expect.objectContaining({
+        type: "send", agentId: "pom@ams", message: "Get the working directory",
+        sessionKey: "fresh-key", sessionId: "durable-main",
+      });
+      await waitFor(() => expect(sender.sent).toContainEqual(sendFrame));
+      expect(subscribeToSessionMock.mock.calls.at(-1)?.slice(3)).toEqual(["durable-main", true]);
+
+      const approval = request("main-approval", "session:durable-main", "device_bash", { command: "pwd" });
+      sender.frame(approval);
+      await waitFor(() => expect(queryByText(container, "pwd")).not.toBeNull());
+      sender.close();
+      await waitFor(() => expect(latestSocket().sent).toContainEqual(sendFrame));
+      subscription.onDisconnected?.();
+      subscription.onConnected?.();
+      expect(queryByText(container, "pwd")).toBeNull();
+      subscription.onDeviceApprovalRequest?.(approval);
+      getByRole(container, "button", { name: "Approve" }).click();
+      expect(send).toHaveBeenCalledWith({ type: "device_approval_answer", approvalId: "main-approval", approve: true });
     });
 
     it("shows the path and the content of a file write as text", async () => {
@@ -1991,7 +2062,7 @@ describe("ChatView abort handling", () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     const file = new File(["Orchard notes"], "orchard.txt", { type: "text/plain" });
     uploadFilesMock.mockResolvedValue([{ path: "/media/upload.txt", filename: file.name, mimeType: file.type }]);
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     try {
       await tick();
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
@@ -2029,7 +2100,7 @@ describe("ChatView abort handling", () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     const file = new File(["Orchard inventory"], "inventory.txt", { type: "text/plain" });
     uploadFilesMock.mockResolvedValue([{ path: "/media/inventory.txt", filename: file.name, mimeType: file.type }]);
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     try {
       await tick();
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
@@ -2062,7 +2133,7 @@ describe("ChatView abort handling", () => {
       rejectFirstSend = () => onError("Forbidden", "send_rejected");
       return () => { rejectFirstSend = undefined; };
     });
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     try {
       await tick();
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
@@ -2091,7 +2162,7 @@ describe("ChatView abort handling", () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1)]))));
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
     const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
     const send = () => {
@@ -2791,14 +2862,19 @@ describe("ChatView abort handling", () => {
     dispose();
   });
 
-  it.each([{ gateway: undefined, shell: true }, { gateway: "remote", shell: false }])(
-    "uses the local Durable shell according to the agent gateway field ($gateway)",
-    async ({ gateway, shell }) => {
-      const account = { multiUser: true, user: { id: "locality-test" } };
+  it.each([
+    { agentId: "cedar", gateway: undefined, enabled: true, durable: true, shell: true },
+    { agentId: "cedar@desk", gateway: "desk", enabled: true, durable: true, shell: true },
+    { agentId: "cedar@desk", gateway: "desk", enabled: false, durable: true, shell: false },
+    { agentId: "cedar@desk", gateway: "desk", enabled: true, durable: undefined, shell: false },
+  ])(
+    "shows the expected shell for $agentId (device enabled=$enabled, agent durable=$durable)",
+    async ({ agentId, gateway, enabled, durable, shell }) => {
+      const account = { multiUser: true, user: { id: `shell-${agentId}-${enabled}-${durable}` } };
       setCapabilitiesForTests(account);
-      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: ["cedar@desk"], ...account });
-      routeState.agentId = "cedar@desk";
-      fetchAgentMock.mockResolvedValue({ id: "cedar@desk", name: "Cedar", durable: true, gateway });
+      fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [agentId], ...account });
+      routeState.agentId = agentId;
+      fetchAgentMock.mockResolvedValue({ id: agentId, name: "Cedar", durable, gateway });
       let historyText = "Legacy transcript.";
       fetchFullHistoryMock.mockImplementation(async () => ({
         messages: [{ role: "assistant", content: [{ type: "text", text: historyText }], timestamp: 1 }],
@@ -2806,10 +2882,10 @@ describe("ChatView abort handling", () => {
       }));
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path.endsWith("/me/durable-mode")) return Response.json({ enabled: true });
+        if (path.endsWith("/me/durable-mode")) return Response.json({ enabled });
         if (path.includes("/feed?")) return Response.json(feedWindow([feedMessage(1)]));
-        if (path.endsWith("/threads")) return Response.json([]);
-        if (path.endsWith("/relay/device-links")) return Response.json([{ name: "remote", connected: true }]);
+        if (path.endsWith("/threads")) return Response.json([{ id: "glaze", title: "Glaze", closed: false, generation: 1, lastActivityAt: 2 }]);
+        if (path.endsWith("/relay/device-links")) return Response.json([{ name: "desk", connected: true }]);
         if (path.includes("/relay/device-settings?")) return Response.json({ workspaceFolder: null, full: false, mode: "ask" });
         return Response.json({});
       });
@@ -2817,8 +2893,13 @@ describe("ChatView abort handling", () => {
       const { container, dispose } = renderView();
       try {
         await waitFor(() => expect(queryByText(container, shell ? "Orchard request 1" : "Legacy transcript.")).not.toBeNull());
+        if (shell) await waitFor(() => expect(queryByRole(container, "tab", { name: /^Glaze/ })).not.toBeNull());
         expect(!!queryByRole(container, "tab", { name: "Main" })).toBe(shell);
-        if (!shell) {
+        expect(!!queryByRole(container, "button", { name: "Memory" })).toBe(shell);
+        expect(!!queryByTitle(container, "New chat")).toBe(!shell);
+        if (shell) {
+          expect(fetchMock).toHaveBeenCalledWith(`/api/agents/${encodeURIComponent(agentId)}/feed?limit=50`, expect.anything());
+        } else {
           const callbacks = subscribeToSessionMock.mock.calls.at(-1)?.[2] as SubscriptionCallbacks;
           historyText = "Remote Main settled.";
           callbacks.onHistoryUpdated?.("thread:side");
@@ -2832,6 +2913,60 @@ describe("ChatView abort handling", () => {
       }
     },
   );
+
+  it("can send and stop in linked Main when the device flag arrives during classic history", async () => {
+    const agentId = "cedar@desk";
+    const account = { multiUser: true, user: { id: "linked-cold-open" } };
+    setCapabilitiesForTests(account);
+    fetchCapabilitiesMock.mockResolvedValue({ version: 2, extensions: {}, agents: [agentId], ...account });
+    routeState.agentId = agentId;
+    fetchAgentMock.mockResolvedValue({ id: agentId, name: "Cedar", durable: true, gateway: "desk" });
+    const flag = Promise.withResolvers<Response>();
+    const history = Promise.withResolvers<{ messages: FullHistoryMessage[]; sessionId: string }>();
+    fetchFullHistoryMock.mockReturnValue(history.promise);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/me/durable-mode")) {
+        return init?.method === "PUT" ? Response.json({ enabled: false }) : flag.promise;
+      }
+      if (path.endsWith("/threads")) return Response.json([]);
+      if (path.endsWith("/stop")) return Response.json({ status: "stopped" });
+      if (path.endsWith("/relay/device-links")) return Response.json([]);
+      return Response.json(feedWindow([feedMessage(1)]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = renderView();
+    await waitFor(() => expect(fetchFullHistoryMock).toHaveBeenCalledWith(agentId, "main", undefined, { limit: 100 }));
+    expect(queryByRole(container, "tab", { name: "Main" })).toBeNull();
+    flag.resolve(Response.json({ enabled: true }));
+    await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
+    history.resolve({
+      sessionId: "classic-main",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "Stale classic reply" }], timestamp: 1 }],
+    });
+    await tick();
+    expect(queryByText(container, "Stale classic reply")).toBeNull();
+    const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
+    composer.value = "Check the nursery";
+    fireEvent.input(composer);
+    getByRole(container, "button", { name: "Send message" }).click();
+    await waitFor(() => expect(streamMessageMock).toHaveBeenCalledOnce());
+    const send = streamMessageMock.mock.calls[0];
+    expect(send.slice(0, 2)).toEqual([agentId, "Check the nursery"]);
+    expect(send.at(-1)).toMatchObject({ retryOnDisconnect: true });
+    expect(queryAllByText(container, "Check the nursery")).toHaveLength(1);
+    expect(queryByRole(container, "status", { name: "Working" })).not.toBeNull();
+    composer.value = "/stop";
+    fireEvent.input(composer);
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/agents/cedar%40desk/stop", expect.objectContaining({ method: "POST" })));
+    expect(postAbortMock).not.toHaveBeenCalled();
+    // Keep the current agent detail while the new gateway flag is being reconciled.
+    fetchAgentMock.mockReturnValue(new Promise(() => {}));
+    await saveDurableMode(false);
+    await waitFor(() => expect(queryByText(container, "Stale classic reply")).not.toBeNull());
+    expect(queryByRole(container, "tab", { name: "Main" })).toBeNull();
+  });
 
   it("forks a Main message and shows the agent's attention note", async () => {
     const account = { multiUser: true, user: { id: "shell-fork-test" } };
@@ -2981,7 +3116,7 @@ describe("ChatView abort handling", () => {
     };
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => Response.json(String(url).includes("/feed?") ? tail : {}));
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Four pears")).not.toBeNull());
     expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent-1/feed?limit=50", expect.anything());
     expect(fetchFullHistoryMock).not.toHaveBeenCalled();
@@ -3076,7 +3211,7 @@ describe("ChatView abort handling", () => {
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", fetchMock);
     moveToMessage("m_3");
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Orchard request 3")).not.toBeNull());
     const messages = container.querySelector<HTMLDivElement>(".messages")!;
     await waitFor(() => expect(queryByText(container, "Orchard request 3")?.closest(".feed-flash")).not.toBeNull());
@@ -3104,7 +3239,7 @@ describe("ChatView abort handling", () => {
     const read = vi.fn(async () => Response.json(feedWindow([feedMessage(3)], true, true)));
     vi.stubGlobal("fetch", read);
     moveToMessage("m_3");
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull());
     socket().frame({
       type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null, items: [feedMessage(50)],
@@ -3129,7 +3264,7 @@ describe("ChatView abort handling", () => {
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(3)], true, true))));
     moveToMessage("m_3");
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByRole(container, "button", { name: "Jump to latest" })).not.toBeNull());
     socket().frame({
       type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: true, live: null, items: [feedMessage(50)],
@@ -3160,7 +3295,7 @@ describe("ChatView abort handling", () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1)]))));
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
 
     const composer = getByRole(container, "textbox");
@@ -3204,7 +3339,7 @@ describe("ChatView abort handling", () => {
       });
     }));
     observeFeedRows();
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(detailsRead).toBe(1));
     await tick();
     expect(queryAllByRole(container, "button", { name: /tool call/ })).toHaveLength(1);
@@ -3237,7 +3372,7 @@ describe("ChatView abort handling", () => {
       ? readAnswer()
       : Response.json(feedWindow([user]))));
     observeFeedRows();
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
     const live = { runId: "pear-run", text: "", reasoning: [], toolCalls: [] };
     const frame = (seq: number, items: FeedItem[], activity: FeedWindow["live"]) => socket().frame({
@@ -3297,7 +3432,7 @@ describe("ChatView abort handling", () => {
       });
     }));
     observeFeedRows();
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Orchard request 1")).not.toBeNull());
     socket().frame({
       type: "feed_snapshot", agentId: "agent-1", seq: 1, hasBefore: false, items: [user, answer],
@@ -3329,7 +3464,7 @@ describe("ChatView abort handling", () => {
     const live = { runId: "pear-run", text: "", reasoning: [], toolCalls: [], plan: answer.plan };
     const user = feedMessage(1);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...feedWindow([user, answer]), live })));
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     const checklists = () => queryAllByRole(container, "list", { name: "Turn plan" });
     await waitFor(() => expect(checklists()).toHaveLength(1));
     const checklist = checklists()[0]!;
@@ -3371,7 +3506,7 @@ describe("ChatView abort handling", () => {
     const read = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/messages/m_2")
       ? detail : Response.json(feedWindow([answer])));
     vi.stubGlobal("fetch", read);
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     try {
       await waitFor(() => expect(read.mock.calls.some(([url]) => String(url).endsWith("/messages/m_2"))).toBe(true));
       expect(sessionStorage.getItem(storage)).toContain("inventory");
@@ -3393,7 +3528,7 @@ describe("ChatView abort handling", () => {
     const socket = installFeedSocket();
     const answer: FeedItem = { id: "m_2", role: "assistant", text: "Four pears", timestamp: 2, toolCallCount: 0 };
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([feedMessage(1), answer, feedMessage(3)]))));
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     await waitFor(() => expect(queryByText(container, "Four pears")).not.toBeNull());
     await new Promise(requestAnimationFrame);
     const messages = container.querySelector<HTMLDivElement>(".messages")!;
@@ -3434,7 +3569,7 @@ describe("ChatView abort handling", () => {
     const stopRequest = new Promise<Response>((resolve) => { completeStop = resolve; });
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith("/stop") ? stopRequest : Response.json({ items: [], hasBefore: false, hasAfter: false, live: null }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     const toasts = document.createElement("div");
     document.body.appendChild(toasts);
     const disposeToasts = render(() => <ToastHost />, toasts);
@@ -3492,7 +3627,7 @@ describe("ChatView abort handling", () => {
     fetchFullHistoryMock.mockResolvedValue({ messages: [], sessionId: "durable-main" });
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ items: [], hasBefore: false, hasAfter: false, live: null })));
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     try {
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
       for (const [index, text] of ["Inspect the nursery", "Include the basil", "Add the mint"].entries()) {
@@ -3522,7 +3657,7 @@ describe("ChatView abort handling", () => {
     fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Orchard", durable: true });
     const socket = installFeedSocket();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(feedWindow([]))));
-    const { container } = renderView();
+    const { container } = await renderDurableView();
     const composer = getByRole(container, "textbox");
     fireEvent.input(composer, { target: { value: "Weigh the pears" } });
     await waitFor(() => expect((getByRole(container, "button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(false));
@@ -3554,7 +3689,7 @@ describe("ChatView abort handling", () => {
         Response.json({ items: [], hasBefore: false, hasAfter: false, live: null }));
     vi.stubGlobal("fetch", fetchMock);
     const socket = installFeedSocket();
-    const { container, dispose } = renderView();
+    const { container, dispose } = await renderDurableView();
     try {
       const composer = getByRole(container, "textbox") as HTMLTextAreaElement;
       composer.value = "Check the nursery";

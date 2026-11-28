@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
+import type { WsFeedMessage } from "@yoplai/shared";
 import { writeTestV3Config } from "../test-utils/v3-config.js";
 import { connectRemoteGateway } from "../cli/connect.js";
 import { createFileRemoteGatewayStore } from "./store.js";
@@ -1698,4 +1699,28 @@ describe("desktop relay: chat relay", () => {
       refusing.close();
     }
   });
+
+  it("delivers a live Main reply from a linked gateway to an existing feed subscriber", async () => {
+    await durableSetting(remoteBase, { enabled: true }, "?local=1");
+    const page = await openPage(localBase);
+    const frames: WsFeedMessage[] = [];
+    page.on("message", (raw) => frames.push(JSON.parse(raw.toString()) as WsFeedMessage));
+    try {
+      page.send(JSON.stringify({ type: "subscribeFeed", agentId: "pom@ams", limit: 50 }));
+      await waitFor(() => frames.some((frame) => frame.type === "feed_snapshot" && frame.agentId === "pom@ams"));
+      page.send(JSON.stringify({
+        type: "send", agentId: "pom@ams", sessionId: "durable-main", sessionKey: "rotated-key",
+        clientSendId: "linked-live-reply", message: "How many crates?",
+      }));
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({
+        type: "feed_delta", agentId: "pom@ams",
+        upsert: expect.arrayContaining([expect.objectContaining({
+          role: "assistant", text: "The linked orchard has three crates.",
+        })]),
+      })), { timeout: 5_000 });
+    } finally {
+      page.close();
+      await durableSetting(remoteBase, { enabled: false }, "?local=1");
+    }
+  }, 15_000);
 });

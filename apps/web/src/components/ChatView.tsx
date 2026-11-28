@@ -11,7 +11,7 @@ import { createChatSession } from "./chat/createChatSession";
 import { RemoteAgentMark } from "./RemoteAgentMark";
 import { ChatToolbarOverflow } from "./chat/ChatToolbarOverflow";
 import { ContextUsageRing } from "./chat/ContextUsageRing";
-import { durableModeVersion, useDurableMode } from "../api/durable-mode";
+import { durableModeVersion, getDurableMode, useDurableMode } from "../api/durable-mode";
 import { fetchMemory, sendThreadMessage } from "../api/durable";
 import { fetchAgentDashboards } from "../api/agents";
 import { MemoryPanel, memoryFraction } from "./chat/MemoryPanel";
@@ -278,9 +278,9 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
   );
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionKey = () => getSessionKey(params.agentId);
-  const durableMain = createMemo(() => agent()?.id === params.agentId && !agent()?.gateway &&
+  const durableMain = createMemo(() => agent()?.id === params.agentId && modeEnabled() &&
     targetsDurableMain(agent()?.durable === true, explicitSessionId()));
-  const shell = createMemo(() => modeEnabled() && durableMain());
+  const shell = durableMain;
   const threadId = createMemo(() => shell() && typeof searchParams.thread === "string" ? searchParams.thread || undefined : undefined);
   const selectedSessionId = () => {
     const thread = threadId();
@@ -396,6 +396,7 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
   const feed = () => feedChat()?.feed;
 
   const session = createChatSession({
+    durableMainEnabled: durableMain,
     durableLive: () => feed()?.live(),
     durableThreadId: threadId,
     onDurableEvent: (type, id) => {
@@ -1136,8 +1137,11 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
       }
       setSearchParams({ dashboard: undefined, new: undefined }, { replace: true });
     };
-    if (mainLink && durableMain()) {
-      void fetchAgentDashboards(agentId, undefined, AbortSignal.timeout(3000)).then(
+    if (mainLink && agent()?.durable === true) {
+      // Let the shell resolve before opening the dashboard replaces the URL.
+      void getDurableMode().then(({ enabled }) =>
+        enabled ? fetchAgentDashboards(agentId, undefined, AbortSignal.timeout(3000)) : [],
+      ).then(
         (rows) => open(Array.isArray(rows) ? rows.find((row) => row.id === id)?.title ?? "Dashboard" : "Dashboard"),
         () => open("Dashboard"),
       );
@@ -1435,7 +1439,7 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
           <Show when={feedChat()} keyed fallback={
             <ChatTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} session={session} viewMode={viewMode} appViews={appViews} onUserMessage={handleViewMessage} />
           }>
-            {(chat) => <FeedTranscript agentId={params.agentId} sessionId={DURABLE_MAIN_SESSION_ID} mode={viewMode()}
+            {(chat) => <FeedTranscript agentId={params.agentId} gateway={chatGateway()} gatewayPending={agent.loading} sessionId={DURABLE_MAIN_SESSION_ID} mode={viewMode()}
               feed={chat.feed} details={chat.details} appViews={appViews} flashing={flashing()} onUserMessage={handleViewMessage}
               sending={isStreaming()}
               showUserActions={shell()} onStartThread={shell() && !threadId() && !impersonationStatus()?.active ? threads.start : undefined}
