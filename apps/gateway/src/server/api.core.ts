@@ -612,6 +612,7 @@ api.route("/", createConnectionRoutes({ canAccessAgent: callerHasAgentAccess, ge
 api.route("/", createRoomRoutes({
   getUserId: getRequestUserId,
   getRooms: (c) => (c.env as { rooms: RoomStore }).rooms,
+  getDurableWeb: (c) => (c.env as { durableWeb: DurableWeb }).durableWeb,
   isMultiUser: () => isExtensionLoaded("multiUser"),
   getSender: async (c) => durableWebSender(await getRequestAuthContext(c)),
   canAccessAgent: async (c, agentId) => !!getAgent(agentId) && await callerHasAgentAccess(c, agentId),

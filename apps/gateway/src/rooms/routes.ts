@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { parseDurableWebSend, type WebSender } from "../durable/contract.js";
+import type { DurableWeb } from "../durable/web.js";
 import { feedWindowQuery } from "../server/feed-query.js";
 import { canUseRooms } from "./access.js";
 import type { RoomStore, RoomSummary } from "./store.js";
@@ -7,6 +8,7 @@ import type { RoomStore, RoomSummary } from "./store.js";
 export function createRoomRoutes(deps: {
   getUserId: (c: Context) => Promise<string | undefined>;
   getRooms: (c: Context) => RoomStore;
+  getDurableWeb: (c: Context) => DurableWeb;
   isMultiUser: () => boolean;
   getSender: (c: Context) => Promise<WebSender>;
   canAccessAgent: (c: Context, agentId: string) => Promise<boolean>;
@@ -77,6 +79,24 @@ export function createRoomRoutes(deps: {
   routes.delete("/rooms/:roomId/agents/:agentId", roomRoute((c, rooms, room) =>
     changeAgent(c, rooms, room, c.req.param("agentId"), false), true));
 
+  routes.post("/rooms/:roomId/agents/:agentId/stop", roomRoute(async (c, rooms, room, userId) => {
+    const agentId = c.req.param("agentId") ?? "";
+    if (!rooms.membership(room.id, agentId)) return notFound(c);
+    const text = await c.req.text();
+    let body: { runId?: unknown };
+    try {
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      return c.json({ error: "Invalid stop request" }, 400);
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        (body.runId !== undefined && (typeof body.runId !== "string" || !body.runId))) {
+      return c.json({ error: "Supply a valid runId or omit it" }, 400);
+    }
+    const result = await deps.getDurableWeb(c).stopRoom(room.id, agentId, userId, body.runId);
+    return result ? c.json(result) : notFound(c);
+  }));
+
   routes.post("/rooms/:roomId/messages", roomRoute(async (c, rooms, room, userId) => {
     const body = await c.req.json().catch(() => null);
     if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ error: "Invalid room message" }, 400);
@@ -97,9 +117,19 @@ export function createRoomRoutes(deps: {
     return window ? c.json(window) : c.json({ error: "Message not found" }, 404);
   }));
 
-  routes.get("/rooms/:roomId/feed/messages/:messageId", roomRoute((c, rooms, room) => {
-    const detail = rooms.get(room.id, c.req.param("messageId") ?? "");
-    return detail ? c.json(detail) : c.json({ error: "Message not found" }, 404);
+  routes.get("/rooms/:roomId/feed/messages/:messageId", roomRoute(async (c, rooms, room, userId) => {
+    const result = rooms.get(room.id, c.req.param("messageId") ?? "");
+    if (!result) return c.json({ error: "Message not found" }, 404);
+    const { detail, source } = result;
+    if (source) {
+      const trace = await deps.getDurableWeb(c).roomDetail(room.id, source.agentId, source.ref);
+      if (!rooms.mayAccess(room.id, userId)) return notFound(c);
+      if (trace) {
+        detail.reasoning = trace.reasoning;
+        detail.toolCalls = trace.toolCalls;
+      }
+    }
+    return c.json(detail);
   }));
 
   return routes;

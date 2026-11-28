@@ -19,7 +19,7 @@ it("builds ordered attributed input from a delivery window and a public handoff 
   ];
   expect(roomInput(rows.slice(1), "pilot")).toEqual({
     eventIds: ["r_2", "r_4", "r_5"],
-    mentioned: true,
+    anchor: "r_5",
     content: "[from Scout via web]\nThe south bed is ready\n\n[from Thread digest via web]\nOrder new stakes\n\n[from Bob via web]\n@pilot Check the order",
   });
   expect(roomHandoffTranscript(rows.slice(0, 4), "pilot")).toEqual([

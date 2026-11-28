@@ -504,6 +504,7 @@ the Durable mode preference.
 | `DELETE /api/rooms/:roomId/members/:userId` | | `{ ok: true }` |
 | `POST /api/rooms/:roomId/agents` | `{ agentId }` | `{ ok: true }` |
 | `DELETE /api/rooms/:roomId/agents/:agentId` | | `{ ok: true }` |
+| `POST /api/rooms/:roomId/agents/:agentId/stop` | Optional `{ runId }` | `{ status: "stopped" \| "already_finished" }` |
 | `POST /api/rooms/:roomId/messages` | `{ clientSendId, message }` | `{ id, seq, duplicate }` |
 | `GET /api/rooms/:roomId/feed` | | `FeedWindow` |
 | `GET /api/rooms/:roomId/feed/messages/:messageId` | | `FeedDetail` |
@@ -531,6 +532,13 @@ messages. Removing an agent withdraws its queued room inputs and aborts its run.
 Room turns use Durable for active, non-sandboxed agents regardless of account
 preferences.
 
+Any current member can stop an agent registered in the room. Supply the
+`runId` from `roomRuns` to target that specific run. An absent or different
+active run returns `already_finished`. An invalid body or empty `runId` returns
+400. A missing registration or inaccessible room returns 404. Kept mentions
+start a continuation after stop. Kept unmentioned context waits for the next
+mention.
+
 Feed windows are ordered by increasing sequence. The default limit is 50 and the
 allowed range is 1–200. Supply at most one of `before`, `after`, or `around`
 with an `r_<seq>` anchor. A missing anchor or detail ID returns 404. All items
@@ -538,13 +546,22 @@ have `id`, `text`, and `timestamp` (Unix milliseconds). Member messages have
 `role: "user"`, the display name in `sender`, and `surface: "web"`. Public agent
 answers appear once with `role: "assistant"`, the agent name in `sender`, and
 `toolCallCount: 0`. Thread digests have `role: "user"` and
-`sender: "Thread digest"`. Window `live` is null and details add empty
-`reasoning` and `toolCalls` arrays.
+`sender: "Thread digest"`. Window `live` is null. The room-only `roomRuns`
+array contains `{ agentId, messageId, runId }` for each working agent.
+`messageId` is the `r_<seq>` ID of the first mention in that run's inputs.
+The array is empty when the room has no active runs.
+
+Agent message detail keeps the room message ID, timestamp, and text, and includes
+the answer's public `reasoning` and `toolCalls`, including public results. A placed
+steer begins a new answer group, matching the Main feed. Member messages,
+thread digests, and answers whose Durable trace is unavailable return empty
+trace arrays.
 
 Send `{ "type": "subscribeRoomFeed", "roomId": "orchard", "limit": 50 }` to
 `/ws`. The subscription uses the same snapshot and delta rules as the agent
-feed, with `roomId` as the feed identifier. It replaces the current feed
-subscription. Send `unsubscribeFeed` to stop. An inaccessible room returns
+feed, with `roomId` as the feed identifier. Snapshots and deltas carry the
+current `roomRuns` array, including when only run status changes. Subscribing
+replaces the current feed subscription. Send `unsubscribeFeed` to stop. An inaccessible room returns
 a WebSocket `error`. Removing a member or deleting a project ends the affected
 watches with `feed_end` and `reason: "forbidden"`. Project deletion also
 removes its room data.

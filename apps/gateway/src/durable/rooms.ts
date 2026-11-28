@@ -1,13 +1,16 @@
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import {
-  defineDoc, defineEntry, InboxDoc, LiveDoc,
+  AssistantEntry, defineDoc, defineEntry, InboxDoc, LiveDoc,
   type Conversation, type ConversationId, type EntryId, type Harness, type HarnessInspection,
-  type SettledSubmissionRecord, type SubmissionId, type Tx,
+  type ConversationWatch, type Cursor, type InboxItem, type SettledSubmissionRecord, type SubmissionId, type Tx,
 } from "@earendil-works/pi-durable";
+import type { DurableStopResult } from "@yoplai/shared";
 import { buildHandoff } from "../history/handoff.js";
 import { logError } from "../logging.js";
 import { roomHandoffTranscript, roomInput } from "../rooms/context.js";
 import type { RoomMembership, RoomStore } from "../rooms/store.js";
+import { continueStoppedRun, observeFeed, runIdFor } from "./feed.js";
+import { RoomInput } from "./state.js";
 import { roomHistoryIds, type ReadableConversation } from "./session-history.js";
 
 const context = BACKGROUND_CONTEXT;
@@ -25,6 +28,7 @@ const RoomProgress = defineDoc<{
   delivered: number;
   published: EntryId | null;
   pending: { id: SubmissionId; mentioned: boolean }[];
+  continuation?: { first: EntryId; afterTask: number; messageId: string };
 }>({
   kind: "yoplai.room-progress",
   version: 1,
@@ -35,7 +39,6 @@ const RoomProgress = defineDoc<{
   checkpointWhen: (_state, _ops, { deltasSinceBase }) => deltasSinceBase >= 100,
 });
 
-const RoomInput = defineEntry<{ roomId: string; firstSeq: number; lastSeq: number; eventIds: string[] }>("yoplai.room-input");
 const RoomSeed = defineEntry("yoplai.room-seed");
 
 export type RoomDelivery = { roomId: string; agentId: string; lastSeq: number };
@@ -56,10 +59,21 @@ type RoomHost = {
   afterCommit?(delivery: RoomDelivery, signal: AbortSignal): void | Promise<void>;
 };
 
+function keptMention(items: readonly InboxItem[]) {
+  for (const { id, mode, entry } of items) {
+    if (mode === "write" || entry?.kind !== RoomInput.kind) continue;
+    const data = entry.data;
+    if (data && typeof data === "object" && !Array.isArray(data) && data.mentioned === true && typeof data.anchor === "string") {
+      return { id, anchor: data.anchor };
+    }
+  }
+}
+
 export class RoomConversations {
   private readonly byRoom = new Map<string, RoomIdentity>();
   private readonly byConversation = new Map<ConversationId, RoomIdentity>();
   private readonly work = new Map<string, { again: boolean; done?: Promise<void> }>();
+  private readonly watches = new Map<ConversationId, ConversationWatch>();
   private readonly waiting = new Set<SubmissionId>();
   private readonly waitingForIdle = new Set<ConversationId>();
   private readonly shutdown = new AbortController();
@@ -74,6 +88,43 @@ export class RoomConversations {
   sessionRef(id: ConversationId) {
     const room = this.byConversation.get(id);
     return room && "room:" + room.roomId;
+  }
+
+  async conversationFor(roomId: string) {
+    const room = this.byRoom.get(roomId);
+    if (room && this.current(room) && this.host.active()) return this.harness.conversation(room.id, context);
+  }
+
+  async stop(roomId: string, eligible: () => boolean, runId?: string): Promise<DurableStopResult | undefined> {
+    const room = this.byRoom.get(roomId);
+    if (!room) return eligible() ? { status: "already_finished" } : undefined;
+    return this.host.mutate(room.id, async () => {
+      if (!eligible()) return;
+      if (!this.mayRun(room.id)) return { status: "already_finished" };
+      const conversation = await this.conversation(room.id);
+      for (;;) {
+        const run = (await this.harness.snapshot(LiveDoc, room.id, context))?.run;
+        const matches = run && (runId === undefined || runId === await runIdFor(this.harness, conversation, run));
+        if (!eligible()) return;
+        if (!matches) return { status: "already_finished" };
+        if (runId === undefined) {
+          await conversation.abort(context);
+          break;
+        }
+        // The harness can hand work to a new task or start the next run
+        // between the read and abort. Only retry while the public ID matches.
+        if (await this.harness.abortTask(run.taskId, context) === "marked") {
+          await this.harness.waitForTask(run.taskId, context);
+          break;
+        }
+      }
+      try {
+        await this.continueKeptInputs(room, conversation);
+      } finally {
+        this.wake(roomId);
+      }
+      return { status: "stopped" };
+    });
   }
 
   historyAudience(id: ConversationId): ReadableConversation[] | undefined {
@@ -204,10 +255,89 @@ export class RoomConversations {
       await this.seed(room, conversation, membership);
     }
     if (!this.current(room) || !this.host.active()) return;
+    await this.watchRun(room, conversation);
     await this.publishSettlements(room, conversation);
+    await this.continueKeptInputs(room, conversation);
     if (this.current(room) && this.host.active() && !this.shutdown.signal.aborted) {
       await this.deliver(room, conversation);
     }
+  }
+
+  private async watchRun(room: RoomIdentity, conversation: Conversation) {
+    if (this.watches.has(room.id)) return;
+    const generation = room.generation;
+    const watch = await conversation.watch(context, { min: 1, max: 1 });
+    this.watches.set(room.id, watch);
+    let previous: { taskId: number; first?: EntryId } | undefined;
+    const refresh = async (view: ConversationWatch["value"]) => {
+      const run = observeFeed(view).live?.run;
+      if (run?.taskId === previous?.taskId && run?.first === previous?.first && run) return;
+      previous = run;
+      try {
+        const runId = run && await runIdFor(this.harness, conversation, run);
+        let messageId: string | undefined;
+        if (run?.first !== undefined) {
+          const continuation = (await this.harness.snapshot(RoomProgress, room.id, context))?.continuation;
+          messageId = continuation?.first === run.first && continuation.afterTask < run.taskId
+            ? continuation.messageId : await this.runAnchor(room, conversation, run.first);
+        }
+        if (!this.shutdown.signal.aborted && room.generation === generation && this.current(room)) {
+          this.store.setRun(room.roomId, this.agentId, runId && messageId && this.host.active() ? { runId, messageId } : undefined);
+        }
+      } catch (error) {
+        this.report(error, room.roomId);
+      }
+    };
+    await refresh(watch.value);
+    watch.start(async (call) => {
+      if (call.kind === "value") await refresh(call.value);
+    });
+  }
+
+  private async runAnchor(room: RoomIdentity, conversation: Conversation, first: EntryId) {
+    let cursor: Cursor | undefined;
+    do {
+      const page = await conversation.entries({ order: "ascending", minEntryId: first }, 100, cursor, context);
+      for (const entry of page.items) {
+        if (AssistantEntry.is(entry)) return;
+        if (!RoomInput.is(entry)) continue;
+        if (entry.data.anchor) return entry.data.anchor;
+        if (entry.data.mentioned === undefined) {
+          const { firstSeq, lastSeq } = entry.data;
+          const prior = roomInput(this.store.events(room.roomId, firstSeq - 1, lastSeq), this.agentId);
+          if (prior?.anchor) return prior.anchor;
+        }
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
+  }
+
+  private async continueKeptInputs(room: RoomIdentity, conversation: Conversation) {
+    const { id } = conversation;
+    const live = await this.harness.snapshot(LiveDoc, id, context);
+    if (!this.mayRun(id)) return;
+    if (live?.run) {
+      if (live.run.afterRun || live.run.yield) this.waitForIdle(room, conversation);
+      return;
+    }
+    // A run stopped after it answered leaves no failure record. A failure for
+    // another reason keeps its queued context until the next mention.
+    if (live?.runFailure && live.runFailure.reason !== "aborted") return;
+    const inbox = await this.harness.snapshot(InboxDoc, id, context);
+    if (!keptMention(inbox?.items ?? [])) return;
+    const configure = await this.host.configure(conversation);
+    await conversation.commit(async (tx) => {
+      const { run, runFailure } = await tx.doc(LiveDoc, id);
+      if (run || (runFailure && runFailure.reason !== "aborted") || !this.mayRun(id)) return;
+      const next = keptMention((await tx.doc(InboxDoc, id)).items);
+      if (!next) return;
+      await configure(tx);
+      await continueStoppedRun(tx, conversation, next.id, runFailure);
+      if (runFailure?.first !== undefined) {
+        const progress = await tx.doc(RoomProgress, id);
+        progress.continuation = { first: runFailure.first, afterTask: runFailure.taskId, messageId: next.anchor };
+      }
+    }, context);
   }
 
   private async withdraw(conversation: Conversation) {
@@ -219,6 +349,9 @@ export class RoomConversations {
 
   private async invalidate(room: RoomIdentity, conversation: Conversation) {
     room.generation = null;
+    const watch = this.watches.get(room.id);
+    this.watches.delete(room.id);
+    await watch?.stop();
     // Mark the run before withdrawing kept inputs, so the current generation
     // cannot place a queued steer during cleanup.
     await conversation.abort(context);
@@ -233,6 +366,7 @@ export class RoomConversations {
       progress.published = (await tx.latestEntryId(room.id)) ?? null;
       progress.generation = null;
       progress.pending = [];
+      delete progress.continuation;
     }, context);
   }
 
@@ -263,7 +397,8 @@ export class RoomConversations {
         progress.delivered = lastSeq;
         return;
       }
-      const { mentioned, content, eventIds } = batch;
+      const { anchor, content, eventIds } = batch;
+      const mentioned = anchor !== undefined;
       const { run } = await tx.doc(LiveDoc, room.id);
       if (run && (this.host.holdsReplies() || (run.afterRun && !mentioned))) return { idle: true } as const;
       if (!run && !mentioned && (await tx.doc(InboxDoc, room.id)).items.some(({ mode }) => mode !== "write")) return;
@@ -272,7 +407,7 @@ export class RoomConversations {
         if (!configure) return { configure: true } as const;
         await configure(tx);
       }
-      const data = { roomId: room.roomId, firstSeq: progress.delivered + 1, lastSeq, eventIds };
+      const data = { roomId: room.roomId, firstSeq: progress.delivered + 1, lastSeq, eventIds, mentioned, ...(anchor ? { anchor } : {}) };
       const requestId = `room:${room.roomId}:${this.agentId}:${lastSeq}`;
       const entry = { kind: RoomInput.kind, data };
       const id = await conversation.submit(tx, mentioned || run
@@ -390,5 +525,6 @@ export class RoomConversations {
   async close() {
     this.shutdown.abort();
     await Promise.all([...this.work.values()].map(({ done }) => done));
+    await Promise.all([...this.watches.values()].map((watch) => watch.stop()));
   }
 }

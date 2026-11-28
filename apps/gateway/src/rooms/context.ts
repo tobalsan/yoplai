@@ -12,9 +12,10 @@ function visibleTo(rows: RoomMessage[], agentId: string) {
 export function roomInput(rows: RoomMessage[], agentId: string) {
   const events = visibleTo(rows, agentId);
   if (!events.length) return;
+  const anchor = events.find((row) => row.authorKind !== "agent" && row.authorKind !== "digest" && row.mentions?.includes(agentId));
   return {
     eventIds: events.map(({ id }) => id),
-    mentioned: events.some((row) => row.authorKind !== "agent" && row.authorKind !== "digest" && row.mentions?.includes(agentId)),
+    anchor: anchor?.id,
     content: events.map((row) =>
       "[from " + authorName(row).replace(/[\r\n[\]]/g, " ") + " via web]\n" + row.text).join("\n\n"),
   };

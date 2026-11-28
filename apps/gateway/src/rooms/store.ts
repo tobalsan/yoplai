@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { FeedDetail, FeedWindow } from "@yoplai/shared";
+import type { FeedDetail, FeedWindow, RoomRunStatus } from "@yoplai/shared";
 import type { FeedSelector } from "../durable/feed.js";
 import type { WebSender } from "../durable/contract.js";
 import { projectRoomMessage, type RoomMessage } from "./projection.js";
@@ -23,6 +23,7 @@ export type RoomEvent =
   | { type: "appended"; roomId: string; row: RoomMessage }
   | { type: "memberRemoved"; roomId: string; userId: string }
   | { type: "agentAdded" | "agentRemoved"; roomId: string; agentId: string }
+  | { type: "agentStatus"; roomId: string }
   | { type: "roomDeleted"; roomId: string };
 
 function decode(row: StoredMessage): RoomMessage {
@@ -51,6 +52,7 @@ function migrate(db: Database.Database) {
 
 export class RoomStore {
   private readonly listeners = new Set<(event: RoomEvent) => void>();
+  private readonly runs = new Map<string, Map<string, RoomRunStatus>>();
   private readonly filename: string;
   private db?: Database.Database;
   private closed = false;
@@ -217,7 +219,21 @@ export class RoomStore {
       db.prepare("INSERT OR REPLACE INTO room_agent_generations VALUES (?, ?, ?)").run(roomId, agentId, row.generation);
       return true;
     }).immediate();
-    if (removed) this.emit({ type: "agentRemoved", roomId, agentId });
+    if (removed) {
+      this.setRun(roomId, agentId);
+      this.emit({ type: "agentRemoved", roomId, agentId });
+    }
+  }
+
+  setRun(roomId: string, agentId: string, run?: Omit<RoomRunStatus, "agentId">) {
+    const agents = this.runs.get(roomId) ?? new Map<string, RoomRunStatus>();
+    const previous = agents.get(agentId);
+    if (previous?.runId === run?.runId && previous?.messageId === run?.messageId) return;
+    if (run) agents.set(agentId, { agentId, ...run });
+    else agents.delete(agentId);
+    if (agents.size) this.runs.set(roomId, agents);
+    else this.runs.delete(roomId);
+    this.emit({ type: "agentStatus", roomId });
   }
 
   membership(roomId: string, agentId: string): RoomMembership | undefined {
@@ -240,7 +256,10 @@ export class RoomStore {
   deleteRoom(roomId: string, ownerUserId: string) {
     if (!this.db && !fs.existsSync(this.filename)) return;
     const { changes } = this.open().prepare("DELETE FROM rooms WHERE id = ? AND ownerUserId = ?").run(roomId, ownerUserId);
-    if (changes) this.emit({ type: "roomDeleted", roomId });
+    if (changes) {
+      this.runs.delete(roomId);
+      this.emit({ type: "roomDeleted", roomId });
+    }
   }
 
   lastSeq(roomId: string): number {
@@ -307,12 +326,21 @@ export class RoomStore {
           break;
       }
     }
-    return { items: this.events(roomId, start, end).map(projectRoomMessage), hasBefore: start > 0, hasAfter: end < last, live: null };
+    const roomRuns = [...(this.runs.get(roomId)?.values() ?? [])].sort((a, b) => a.agentId.localeCompare(b.agentId));
+    return {
+      items: this.events(roomId, start, end).map(projectRoomMessage),
+      hasBefore: start > 0, hasAfter: end < last, live: null, roomRuns,
+    };
   }
 
-  get(roomId: string, id: string): FeedDetail | undefined {
+  get(roomId: string, id: string) {
     const row = this.open().prepare("SELECT * FROM room_log WHERE roomId = ? AND id = ?")
       .get(roomId, id) as StoredMessage | undefined;
-    return row && { ...projectRoomMessage(decode(row)), reasoning: [], toolCalls: [] };
+    if (!row) return;
+    const message = decode(row);
+    const detail: FeedDetail = { ...projectRoomMessage(message), reasoning: [], toolCalls: [] };
+    const source = message.authorKind === "agent" && message.agentId && message.ref
+      ? { agentId: message.agentId, ref: message.ref } : undefined;
+    return { detail, source };
   }
 }

@@ -6,7 +6,7 @@ import {
 import { isSafeModelAccessError } from "../desktop/model-auth.js";
 import { draftDigest } from "./review.js";
 import { TURN_PLAN, turnPlanSchema } from "./turn-plan.js";
-import { ChildDigestEntry, FailureNoteEntry, InputEntry, type ReviewDecision } from "./state.js";
+import { ChildDigestEntry, FailureNoteEntry, InputEntry, RoomInput, type ReviewDecision } from "./state.js";
 
 type AssistantBlock =
   | { type: "text"; text: string }
@@ -49,7 +49,7 @@ function failureRecord(id: EntryRecord["id"], timestamp: number, kind: RunFailur
 
 export function feedBoundary(entry: EntryRecord) {
   // Only boundaries that close the adjacent answer can end a window scan.
-  return InputEntry.is(entry) || ChildDigestEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
+  return InputEntry.is(entry) || RoomInput.is(entry) || ChildDigestEntry.is(entry) || (FailureNoteEntry.is(entry) && !!entry.model?.length);
 }
 
 export function activeDurableContextUsage(entries: readonly EntryRecord[]): { inputTokens: number; model?: string } {
@@ -226,6 +226,16 @@ export function projectRecords(
       records.push({ kind: "user", id: "m_" + entry.id, sender, surface: data.surface ?? "web", message: {
         role: "user", timestamp: data.timestamp, content: [{ type: "text", text }],
       } });
+    } else if (RoomInput.is(entry)) {
+      flush();
+      anchor = undefined;
+      const message = entry.model?.[0];
+      if (message?.role === "user") {
+        const content = typeof message.content === "string"
+          ? [{ type: "text" as const, text: message.content }]
+          : message.content.filter((block) => block.type === "text");
+        records.push({ kind: "user", id: "m_" + entry.id, sender: "Room", surface: "web", message: { ...message, content } });
+      }
     } else if (FailureNoteEntry.is(entry)) {
       flush();
       anchor = undefined;

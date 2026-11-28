@@ -35,6 +35,7 @@ export const MainMap = defineDoc<MainIdentityMap>({
 });
 
 export const InputEntry = defineEntry<WebInput | ChannelEntry>("yoplai.web-input");
+export const RoomInput = defineEntry<{ roomId: string; firstSeq: number; lastSeq: number; eventIds: string[]; mentioned?: boolean; anchor?: string }>("yoplai.room-input");
 export const ChildSeedEntry = defineEntry("yoplai.child-seed");
 export const ChildInputEntry = defineEntry<{
   timestamp: number;

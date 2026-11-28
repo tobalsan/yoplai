@@ -246,7 +246,7 @@ it("keeps room tool scope fixed through both members' steers and refuses private
     expect(mainFolders).not.toContain(roomExecutions[0]?.folder);
 
     const request = gateway.callCount();
-    const blocked = ["topics_get", "plan_get", "plan_update", "legacy_history", "read", "write", "edit", "bash", "codemode"];
+    const blocked = ["legacy_history", "read", "write", "edit", "bash", "codemode"];
     gateway.script([
       { tool: "codemode", args: { code: `await tools.${resourceTool}({});` } },
       { tool: "topics_get" },
@@ -255,9 +255,14 @@ it("keeps room tool scope fixed through both members' steers and refuses private
     await say(gateway, "bob", room.path, "blocked", "@pilot Check the tools available here.");
     await waitForAnswer(gateway, "bob", room.path, "Room tools checked.");
     expect(gateway.offeredTools(request)).toContain(resourceTool);
+    expect(gateway.offeredTools(request)).toEqual(expect.arrayContaining(["topics_get", "plan_get", "plan_update"]));
     for (const tool of blocked) expect(gateway.offeredTools(request)).not.toContain(tool);
     expect(gateway.requests.at(-1)?.messages.filter(({ role }) => role === "toolResult").slice(-3)).toMatchObject(
-      ["codemode", "topics_get", "plan_get"].map((toolName) => ({ toolName, isError: true })),
+      [
+        { toolName: "codemode", isError: true },
+        { toolName: "topics_get", isError: false, content: [{ text: '{"topics":[]}' }] },
+        { toolName: "plan_get", isError: false, content: [{ text: '{"plan":{"goals":[],"nextSteps":[],"updatedAt":null},"drift":[]}' }] },
+      ],
     );
     expect(fixture.executions).toHaveLength(6);
 
