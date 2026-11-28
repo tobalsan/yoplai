@@ -48,11 +48,7 @@ vi.mock("../api/mcp-servers", () => ({
 }));
 
 const { ConnectToolsPrompt, buildConnectRows } = await import("./ConnectToolsPrompt");
-const { setTourStep, openConnectPrompt, clearConnectPromptRequest } = await import("../onboarding/state");
-const { TOUR_STEPS } = await import("../onboarding/steps");
-// First tour step shown on agent chat pages, and one shown elsewhere (home).
-const CHAT_STEP = TOUR_STEPS.findIndex((step) => step.route.test("/chat/scribe"));
-const HOME_STEP = TOUR_STEPS.findIndex((step) => step.route.test("/"));
+const { openConnectPrompt, clearConnectPromptRequest } = await import("./connect-prompt-state");
 const { setCapabilitiesForTests, resetCapabilitiesForTests } = await import("../lib/capabilities");
 
 const base = {
@@ -147,7 +143,6 @@ async function mount() {
 describe("ConnectToolsPrompt", () => {
   beforeEach(() => {
     setCapabilitiesForTests({ multiUser: true, user: { id: "u1", role: "user" } } as never);
-    setTourStep(null);
     clearConnectPromptRequest();
     setPathname("/chat/scribe");
     m.fetchConnectPrompt.mockReset().mockResolvedValue({ supported: true, seen: false, at: null });
@@ -231,43 +226,6 @@ describe("ConnectToolsPrompt", () => {
     window.dispatchEvent(new MessageEvent("message", { data: { type: "yoplai-oauth" } }));
     await flush();
     expect(m.patchAgentExtension).toHaveBeenCalledWith("scribe", "gmail", { credentialScope: "personal", config: {} });
-  });
-
-  it("ignores reopen requests while a tour step shows here and closes when one appears", async () => {
-    setTourStep(CHAT_STEP);
-    await mount();
-    openConnectPrompt("scribe");
-    await flush();
-    expect(container.querySelector(".connect-prompt")).toBeNull();
-    setTourStep(null);
-    await flush();
-    expect(container.querySelector(".connect-prompt")).not.toBeNull();
-    setTourStep(CHAT_STEP);
-    await flush();
-    expect(container.querySelector(".connect-prompt")).toBeNull();
-    expect(m.markConnectPromptSeen).not.toHaveBeenCalled();
-  });
-
-  it("stays hidden while a tour step shows on this chat page, then opens when the tour ends", async () => {
-    setTourStep(CHAT_STEP);
-    await mount();
-    expect(container.querySelector(".connect-prompt")).toBeNull();
-    expect(m.fetchConnectPrompt).not.toHaveBeenCalled();
-    setTourStep(null);
-    await flush();
-    expect(container.querySelector(".connect-prompt")).not.toBeNull();
-  });
-
-  it("shows for a new user landing in chat while the pending tour step waits on another page", async () => {
-    expect(HOME_STEP).toBeGreaterThanOrEqual(0);
-    setTourStep(HOME_STEP);
-    await mount();
-    expect(container.querySelector(".connect-prompt")).not.toBeNull();
-    // Following the tour home brings its step on screen there and closes the prompt unseen.
-    setPathname("/");
-    await flush();
-    expect(container.querySelector(".connect-prompt")).toBeNull();
-    expect(m.markConnectPromptSeen).not.toHaveBeenCalled();
   });
 
   it("stays hidden once seen", async () => {

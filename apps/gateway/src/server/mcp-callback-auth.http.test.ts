@@ -55,7 +55,6 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     const { createForkStore } = await import("../../../../packages/extensions/multi-user/src/forks.js");
     const { createMembershipStore } = await import("../../../../packages/extensions/multi-user/src/membership.js");
     const { createAccessResolver } = await import("../../../../packages/extensions/multi-user/src/access.js");
-    const { createOnboardingStore } = await import("../../../../packages/extensions/multi-user/src/onboarding.js");
     const { createConnectPromptStore } = await import("../../../../packages/extensions/multi-user/src/connect-prompt.js");
     const { default: Database } = await import("better-sqlite3");
     const db = new Database(":memory:");
@@ -65,7 +64,6 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     dbMod.ensureTeamsTable(db);
     dbMod.ensureTeamMembersTable(db);
     dbMod.ensureAgentForksTable(db);
-    dbMod.ensureUserOnboardingTable(db);
     dbMod.ensureUserAgentConnectPromptTable(db);
     db.prepare("INSERT INTO teams (id, name, createdBy) VALUES ('team-red', 'Red', 'alice')").run();
     const forks = createForkStore({ db, agentExists: (id) => id === "allowed-agent" });
@@ -76,7 +74,6 @@ describe("MCP OAuth callback past the outer authentication gate (real socket)", 
     const access = createAccessResolver({ membership, forks });
     setMultiUserRuntime({
       db, forks, membership, access,
-      onboarding: createOnboardingStore(db),
       connectPrompt: createConnectPromptStore(db),
       // The session lookup: a header names the session. No header is a request with no cookie.
       auth: { api: { getSession: async ({ headers }: { headers: Headers }) => {

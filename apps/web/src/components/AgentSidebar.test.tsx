@@ -93,7 +93,7 @@ const { setSidebarCollapsedPersistent } = await import("../lib/layout");
 const { refreshScheduleAlerts } = await import("../lib/schedule-alerts");
 const { Router, Route } = await import("@solidjs/router");
 const { SessionSearch } = await import("./SessionSearch");
-const { connectPromptRequest, clearConnectPromptRequest } = await import("../onboarding/state");
+const { connectPromptRequest, clearConnectPromptRequest } = await import("./connect-prompt-state");
 const { resetCapabilitiesForTests, setCapabilitiesForTests } = await import(
   "../lib/capabilities"
 );
@@ -267,7 +267,7 @@ describe("AgentSidebar", () => {
     }
   });
 
-  it("shows multi-user themes and Logout below the tour links", async () => {
+  it("shows multi-user themes and Logout below Connect tools", async () => {
     useSessionMock.mockReturnValueOnce(() => ({ data: { user: { name: "Test User", email: "test@example.com" } } }));
     setCapabilitiesForTests({ multiUser: true, user: { id: "u1" } });
     setPathname("/chat/scribe");
@@ -282,7 +282,6 @@ describe("AgentSidebar", () => {
       const connect = await sidebar.findByRole("button", { name: "Connect tools" });
       const buttons = sidebar.getAllByRole("button");
       expect(buttons.indexOf(toggle)).toBeGreaterThan(buttons.indexOf(connect));
-      expect(buttons.indexOf(toggle)).toBeGreaterThan(buttons.indexOf(sidebar.getByRole("button", { name: "Restart tour" })));
 
       fireEvent.keyDown(toggle, { key: "ArrowUp" });
       const menu = within(sidebar.getByRole("menu"));
@@ -1129,7 +1128,7 @@ describe("AgentSidebar", () => {
     vi.useRealTimers();
   });
 
-  it("shows Connect tools after Restart tour on agent chat routes and opens the prompt", async () => {
+  it("shows Connect tools on agent chat routes and opens the prompt", async () => {
     setCapabilitiesForTests({
       multiUser: true,
       user: { id: "u1", role: "user" },
@@ -1143,13 +1142,9 @@ describe("AgentSidebar", () => {
       () => <AgentSidebar collapsed={collapsed} />,
       container
     );
-    await vi.waitFor(() => expect(container.textContent).toContain("Connect tools"));
-    // Both links share one row.
-    const labels = Array.from(container.querySelectorAll<HTMLButtonElement>(".tour-links > button.tour-restart")).map(
-      (b) => b.textContent?.trim()
-    );
-    expect(labels).toEqual(["Restart tour", "Connect tools"]);
-    container.querySelectorAll<HTMLButtonElement>("button.tour-restart")[1].click();
+    const button = await vi.waitFor(() => getByRole(container, "button", { name: "Connect tools" }));
+    expect(within(container).queryByText("Restart tour")).toBeNull();
+    button.click();
     expect(connectPromptRequest()?.agentId).toBe("scribe");
     clearConnectPromptRequest();
     dispose();
@@ -1172,8 +1167,8 @@ describe("AgentSidebar", () => {
     );
     await vi.waitFor(() => expect(fetchTopExtensionsMock).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container.textContent).toContain("Restart tour");
-    expect(container.textContent).not.toContain("Connect tools");
+    expect(within(container).queryByText("Restart tour")).toBeNull();
+    expect(queryByRole(container, "button", { name: "Connect tools" })).toBeNull();
     dispose();
   });
 
@@ -1196,8 +1191,8 @@ describe("AgentSidebar", () => {
       () => <AgentSidebar collapsed={collapsed} />,
       container
     );
-    expect(container.textContent).toContain("Restart tour");
-    expect(container.textContent).not.toContain("Connect tools");
+    expect(within(container).queryByText("Restart tour")).toBeNull();
+    expect(queryByRole(container, "button", { name: "Connect tools" })).toBeNull();
     dispose();
   });
 

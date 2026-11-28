@@ -99,7 +99,7 @@ export function CredentialScopeTabs(props: {
   return (
     <div class="cred-tabs" data-active={props.value}>
       <style>{CREDENTIAL_SCOPE_TABS_STYLES}</style>
-      <div class="cred-tabs-list" data-tour="cred-tabs" role="tablist" aria-label="Credentials for" onKeyDown={onKeyDown}>
+      <div class="cred-tabs-list" role="tablist" aria-label="Credentials for" onKeyDown={onKeyDown}>
         <For each={props.hidePersonal ? TABS.filter((tab) => tab.scope === "team") : TABS}>
           {(tab) => (
             <button

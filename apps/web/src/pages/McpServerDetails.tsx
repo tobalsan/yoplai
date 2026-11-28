@@ -316,7 +316,7 @@ export function McpServerDetails() {
   return (
     <>
       <div class="ext-details mcp-details">
-        <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`} class="ext-details-back" data-tour="back-to-agent">← Back to agent</A>
+        <A href={`/agents/${encodeURIComponent(params.agentId)}/edit`} class="ext-details-back">← Back to agent</A>
         <Show when={oauthResult?.status === "error" && oauthResult}>
           {(result) => <div class="oauth-error" role="alert">{result().error}</div>}
         </Show>

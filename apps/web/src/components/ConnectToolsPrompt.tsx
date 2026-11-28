@@ -2,8 +2,7 @@ import { A, useLocation } from "@solidjs/router";
 import { For, Show, createEffect, createMemo, createResource, createSignal, on, onCleanup } from "solid-js";
 import { normalizeMcpServerUrl } from "@yoplai/shared/mcp-url";
 import { fetchAgents } from "../api/agents";
-import { clearConnectPromptRequest, connectPromptRequest, tourStep } from "../onboarding/state";
-import { TOUR_STEPS } from "../onboarding/steps";
+import { clearConnectPromptRequest, connectPromptRequest } from "./connect-prompt-state";
 import { fetchConnectPrompt, markConnectPromptSeen } from "../api/connect-prompt";
 import {
   fetchAgentExtensions,
@@ -15,7 +14,7 @@ import {
 import { fetchMcpServers, mcpDisplayName, type McpServer } from "../api/mcp-servers";
 import { fetchTopExtensions, type TopExtensions } from "../api/top-extensions";
 import { capabilities, capabilitiesReady } from "../lib/capabilities";
-import { chatRouteSession, stripBase } from "../lib/path";
+import { chatRouteSession } from "../lib/path";
 import { ExtensionConfigForm } from "../pages/ExtensionConfigForm";
 import { oauthAuthorizeUrl } from "../api/oauth";
 import { onOAuthReturn, openOAuthPopup } from "../lib/oauth-popup";
@@ -157,12 +156,6 @@ export function ConnectToolsPrompt() {
   const [configuring, setConfiguring] = createSignal<ConnectRow | null>(null);
   const [error, setError] = createSignal<string>();
   const routeAgentId = createMemo(() => (chatRouteSession(location.pathname, "").agentId ?? null));
-  // The tour can be pending on another page (e.g. a new user landing straight in
-  // a chat while its first step waits on home); only a step shown here blocks the prompt.
-  const tourShownHere = createMemo(() => {
-    const step = tourStep();
-    return step !== null && !!TOUR_STEPS[step]?.route.test(stripBase(location.pathname));
-  });
   const eligible = () =>
     capabilitiesReady() && capabilities.multiUser === true && Boolean(capabilities.user);
 
@@ -192,12 +185,12 @@ export function ConnectToolsPrompt() {
     }
   };
 
-  // Auto-open: no tour step on this page, never seen, something needs action.
+  // Auto-open: never seen and something needs action.
   createEffect(
     on(
-      () => [eligible(), routeAgentId(), tourShownHere()] as const,
-      ([ok, agentId, tourHere]) => {
-        if (!ok || !agentId || tourHere || shownFor()) return;
+      () => [eligible(), routeAgentId()] as const,
+      ([ok, agentId]) => {
+        if (!ok || !agentId || shownFor()) return;
         let stale = false;
         onCleanup(() => {
           stale = true;
@@ -219,19 +212,11 @@ export function ConnectToolsPrompt() {
     )
   );
 
-  // Never alongside the tour: a step showing here closes the prompt without marking it seen.
-  createEffect(
-    on(tourShownHere, (tourHere) => {
-      if (tourHere) setShownFor(null);
-    })
-  );
-
   // Manual open from the sidebar button.
   createEffect(() => {
     const request = connectPromptRequest();
     if (!request) return;
     clearConnectPromptRequest();
-    if (tourShownHere()) return;
     setRows([]);
     setError(undefined);
     setLoading(true);
@@ -289,7 +274,7 @@ export function ConnectToolsPrompt() {
   };
 
   return (
-    <Show when={tourShownHere() ? null : shownFor()} keyed>
+    <Show when={shownFor()} keyed>
       {(agentId) => (
         <>
           <div class="connect-prompt-backdrop" onClick={close}>

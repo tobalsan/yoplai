@@ -20,7 +20,7 @@ import { DurableAgentList } from "./DurableAgentList";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
-import { openConnectPrompt, restartTour } from "../onboarding/state";
+import { openConnectPrompt } from "./connect-prompt-state";
 import { EMPTY_TOP_EXTENSIONS, fetchTopExtensions } from "../api/top-extensions";
 import { fetchGatewayList } from "../api/gateway";
 import { chatRouteSession, stripBase } from "../lib/path";
@@ -527,7 +527,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
               <span class="nav-full">Agents</span>
               <ScheduleAlertDot />
             </A>
-            <A href="/skills" class="nav-link" classList={{ active: selectedPath().startsWith("/skills") }} title="Skills" data-tour="nav-skills">
+            <A href="/skills" class="nav-link" classList={{ active: selectedPath().startsWith("/skills") }} title="Skills">
               <i class="fa-solid fa-book-open nav-icon" aria-hidden="true" />
               <span class="nav-full">Skills</span>
             </A>
@@ -879,30 +879,19 @@ export function AgentSidebar(props: AgentSidebarProps) {
         )}</Show>
         <div class="sidebar-footer">
           <Show when={capabilities.multiUser && capabilities.user}>
-            <div class="tour-links">
-              <button
-                type="button"
-                class="tour-restart"
-                onClick={() => {
-                  void restartTour()
-                    .then(() => navigate("/"))
-                    .catch(() => undefined);
-                }}
-              >
-                Restart tour
-              </button>
-              <Show when={hasTopExtensions() && chatRouteSession(location.pathname, location.search).agentId}>
-                {(agentId) => (
+            <Show when={hasTopExtensions() && chatRouteSession(location.pathname, location.search).agentId}>
+              {(agentId) => (
+                <div class="sidebar-connect-tools">
                   <button
                     type="button"
-                    class="tour-restart"
+                    class="sidebar-connect-tools-button"
                     onClick={() => openConnectPrompt(agentId())}
                   >
                     Connect tools
                   </button>
-                )}
-              </Show>
-            </div>
+                </div>
+              )}
+            </Show>
           </Show>
           <Show when={capabilities.multiUser}>
             <Suspense>
@@ -1390,13 +1379,13 @@ export function AgentSidebar(props: AgentSidebarProps) {
           border-top: 1px solid var(--border-default);
         }
 
-        .tour-links {
+        .sidebar-connect-tools {
           display: flex;
           gap: 10px;
           margin: 2px 0 0 10px;
         }
 
-        .tour-restart {
+        .sidebar-connect-tools-button {
           display: block;
           margin: 0;
           padding: 0;
@@ -1408,7 +1397,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           cursor: pointer;
         }
 
-        .tour-restart:hover {
+        .sidebar-connect-tools-button:hover {
           opacity: 1;
           text-decoration: underline;
         }

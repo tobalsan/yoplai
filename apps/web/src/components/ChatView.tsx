@@ -1576,7 +1576,6 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
           <textarea
             ref={textareaRef}
             class="input"
-            data-tour="composer"
             placeholder={
               impersonationStatus()?.active
                 ? "Read-only — exit impersonation to send."
@@ -1600,7 +1599,6 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
           fallback={
             <button
               class="pill-btn send-btn"
-              data-tour="send"
               onClick={handleSend}
               disabled={
                 impersonationStatus()?.active ||
