@@ -69,6 +69,7 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Fixed
 
+- Main and private threads show messages and working feedback immediately, and keep one activity trace across tool rounds.
 - Device commands in Durable Main use the connected chat's approval settings and workspace folder.
 - Attach images and documents in Durable Main on web and desktop. Refused sends restore the draft and show the gateway's reason.
 - Durable memory keeper accepts fenced JSON replies and gives reasoning models enough time and output room. The compaction eval counts a keeper call as OK only when its memory update was committed, and uses prose padding.

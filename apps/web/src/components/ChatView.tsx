@@ -965,10 +965,12 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
     setThreadPosting((pending) => new Set([...pending, scope]));
     setDurableSendError("");
     jumpToLatest();
+    const clearPending = feed()?.addPendingSend(text);
     try {
       await sendThreadMessage(params.agentId, thread, text, request.id);
       threadSendRetries.delete(scope);
     } catch (error) {
+      clearPending?.();
       threadSendRetries.set(scope, request);
       if (currentSession() === scope) setDurableSendError(error instanceof Error ? error.message : "Could not send the message.");
       throw error;
@@ -1032,6 +1034,7 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
       jumpToLatest();
     }
     const draftScope = main ? currentSession() : undefined;
+    const clearPending = main ? feed()?.addPendingSend(message.text || "Attached file(s).") : undefined;
     let rejected = false;
     const restoreDraft = () => {
       if (draftScope !== currentSession()) return;
@@ -1047,8 +1050,13 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
       const result = await session.send({
         text: message.text,
         pendingFiles: currentPendingFiles,
-        onRejected: main ? restoreDraft : undefined,
+        onDurableFailure: main ? (code) => {
+          const rejected = code === "send_rejected";
+          clearPending?.(rejected);
+          if (rejected) restoreDraft();
+        } : undefined,
       });
+      if (result.kind === "blocked") clearPending?.();
       if (result.kind === "sent" && (!main || draftScope === currentSession())) {
         message.sent();
         if (!rejected && (!main || input() === draftText)) {
@@ -1057,6 +1065,9 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
         }
         if (!main) scrollToBottom(true);
       }
+    } catch (error) {
+      clearPending?.();
+      throw error;
     } finally {
       if (main) submittingDurableDraft = false;
     }
@@ -1426,6 +1437,7 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
           }>
             {(chat) => <FeedTranscript agentId={params.agentId} sessionId={DURABLE_MAIN_SESSION_ID} mode={viewMode()}
               feed={chat.feed} details={chat.details} appViews={appViews} flashing={flashing()} onUserMessage={handleViewMessage}
+              sending={isStreaming()}
               showUserActions={shell()} onStartThread={shell() && !threadId() && !impersonationStatus()?.active ? threads.start : undefined}
               threadActionBusy={threads.busy()} />}
           </Show>

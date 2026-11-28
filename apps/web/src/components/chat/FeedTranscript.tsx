@@ -1,9 +1,8 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show } from "solid-js";
-import type { FeedDetail, FeedItem, FeedToolCall, TurnPlan } from "@yoplai/shared/types";
+import type { FeedDetail, FeedItem, FeedLive, FeedToolCall, TurnPlan } from "@yoplai/shared/types";
 import type { FullToolResultMessage, HistoryViewMode } from "../../api/types";
 import { fetchFeedDetail } from "../../api/feed";
 import { formatTimestamp } from "../../lib/format";
-import { groupActivityItems } from "../../lib/chat-activity";
 import { writeReplyClipboard } from "../../lib/clipboard";
 import { formatReplyClipboard } from "../../lib/reply-clipboard";
 import { CopyButton } from "../CopyButton";
@@ -14,7 +13,7 @@ import type { createFeedWindow } from "./feed-window";
 type Assistant = Extract<FeedItem, { role: "assistant" }>;
 
 export function createFeedDetails(agentId: string, beforeChange: () => void, threadId?: string) {
-  type Cached = { text: string; count: number; activity?: string; detail?: FeedDetail; controller: AbortController };
+  type Cached = { text: string; count: number; activity?: string; detail?: FeedDetail; loaded?: true; controller: AbortController };
   const cache = new Map<string, Cached>();
   const [revision, setRevision] = createSignal(0);
   onCleanup(() => cache.forEach(({ controller }) => controller.abort()));
@@ -23,11 +22,12 @@ export function createFeedDetails(agentId: string, beforeChange: () => void, thr
     entry?.text === item.text && entry.count === item.toolCallCount;
 
   return {
-    get(item: FeedItem) {
+    get(item: FeedItem, freshness?: "settled") {
       if (item.role !== "assistant" || !item.toolCallCount) return undefined;
       revision();
       const entry = cache.get(item.id);
-      return matches(entry, item) ? entry?.detail : undefined;
+      if (freshness === "settled" && (!entry?.loaded || entry.activity || !matches(entry, item))) return undefined;
+      return entry?.detail;
     },
     load(item: FeedItem, activity?: string) {
       if (item.role !== "assistant" || !item.toolCallCount) return;
@@ -41,18 +41,19 @@ export function createFeedDetails(agentId: string, beforeChange: () => void, thr
         cache.get(oldest)?.controller.abort();
         cache.delete(oldest);
       }
-      const detail = matching ? previous?.detail : undefined;
+      const detail = previous?.detail;
       const controller = new AbortController();
       const entry = { text: item.text, count: item.toolCallCount, activity, controller, detail };
       cache.set(item.id, entry);
       void fetchFeedDetail(agentId, item.id, controller.signal, threadId).then((detail) => {
         if (controller.signal.aborted) return;
         beforeChange();
-        cache.set(item.id, { ...entry, detail });
+        cache.set(item.id, { ...entry, detail, loaded: true });
         setRevision((value) => value + 1);
       }, () => {
         if (controller.signal.aborted) return;
-        cache.delete(item.id);
+        if (previous?.detail) cache.set(item.id, previous);
+        else cache.delete(item.id);
       });
     },
   };
@@ -98,44 +99,90 @@ type TranscriptProps = {
   onUserMessage: (viewKey: string, text: string) => Promise<void>;
 };
 type ToolRow = Extract<ActivityItem, { type: "tool" }> & { id: string };
+type TraceEntry = Extract<ActivityItem, { type: "thinking" }> | { type: "tool"; call: FeedToolCall };
+
+function WorkingIndicator() {
+  return <div class="message assistant thinking no-anim" role="status" aria-label="Working">
+    <div class="thinking-dots" aria-hidden="true"><span /><span /><span /></div>
+  </div>;
+}
 
 function FeedActivity(props: TranscriptProps & {
-  reasoning: string[];
-  calls: FeedToolCall[];
+  detail?: FeedDetail;
+  settled?: FeedDetail;
+  live?: FeedLive;
   timestamp: number;
-  live?: boolean;
+  waiting: boolean;
 }) {
-  const groups = createMemo(() => {
-    const items: ActivityItem[] = [
-      ...props.reasoning.map((content): ActivityItem => ({ type: "thinking", content })),
-      ...props.calls.map((call): ToolRow => ({
+  const running = createMemo(() => !!props.live);
+  // The live projection contains only one round. Keep earlier entries in place until
+  // detail catches up, and update the overlapping call without losing its result.
+  const entries = createMemo<TraceEntry[]>((previous) => {
+    const settled = props.settled;
+    if (settled) return [
+      ...settled.reasoning.map((content): TraceEntry => ({ type: "thinking", content })),
+      ...settled.toolCalls.map((call): TraceEntry => ({ type: "tool", call })),
+    ];
+    const next = previous.slice();
+    const toolIndices = new Map(next.flatMap((entry, index) => entry.type === "tool" ? [[entry.call.id, index] as const] : []));
+    for (const source of [props.detail, props.live]) {
+      if (!source) continue;
+      for (const content of source.reasoning) {
+        const index = next.findIndex((entry) => entry.type === "thinking" &&
+          (entry.content.startsWith(content) || content.startsWith(entry.content)));
+        const earlier = next[index];
+        if (!earlier) next.push({ type: "thinking", content });
+        else if (earlier.type === "thinking" && content.length > earlier.content.length) {
+          next[index] = { type: "thinking", content };
+        }
+      }
+      for (const call of source.toolCalls) {
+        const index = toolIndices.get(call.id);
+        if (index === undefined) {
+          toolIndices.set(call.id, next.length);
+          next.push({ type: "tool", call });
+          continue;
+        }
+        const existing = next[index] as Extract<TraceEntry, { type: "tool" }>;
+        const state = call.status === "running" && existing.call.status !== "running" ? existing.call : call;
+        next[index] = { type: "tool", call: {
+          ...existing.call, ...call, status: state.status, isError: state.isError,
+          result: call.result ?? existing.call.result, view: call.view ?? existing.call.view,
+        } };
+      }
+    }
+    return next;
+  }, []);
+  const rows = createMemo(() => {
+    const activity: ActivityItem[] = [];
+    const apps: ToolRow[] = [];
+    for (const entry of entries()) {
+      if (entry.type === "thinking") {
+        activity.push(entry);
+        continue;
+      }
+      const { call } = entry;
+      const row: ToolRow = {
         type: "tool", id: call.id, name: call.name, arguments: call.arguments,
         parentToolCallId: call.parentToolCallId, status: call.status,
         result: toolResult(call, props.timestamp), at: props.timestamp,
-      })).filter((call) => !props.live || !call.result?.view || !props.appViews.isLiveDuplicate(call.id)),
-    ];
-    return groupActivityItems(items, (item) => item.type === "thinking" || !item.result?.view);
+      };
+      if (row.result?.view) apps.push(row);
+      else activity.push(row);
+    }
+    return { activity, apps };
   });
-  return <Index each={groups()}>{(group) => {
-    const activity = () => {
-      const current = group();
-      return current.kind === "activity" ? current.items : undefined;
-    };
-    const app = () => {
-      const current = group();
-      return current.kind === "message" ? current.item as ToolRow : undefined;
-    };
-    return <>
-      <Show when={activity()}>
-        {(items) => <ActivityGroup items={items()} simple={props.mode === "simple"} streaming={props.live} working={props.live} />}
-      </Show>
-      <Show when={app()}>
-        {(call) => <McpAppToolRow agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
+  return <>
+    <Show when={props.waiting && entries().length === 0}><WorkingIndicator /></Show>
+    <Show when={rows().activity.length}>
+      <ActivityGroup items={rows().activity} simple={props.mode === "simple"} streaming={running()} working={running()} />
+    </Show>
+    <Index each={rows().apps}>
+      {(call) => <McpAppToolRow agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
           onUserMessage={props.onUserMessage} toolCallId={call().id} name={call().name}
           arguments={call().arguments} result={call().result} />}
-      </Show>
-    </>;
-  }}</Index>;
+    </Index>
+  </>;
 }
 
 const reasons = { threshold: "Threshold", overflow: "Overflow", manual: "Manual" };
@@ -173,12 +220,29 @@ function TurnChecklist(props: { plan: TurnPlan }) {
 export function FeedTranscript(props: TranscriptProps & {
   feed: ReturnType<typeof createFeedWindow>;
   details: ReturnType<typeof createFeedDetails>;
+  sending: boolean;
   flashing?: string;
   showUserActions?: boolean;
   onStartThread?: (messageId: string) => void;
   threadActionBusy?: boolean;
 }) {
-  const items = createMemo(() => new Map(props.feed.items().map((item) => [item.id, item])));
+  const live = createMemo(() => props.feed.detached() ? null : props.feed.live());
+  const running = createMemo(() => !!live());
+  const transcript = createMemo(() => {
+    const rows = new Map<string, FeedItem | undefined>();
+    let turn = "answer:";
+    for (const item of props.feed.items()) {
+      if (item.role === "assistant") {
+        rows.set(turn, item);
+      } else {
+        rows.set(item.id, item);
+        if (item.role !== "seam") turn = "answer:" + item.id;
+      }
+    }
+    // The answer occupies the same slot before and after it gets a server ID.
+    if (running() && !rows.has(turn)) rows.set(turn, undefined);
+    return { rows, running: running() ? turn : undefined };
+  });
   const visible = new Map<Element, (visible: boolean) => void>();
   const observer = typeof IntersectionObserver === "function"
     ? new IntersectionObserver((entries) => {
@@ -186,19 +250,16 @@ export function FeedTranscript(props: TranscriptProps & {
     }, { rootMargin: "400px 0px" })
     : undefined;
   onCleanup(() => observer?.disconnect());
-  const live = () => props.feed.detached() ? null : props.feed.live();
-  const runningAnswer = createMemo((previous: string | undefined) => {
-    if (!props.feed.live()) return undefined;
-    if (props.feed.detached()) return previous;
-    const item = props.feed.items().at(-1);
-    return item?.role === "assistant" ? item.id : undefined;
-  });
   // A result may settle without changing the answer text or tool count.
   const liveActivity = createMemo(() => {
     const current = props.feed.live();
     return current && JSON.stringify([current.runId, current.toolCalls.map(({ id, status }) => [id, status])]);
   });
-  const liveCalls = createMemo(() => new Set(live()?.toolCalls.map(({ id }) => id)));
+  const showWorking = () => {
+    if (live()) return false;
+    const last = props.feed.items().at(-1);
+    return !!props.feed.pendingSends().length || (props.sending && (!last || last.role === "user"));
+  };
 
   const StartThreadButton = (button: { id: string }) => (
     <Show when={props.onStartThread}>
@@ -215,8 +276,10 @@ export function FeedTranscript(props: TranscriptProps & {
     </Show>
     <Show when={props.feed.status() === "not-found"}><div class="feed-notice" role="status">Message not found.</div></Show>
     <Show when={props.feed.status() === "error"}><div class="feed-notice" role="alert">Could not load messages.</div></Show>
-    <For each={props.feed.items().map(({ id }) => id)}>{(id) => {
-      const item = createMemo((previous: FeedItem) => items().get(id) ?? previous, items().get(id)!);
+    <For each={[...transcript().rows.keys()]}>{(key) => {
+      const item = createMemo(() => transcript().rows.get(key));
+      const isRunning = createMemo(() => transcript().running === key);
+      const activity = () => isRunning() ? live() ?? undefined : undefined;
       const [near, setNear] = createSignal(false);
       const observe = (row: HTMLElement) => {
         visible.set(row, setNear);
@@ -227,27 +290,45 @@ export function FeedTranscript(props: TranscriptProps & {
         });
       };
       createEffect(() => {
-        if (near()) props.details.load(item(), runningAnswer() === id ? liveActivity() ?? undefined : undefined);
+        const message = item();
+        if (near() && message) props.details.load(message, isRunning() ? liveActivity() ?? undefined : undefined);
       });
-      const detail = () => props.details.get(item());
       const assistant = () => {
         const current = item();
-        return current.role === "assistant" ? current : undefined;
+        return current?.role === "assistant" ? current : undefined;
       };
-      const storedPlan = () => runningAnswer() === id && live()?.plan ? undefined : assistant()?.plan;
+      const detail = createMemo(() => {
+        const message = assistant();
+        return message && props.details.get(message);
+      });
+      const settledDetail = createMemo(() => {
+        const message = assistant();
+        return !isRunning() && message ? props.details.get(message, "settled") : undefined;
+      });
+      const timedAssistant = () => {
+        const message = assistant();
+        return message && (!isRunning() || message.text || message.deliveries?.length) ? message : undefined;
+      };
+      const plan = () => activity()?.plan ?? assistant()?.plan;
       const user = () => {
         const current = item();
-        return current.role === "user" ? current : undefined;
+        return current?.role === "user" ? current : undefined;
       };
       const seam = () => {
         const current = item();
-        return current.role === "seam" ? current : undefined;
+        return current?.role === "seam" ? current : undefined;
       };
       const failure = () => {
         const current = item();
-        return current.role === "failure" ? current : undefined;
+        return current?.role === "failure" ? current : undefined;
       };
-      return <div ref={observe} class="feed-row" data-feed-message={id} classList={{ "feed-flash": props.flashing === id }}>
+      const text = () => {
+        const stored = assistant()?.text;
+        const partial = activity()?.text;
+        return stored && partial && stored !== partial ? stored + "\n" + partial : partial || stored;
+      };
+      const timestamp = Date.now();
+      return <div ref={observe} class="feed-row" data-feed-message={item()?.id} classList={{ "feed-flash": !!item() && props.flashing === item()?.id }}>
         <Show when={user()}>
           {(message) => <>
             <div class="message user no-anim">
@@ -259,36 +340,34 @@ export function FeedTranscript(props: TranscriptProps & {
             <Show when={props.showUserActions}>
               <div class="feed-user-actions">
                 <CopyButton label="Copy message" copy={() => writeReplyClipboard(formatReplyClipboard([message().text]))} />
-                <StartThreadButton id={id} />
+                <StartThreadButton id={message().id} />
               </div>
             </Show>
           </>}
         </Show>
-        <Show when={assistant()}>
-          {(message) => <>
-            <Show when={detail()}>
-              {(loaded) => <FeedActivity agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
-                onUserMessage={props.onUserMessage} mode={props.mode} reasoning={loaded().reasoning}
-                calls={loaded().toolCalls.filter((call) => call.view || call.result?.view || !liveCalls().has(call.id))}
-                timestamp={message().timestamp} />}
-            </Show>
-            <Show when={message().text || message().deliveries?.length || storedPlan()}>
-              <div class="message assistant no-anim" classList={{ "full-message": props.mode === "full" }}>
-                <Show when={message().text}>
-                  <AssistantText class="content markdown-content" text={message().text} options={{ copyCode: true }} />
-                </Show>
-                <Show when={storedPlan()}>{(plan) => <TurnChecklist plan={plan()} />}</Show>
-                <div class="message-time">
-                  {formatTimestamp(message().timestamp)}
-                  <For each={message().deliveries}>{(delivery) => <span>{delivery.surface} · {delivery.state}</span>}</For>
-                  <Show when={message().text}>
-                    <CopyButton label="Copy reply" copy={() => writeReplyClipboard(formatReplyClipboard([message().text]))} />
-                    <StartThreadButton id={id} />
-                  </Show>
-                </div>
-              </div>
-            </Show>
-          </>}
+        <Show when={key.startsWith("answer:")}>
+          <FeedActivity agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
+            onUserMessage={props.onUserMessage} mode={props.mode} live={activity()}
+            detail={detail()} settled={settledDetail()} timestamp={assistant()?.timestamp ?? timestamp}
+            waiting={!!activity() && !text() && !assistant()?.toolCallCount} />
+          <Show when={text() || assistant()?.deliveries?.length || plan()}>
+            <div class="message assistant no-anim" classList={{ "full-message": props.mode === "full", streaming: isRunning() }}>
+              <Show when={text()}>{(content) =>
+                <AssistantText class="content markdown-content" text={content()} options={{ copyCode: true }} />
+              }</Show>
+              <Show when={plan()}>{(current) => <TurnChecklist plan={current()} />}</Show>
+              <Show when={timedAssistant()}>
+                {(message) => <div class="message-time">
+                    {formatTimestamp(message().timestamp)}
+                    <For each={message().deliveries}>{(delivery) => <span>{delivery.surface} · {delivery.state}</span>}</For>
+                    <Show when={message().text}>
+                      <CopyButton label="Copy reply" copy={() => writeReplyClipboard(formatReplyClipboard([message().text]))} />
+                      <StartThreadButton id={message().id} />
+                    </Show>
+                </div>}
+              </Show>
+            </div>
+          </Show>
         </Show>
         <Show when={seam()}>
           {(marker) => <div class="feed-seam" tabIndex={0} title={seamDescription(marker())}
@@ -300,22 +379,14 @@ export function FeedTranscript(props: TranscriptProps & {
         </Show>
       </div>;
     }}</For>
-    <Show when={live()}>
-      {(answer) => <>
-        <Show when={answer().reasoning.length || answer().toolCalls.length}>
-          <FeedActivity agentId={props.agentId} sessionId={props.sessionId} appViews={props.appViews}
-            onUserMessage={props.onUserMessage} mode={props.mode} reasoning={answer().reasoning}
-            calls={answer().toolCalls} timestamp={Date.now()} live />
-        </Show>
-        <Show when={answer().text || answer().plan}>
-          <div class="message assistant streaming no-anim" classList={{ "full-message": props.mode === "full" }}>
-            <Show when={answer().text}>
-              <AssistantText class="content markdown-content" text={answer().text} options={{ copyCode: true }} />
-            </Show>
-            <Show when={answer().plan}>{(plan) => <TurnChecklist plan={plan()} />}</Show>
-          </div>
-        </Show>
-      </>}
+    <Show when={!props.feed.detached()}>
+      <For each={props.feed.pendingSends()}>{(send) =>
+        <div class="message user no-anim">
+          <div class="content">{send.text}</div>
+          <div class="message-time">{formatTimestamp(send.timestamp)}</div>
+        </div>
+      }</For>
+      <Show when={showWorking()}><WorkingIndicator /></Show>
     </Show>
   </>;
 }
