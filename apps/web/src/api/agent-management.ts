@@ -11,6 +11,7 @@ export type AgentSettings = {
   canSetPublic?: boolean;
   public?: boolean;
   name: string;
+  role?: string;
   description?: string;
   hasCustomAvatar: boolean;
   defaultFace?: number;
@@ -22,6 +23,7 @@ export type AgentSettings = {
 };
 export type AgentSettingsPatch = {
   name?: string;
+  role?: string;
   description?: string;
   model?: ModelChoice;
   fallbackModel?: Pick<ModelChoice, "provider" | "model"> | null;
@@ -75,7 +77,7 @@ export async function fetchAgentModels(gateway?: GatewayName): Promise<Model[]> 
   return (await request<{ models: Model[] }>("/api/agent-management/models", gateway)).models;
 }
 export function createAgent(
-  draft: { name: string; purpose: string; requestId: string; model: ModelChoice; avatar: number; folder?: string },
+  draft: { name: string; role?: string; purpose: string; requestId: string; model: ModelChoice; avatar: number; folder?: string },
   gateway?: GatewayName,
   image?: File,
 ) {

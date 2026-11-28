@@ -14,7 +14,10 @@ vi.mock("@solidjs/router", () => ({
 }));
 vi.mock("../api", () => ({
   fetchAgentSessions: fetchSessions,
-  fetchAgents: vi.fn(async () => [{ id: "agent-1", name: "Writer" }, { id: "agent-2", name: "Researcher" }]),
+  fetchAgents: vi.fn(async () => [
+    { id: "agent-1", name: "Writer" },
+    { id: "agent-2", name: "Researcher", role: "Fact checker", description: "Verifies sources and dates." },
+  ]),
   startNewChat,
 }));
 vi.mock("../api/chat-projects", () => ({
@@ -189,6 +192,7 @@ describe("ChatProject", () => {
     expect(agentRows.length).toBe(2);
     expect(document.body.textContent).toContain("Writer");
     expect(document.body.textContent).toContain("Researcher");
+    expect(within(document.body).getByRole("button", { name: /Researcher.*Fact checker/ })).toBeTruthy();
     (agentRows[1] as HTMLButtonElement).click();
     expect(startNewChat).toHaveBeenCalledWith("agent-2");
     expect(navigate).toHaveBeenCalledWith("/chat/agent-2?project=project-1");

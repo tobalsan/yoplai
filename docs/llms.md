@@ -235,6 +235,8 @@ Minimal shape:
 
 `POST /api/agent-management/agents` accepts an optional `folder` for managed creation. The linked gateway form sends it only when **Choose folder** is checked. The gateway resolves `~` against its OS home, derives the agent ID from the folder name, and appends an exact discovery rule only if needed. It restores the prior `agents` value if publication fails and keeps the rule for same-request recovery after publication. Desktop onboarding rejects `folder`.
 
+Managed creation saves optional `role` in `agent.yaml`. The create request's `purpose` is saved as `description` and seeds the initial instructions. Agent list, detail, and settings responses expose both fields. The web and desktop use Role as the subtitle and fall back to Description.
+
 Typical agent file:
 
 ```yaml

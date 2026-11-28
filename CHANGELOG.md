@@ -11,6 +11,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Added
 
+- Set an optional Role when creating or editing an agent. It appears under the agent name, with Description as the fallback. Description still seeds the initial instructions.
+
 - Choose a custom folder when creating an agent on a linked gateway. The gateway updates discovery as needed and loads the agent immediately.
 
 - Mention an agent in a shared room to get a public reply. Agents follow messages in room order, and newly added agents receive a handoff of prior discussion.

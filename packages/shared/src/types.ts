@@ -328,6 +328,10 @@ const AgentConfigBaseSchema = z.object({
   description: z.string().optional(),
   language: z.enum(["en", "fr"]).default("en"),
   avatar: z.string().optional(), // emoji or image URL
+  // Legacy roles were ignored. Keep invalid values loadable and public text literal.
+  role: z.string().optional().catch(undefined).transform((role) =>
+    /^\$(?:env|secret):/.test(role?.trimStart() ?? "") ? undefined : role
+  ),
   workspace: z.string(),
   workspaceDir: z.string().optional(),
   system_files: z.array(SystemFileEntrySchema).optional(),

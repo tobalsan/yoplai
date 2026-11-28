@@ -663,6 +663,9 @@ export function EditAgent() {
               </Show>
               <div class="edit-agent-identity">
                 <h1 class="edit-agent-name">{current().name}</h1>
+                <Show when={current().role?.trim() || current().description}>
+                  {(subtitle) => <div class="edit-agent-role">{subtitle()}</div>}
+                </Show>
               </div>
             </div>
           )}
@@ -1054,6 +1057,15 @@ export function EditAgent() {
           font-size: 24px;
           font-weight: 700;
           color: var(--text-primary);
+        }
+
+        .edit-agent-role {
+          margin-top: 4px;
+          font-size: 14px;
+          color: var(--text-tertiary);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .edit-agent-visibility-error {

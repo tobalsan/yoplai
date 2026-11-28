@@ -86,14 +86,6 @@ afterEach(async () => {
   await rm(workspaceDir, { recursive: true, force: true });
 });
 
-it("loads agent YAML with a legacy role and retains its description", async () => {
-  const raw = await readFile(path.join(workspaceDir, "agent.yaml"), "utf8");
-  const agent = AgentYamlConfigSchema.parse(yaml.load(raw));
-
-  expect(agent).toMatchObject({ name: "Sales", description: "Handles sales handoffs." });
-  expect(agent).not.toHaveProperty("role");
-});
-
 describe("updateAgentExtensionConfig", () => {
   it("round-trips enable then disable, and a re-read observes the change", async () => {
     await updateAgentExtensionConfig(workspaceDir, "acme-crm", {

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
-import { writeTestV3Config } from "../test-utils/v3-config.js";
+import { writeTestAgent, writeTestV3Config } from "../test-utils/v3-config.js";
 
 const model = { provider: "fictional-provider", model: "fictional-model" };
 const fallbackModel = { provider: "fictional-provider", model: "fictional-backup" };
@@ -580,13 +580,31 @@ describe("agent management over HTTP", () => {
     expect(await savedModel()).toEqual(model);
   });
 
-  // ALG-772 Testing Decisions, approved in Thinh's Groom GO, cover this HTTP seam.
-  it("saves a description for a legacy agent and rejects role edits over HTTP", async () => {
+  // Pom approved the agent management HTTP seam on ALG-831.
+  it("creates an agent with a role and uses its description to seed instructions", async () => {
+    expect((await putMode(superadmin, "admin")).status).toBe(200);
+    const description = "Prepare accessible graphics for product announcements and include alt text with each draft.";
+    const response = await create({
+      name: "Canvas", role: "Graphics designer", purpose: description,
+    }, superadmin);
+    expect(response.status).toBe(201);
+    const settings = await get("/api/agents/canvas/settings", superadmin);
+    expect(settings.status).toBe(200);
+    expect(await settings.json()).toMatchObject({
+      role: "Graphics designer",
+      description,
+      instructions: "You are Canvas.\nYour purpose is: Prepare accessible graphics for product announcements and include alt text with each draft.\nAsk for details when you need them.\n",
+    });
+  });
+
+  it("loads and edits a legacy agent's role independently of its description", async () => {
     expect((await putMode(superadmin, "admin")).status).toBe(200);
     const agentPath = "/api/agents/shared";
     const settingsPath = `${agentPath}/settings`;
-    expect((await write("PATCH", settingsPath, superadmin, { role: "Dock Coordinator" })).status).toBe(400);
-    expect((await write("PATCH", settingsPath, superadmin, { description: "Coordinates dock arrivals." })).status).toBe(200);
+    expect(await (await get(settingsPath, superadmin)).json()).toMatchObject({ role: "Harbor Dispatcher" });
+    expect((await write("PATCH", settingsPath, superadmin, {
+      role: "Dock Coordinator", description: "Coordinates dock arrivals.", model, fallbackModel,
+    })).status).toBe(200);
 
     const settings = await get(settingsPath, superadmin);
     const detail = await get(agentPath, superadmin);
@@ -595,9 +613,43 @@ describe("agent management over HTTP", () => {
     expect(detail.status).toBe(200);
     expect(list.status).toBe(200);
     const listedAgent = (await list.json() as Array<{ id: string }>).find((agent) => agent.id === "shared");
-    for (const payload of [await settings.json(), await detail.json(), listedAgent]) {
-      expect(payload).toMatchObject({ description: "Coordinates dock arrivals." });
-      expect(payload).not.toHaveProperty("role");
+    const saved = await settings.json();
+    expect(saved).toMatchObject({ fallbackModel });
+    for (const payload of [saved, await detail.json(), listedAgent]) {
+      expect(payload).toMatchObject({ role: "Dock Coordinator", description: "Coordinates dock arrivals." });
+    }
+    expect((await write("PATCH", settingsPath, superadmin, { role: "" })).status).toBe(200);
+    expect(await (await get(settingsPath, superadmin)).json()).toMatchObject({
+      role: "", description: "Coordinates dock arrivals.", fallbackModel,
+    });
+    expect((await write("PATCH", settingsPath, superadmin, { fallbackModel: null })).status).toBe(200);
+  });
+
+  it("loads legacy blank roles and config references as absent subtitles", async () => {
+    const agents = [
+      { id: "blank-role", extraYaml: "role:" },
+      { id: "env-role", extraYaml: "role: $env:SAMPLE_AGENT_TOKEN" },
+      { id: "secret-role", extraYaml: "role: $secret:old-role" },
+    ];
+    try {
+      await Promise.all(agents.map(({ id, extraYaml }) => writeTestAgent(home, {
+        id, extraYaml: `description: Legacy agent description.\n${extraYaml}`,
+      })));
+      expect((await putMode(superadmin, "admin")).status).toBe(200);
+      const saved = await write("PATCH", "/api/agents/shared/settings", superadmin, { name: "shared" });
+      expect(saved.status).toBe(200);
+      const response = await get("/api/agents", superadmin);
+      expect(response.status).toBe(200);
+      const list = await response.json() as Array<{ id: string; description?: string; role?: string }>;
+      for (const { id } of agents) {
+        const agent = list.find((entry) => entry.id === id);
+        expect(agent?.description).toBe("Legacy agent description.");
+        expect(agent && Object.hasOwn(agent, "role")).toBe(false);
+      }
+    } finally {
+      await Promise.all(agents.map(({ id }) => fs.rm(path.join(home, "agents", id), { recursive: true, force: true })));
+      const { reloadConfig } = await import("../config/index.js");
+      reloadConfig();
     }
   });
 

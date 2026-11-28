@@ -1208,8 +1208,8 @@ function LiveChatView({ params, agent, setAgent, explicitSessionId }: {
                 )}
               </Show>
             </div>
-            <Show when={agent()?.description}>
-              <span class="agent-description-inline">{agent()!.description}</span>
+            <Show when={agent()?.role?.trim() || agent()?.description}>
+              {(subtitle) => <span class="agent-description-inline">{subtitle()}</span>}
             </Show>
           </div>
           <button

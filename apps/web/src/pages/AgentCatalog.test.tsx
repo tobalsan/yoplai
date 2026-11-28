@@ -96,15 +96,17 @@ afterEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("AgentCatalog cards", () => {
-  it("shows an agent's name and description without its legacy job title", async () => {
-    fetchAgentsMock.mockResolvedValue([{
-      id: "harbor", name: "Harbor", description: "Plans dock arrivals.", role: "Legacy Dock Coordinator",
-    }]);
+  it("shows the role on an agent card and falls back to description for older agents", async () => {
+    fetchAgentsMock.mockResolvedValue([
+      { id: "harbor", name: "Harbor", description: "Plans dock arrivals.", role: "Dock Coordinator" },
+      { id: "orchard", name: "Orchard", description: "Tracks growing conditions." },
+    ]);
     await mountCatalog();
 
     expect(queryAllByText(container, "Harbor")).toHaveLength(1);
-    expect(queryAllByText(container, "Plans dock arrivals.")).toHaveLength(1);
-    expect(queryAllByText(container, "Legacy Dock Coordinator")).toHaveLength(0);
+    expect(queryAllByText(container, "Dock Coordinator")).toHaveLength(1);
+    expect(queryAllByText(container, "Tracks growing conditions.")).toHaveLength(1);
+    expect(queryAllByText(container, "Plans dock arrivals.")).toHaveLength(0);
   });
 
   it("marks a remote agent card with its gateway and leaves a local card unmarked", async () => {

@@ -126,16 +126,16 @@ describe("main agent home", () => {
   });
 
   it.each([
-    ["omitted", {}],
-    ["empty", { description: "" }],
-  ])("shows the main agent picker fallback when Description is %s", async (_label, fields) => {
-    const sage = { id: "sage", name: "Sage", role: "Legacy Research Lead", ...fields };
+    ["role", { role: "Research Lead", description: "Summarizes new papers." }, "Research Lead"],
+    ["description", { role: "", description: "Summarizes new papers." }, "Summarizes new papers."],
+    ["default text", {}, "Ready when you are."],
+  ])("shows the main agent picker %s", async (_label, fields, subtitle) => {
+    const sage = { id: "sage", name: "Sage", ...fields };
     agents = [sage, { id: "scout", name: "Scout" }];
     await mountHome();
 
     const dialog = getByRole(container, "dialog", { name: "Pick your main agent" });
-    expect(queryByText(dialog, "Ready when you are.")).not.toBeNull();
-    expect(queryByText(dialog, "Legacy Research Lead")).toBeNull();
+    expect(queryByText(dialog, subtitle)).not.toBeNull();
   });
 
   it("records a deliberate dismissal and offers the picker again on the next home visit", async () => {

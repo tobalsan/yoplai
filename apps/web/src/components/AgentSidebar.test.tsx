@@ -106,7 +106,10 @@ describe("AgentSidebar", () => {
       { id: "cedar@local", name: "Cedar", description: "Planning", durable: true },
       { id: "pine", name: "Pine", description: "Inventory" },
     ];
-    const allAgents = [...localAgents, { id: "birch@remote", name: "Birch", gateway: "remote", durable: true }];
+    const allAgents = [
+      ...localAgents,
+      { id: "birch@remote", name: "Birch", role: "Dock Coordinator", description: "Plans dock arrivals.", gateway: "remote", durable: true },
+    ];
     fetchAgentsMock.mockResolvedValue(allAgents);
     const writes: string[][] = [];
     let storedOrder = ["pine", "cedar@local"];
@@ -149,6 +152,8 @@ describe("AgentSidebar", () => {
       await vi.waitFor(() => expect(writes[1]).toEqual(["pine", "cedar@local", "birch@remote", "maple"]));
 
       const birch = list().getByRole("link", { name: /birch/i });
+      expect(birch.textContent).toContain("Dock Coordinator");
+      expect(birch.textContent).not.toContain("Plans dock arrivals.");
       await vi.waitFor(() => expect(birchGrip.getAttribute("draggable")).toBe("true"));
       fireEvent.keyDown(birch, { key: "ArrowUp", altKey: true });
       await vi.waitFor(() => expect(writes[2]).toEqual(["pine", "birch@remote", "cedar@local", "maple"]));

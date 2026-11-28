@@ -45,17 +45,19 @@ it("protects the draft and creates with the selected gateway's model and optiona
   const byRole = (role: string, name: string | RegExp) => getByRole(document.body, role, { name });
   const create = byRole("button", "Create agent") as HTMLButtonElement;
   expect(create.disabled).toBe(true);
+  const role = byRole("textbox", "Role");
+  fireEvent.input(role, { target: { value: "Garden planner" } });
   const name = byRole("textbox", "Name");
-  fireEvent.input(name, { target: { value: "Garden Guide" } });
-  expect(byRole("heading", "Garden Guide")).toBeTruthy();
   fireEvent.click(document.body);
   expect(queryByRole(document.body, "alertdialog")).toBeNull();
-  fireEvent.keyDown(name, { key: "Escape" });
+  fireEvent.keyDown(role, { key: "Escape" });
   expect(byRole("alertdialog", "Discard this new agent?")).toBeTruthy();
   await waitFor(() => expect(document.activeElement).toBe(byRole("button", "Keep editing")));
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(queryByRole(document.body, "alertdialog")).toBeNull();
   expect(writes).toHaveLength(0);
+  fireEvent.input(name, { target: { value: "Garden Guide" } });
+  expect(byRole("heading", "Garden Guide")).toBeTruthy();
 
   const pickModel = async (provider: string, local: boolean) => {
     await waitFor(() => expect((byRole("button", /^Model:/) as HTMLButtonElement).disabled).toBe(false));
@@ -111,7 +113,7 @@ it("protects the draft and creates with the selected gateway's model and optiona
   expect(location.pathname).toBe("/agents/new");
   await waitFor(() => expect(byRole("heading", "Chat opened")).toBeTruthy(), { timeout: 1800 });
   expect(location.pathname).toBe("/chat/garden-guide%40east");
-  expect(writes[0]).toEqual({ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", model: { provider: "anthropic", model: "reed", source: "owned" } }) });
+  expect(writes[0]).toEqual({ path: "/api/relay/gateways/east/api/agent-management/agents", body: expect.objectContaining({ name: "Garden Guide", role: "Garden planner", model: { provider: "anthropic", model: "reed", source: "owned" } }) });
   expect(writes[1]).toEqual({ path: writes[0].path, body: { ...(writes[0].body as object), folder: "~/garden-guide" } });
   expect(writes[2]).toEqual(writes[1]);
 });

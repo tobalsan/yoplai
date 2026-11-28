@@ -153,6 +153,8 @@ Manage skills from **Skills** below Agents: uploads and imports start private an
 
 Use **Agent settings** to select a main model and an optional fallback model in the same picker. Edit `$YOPLAI_HOME/agents/my-agent/agent.yaml` to change model or agent settings. Edit prompt files in the same folder to define identity and instructions.
 
+Set an optional **Role** when creating or editing an agent. The sidebar, chat header, pickers, and catalog use the role under the agent name, with **Description** as the fallback. The description also seeds the initial instructions when you create the agent.
+
 Enable optional features in root `extensions`:
 
 ```json
