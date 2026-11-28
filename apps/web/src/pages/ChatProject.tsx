@@ -686,8 +686,8 @@ export function ChatProject() {
                 </span>
                 <div class="agent-picker-main">
                   <div class="agent-picker-name">{agent.name || agent.id}<RemoteAgentMark gateway={agent.gateway} /></div>
-                  <Show when={agent.description}>
-                    <div class="agent-picker-description">{agent.description}</div>
+                  <Show when={agent.role?.trim() || agent.description}>
+                    {(subtitle) => <div class="agent-picker-description">{subtitle()}</div>}
                   </Show>
                 </div>
               </button>

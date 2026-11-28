@@ -424,14 +424,15 @@ describe("EditAgent", () => {
     expect(back?.getAttribute("href")).toBe("/chat/scribe?session=abc");
   });
 
-  it("renders the target agent name and avatar for an admin", async () => {
+  it("renders the target agent name, role and avatar for an admin", async () => {
     setSession("admin");
     fetchAgentsMock.mockResolvedValue([
-      agent({ id: "scribe", name: "Scribe", avatar: "📝" }),
+      agent({ id: "scribe", name: "Scribe", role: "Writer", avatar: "📝" }),
     ]);
     await mountEdit("scribe");
 
     expect(getByRole(container, "heading", { name: "Scribe", level: 1 })).toBeTruthy();
+    expect(queryByText(container, "Writer")).not.toBeNull();
     expect(queryByText(container, "📝")).not.toBeNull();
   });
 

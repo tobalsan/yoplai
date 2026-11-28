@@ -45,7 +45,7 @@ export function AgentSettingsSidebar(props: SidebarProps) {
   </div>;
 }
 
-type Fields = Pick<AgentSettingsPatch, "name" | "description" | "reasoning" | "instructions" | "public">;
+type Fields = Pick<AgentSettingsPatch, "name" | "role" | "description" | "reasoning" | "instructions" | "public">;
 
 function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
   const initial = props.initial;
@@ -56,7 +56,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
     { initialValue: [] },
   );
   const initialFields: Fields = {
-    name: initial.name, description: initial.description ?? "",
+    name: initial.name, role: initial.role ?? "", description: initial.description ?? "",
     reasoning: initial.reasoning ?? null, instructions: initial.instructions ?? "", public: initial.public,
   };
   const agentId = props.agent.id;
@@ -94,6 +94,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
     const next = fields();
     const before = savedFields();
     if (next.name !== before.name) patch.name = next.name;
+    if (next.role !== before.role) patch.role = next.role;
     if (next.description !== before.description) patch.description = next.description;
     if (next.reasoning !== before.reasoning) patch.reasoning = next.reasoning;
     if (next.instructions !== before.instructions) patch.instructions = next.instructions;
@@ -163,6 +164,7 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
         <Show when={initial.canEditAgent} fallback={<div class="agent-identity-readonly">
           <AvatarPreview image={props.agent.avatar ?? defaultAvatarUrl(agentId)} />
           <div><h4>{initial.name}</h4>
+            <Show when={initial.role}><div>{initial.role}</div></Show>
             <Show when={initial.description}><p>{initial.description}</p></Show>
           </div>
         </div>}>
@@ -170,6 +172,8 @@ function SettingsForm(props: SidebarProps & { initial: AgentSettings }) {
             <AvatarField value={avatar()} custom={initial.hasCustomAvatar} onChange={setAvatar} disabled={saving()} />
             <label class="agent-form-field">Name<input required maxLength={60} placeholder="Name your agent"
               value={fields().name} disabled={saving()} onInput={(event) => edit("name", event.currentTarget.value)} /></label>
+            <label class="agent-form-field">Role<input placeholder="Research assistant"
+              value={fields().role} disabled={saving()} onInput={(event) => edit("role", event.currentTarget.value)} /></label>
             <label class="agent-form-field">Description<textarea placeholder="Describe the agent"
               value={fields().description} disabled={saving()} onInput={(event) => edit("description", event.currentTarget.value)} /></label>
           </div>

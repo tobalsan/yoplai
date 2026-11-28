@@ -16,6 +16,7 @@ import { AgentManagementError, creatorFile, defaultFaceSchema, isReservedText, m
 const bodySchema = z.object({
   requestId: z.string().uuid().transform((id) => id.toLowerCase()),
   name: z.string().trim().min(1).max(60),
+  role: z.string().trim().optional(),
   purpose: z.string().max(280).optional(),
   avatar: defaultFaceSchema,
   model: modelChoiceSchema,
@@ -139,7 +140,9 @@ async function stageAgent(finalDir: string, stagingDir: string, id: string, body
   let published = false;
   try {
     const avatar = await stageAvatar(stagingDir, body.avatar, options.upload, options.onboarding);
-    const agent = AgentYamlConfigSchema.parse({ id, name: body.name, description: body.purpose, avatar: avatar.filename, model: body.model });
+    const agent = AgentYamlConfigSchema.parse({
+      id, name: body.name, role: body.role || undefined, description: body.purpose, avatar: avatar.filename, model: body.model,
+    });
     await fs.writeFile(path.join(stagingDir, "agent.yaml"), yaml.dump(agent));
     await fs.writeFile(path.join(stagingDir, "AGENTS.md"), instructions.text);
     await writeAvatarState(stagingDir, avatar);
@@ -241,7 +244,7 @@ export function createAgentWriter(
     if (!parsed.success) throw new AgentCreateError("invalid_request");
     const body = parsed.data;
     if (body.folder && options.onboarding) throw new AgentCreateError("invalid_request");
-    if ([body.name, body.purpose].some(isReservedText)) throw new AgentCreateError("reserved_prefix");
+    if ([body.name, body.role, body.purpose].some(isReservedText)) throw new AgentCreateError("reserved_prefix");
     try {
       const find = (custom?: CustomFolder) => {
         if (!custom) return findRequest(parent, body.requestId, options);

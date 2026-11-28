@@ -38,6 +38,7 @@ export function NewAgent() {
     if (current && !resolveModelChoice(models() ?? [], current)) setModel(undefined);
   });
   const [name, setName] = createSignal("");
+  const [role, setRole] = createSignal("");
   const [purpose, setPurpose] = createSignal("");
   const [avatar, setAvatar] = createSignal<AvatarDraft>({ face: initialFace });
   const [saving, setSaving] = createSignal(false);
@@ -48,7 +49,7 @@ export function NewAgent() {
   let requestId: string | undefined;
   onCleanup(() => { disposed = true; });
 
-  const dirty = () => !finished && !!(name() || purpose() || model() || avatar().file || avatar().face !== initialFace || chosen() || chooseFolder());
+  const dirty = () => !finished && !!(name() || role() || purpose() || model() || avatar().file || avatar().face !== initialFace || chosen() || chooseFolder());
   const discard = createDiscardPrompt(dirty, "Discard this new agent?");
   useBeforeLeave((event) => {
     if (saving() && !finished) { event.preventDefault(); return; }
@@ -86,13 +87,17 @@ export function NewAgent() {
     setError("");
     try {
       requestId ??= createRequestId();
-      const result = await createAgent({ name: name().trim(), purpose: purpose().trim(), requestId, model: selected, avatar: avatar().face, folder }, destination.name, avatar().file);
+      const result = await createAgent({
+        name: name().trim(), role: role().trim() || undefined, purpose: purpose().trim(),
+        requestId, model: selected, avatar: avatar().face, folder,
+      }, destination.name, avatar().file);
       if (disposed) return;
       await finishCrafting(setDoneAt);
       if (disposed) return;
       const agentId = qualifiedAgentId(result.id, destination.name);
       finished = true;
       startNewChat(agentId);
+      window.dispatchEvent(new Event("chat-projects-changed"));
       navigate(`/chat/${encodeURIComponent(agentId)}`);
     } catch (cause) {
       if (!disposed) setError(cause instanceof Error ? cause.message : "Could not create the agent.");
@@ -142,8 +147,12 @@ export function NewAgent() {
         <input name="name" required maxLength={60} placeholder="Name your agent" value={name()} disabled={saving()}
           onInput={(event) => setName(event.currentTarget.value)} />
       </label>
+      <label class="agent-form-field">Role
+        <input name="role" placeholder="Graphics designer" value={role()} disabled={saving()}
+          onInput={(event) => setRole(event.currentTarget.value)} />
+      </label>
       <label class="agent-form-field">
-        <span>Purpose <span class="agent-field-hint">· Keep it brief. It will be used to generate the system instructions.</span></span>
+        <span>Description <span class="agent-field-hint">· Used to generate the system instructions.</span></span>
         <input name="purpose" maxLength={280} placeholder="Plan trips, compare options, or help with writing." value={purpose()} disabled={saving()}
           onInput={(event) => setPurpose(event.currentTarget.value)} />
       </label>

@@ -105,7 +105,7 @@ describe("AgentSidebar", () => {
       { id: "maple", name: "Maple", description: "Support" },
       { id: "cedar@local", name: "Cedar", description: "Planning", durable: true },
       { id: "pine", name: "Pine", description: "Inventory" },
-      { id: "birch@remote", name: "Birch", gateway: "remote", durable: true },
+      { id: "birch@remote", name: "Birch", role: "Dock Coordinator", description: "Plans dock arrivals.", gateway: "remote", durable: true },
     ]);
     const writes: string[][] = [];
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -129,6 +129,9 @@ describe("AgentSidebar", () => {
       await vi.waitFor(() => expect(order()).toEqual(["/chat/pine", "/chat/cedar%40local", "/chat/maple", "/chat/birch%40remote"]));
       expect(queryByRole(container, "region", { name: "Recent" })).toBeNull();
       expect(list().getByRole("link", { name: /cedar/i }).textContent).toContain("Planning");
+      const birch = list().getByRole("link", { name: /birch/i });
+      expect(birch.textContent).toContain("Dock Coordinator");
+      expect(birch.textContent).not.toContain("Plans dock arrivals.");
       const cedar = list().getByRole("link", { name: /cedar/i });
       fireEvent.keyDown(cedar, { key: "ArrowUp", altKey: true });
       await vi.waitFor(() => expect(writes[0]).toEqual(["cedar@local", "pine", "maple"]));

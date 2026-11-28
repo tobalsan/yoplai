@@ -137,7 +137,7 @@ export function MainAgentPicker(props: {
           <Show when={focused()} keyed>{(agent) => (
             <div class="main-agent-copy">
               <h3>{agent.name}</h3>
-              <p>{agent.description || "Ready when you are."}</p>
+              <p classList={{ "main-agent-role": !!agent.role?.trim() }}>{agent.role?.trim() || agent.description || "Ready when you are."}</p>
             </div>
           )}</Show>
         </div>
@@ -179,6 +179,7 @@ export function MainAgentPicker(props: {
         .main-agent-copy { animation: main-agent-copy 360ms var(--ease-slide, ease-out); }
         .main-agent-focus h3 { margin: 20px 0 8px; font-size: 28px; font-weight: 650; line-height: 1.2; letter-spacing: -.02em; overflow-wrap: anywhere; }
         .main-agent-focus > p { min-height: 48px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; text-wrap: pretty; }
+        .main-agent-copy > .main-agent-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .main-agent-navigation { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 20px 0 24px; }
         .main-agent-navigation button { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--border-default); border-radius: 50%; background: transparent; color: var(--text-primary); cursor: pointer; }
         .main-agent-navigation span { min-width: 48px; color: var(--text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }

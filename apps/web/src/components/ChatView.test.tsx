@@ -377,7 +377,7 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
     expect(queryByRole(settings, "heading", { name: "Agent" })).not.toBeNull();
     expect(queryByText(settings, "Keeps draft notes.")).not.toBeNull();
-    expect(queryByText(settings, "Legacy Copy Editor")).toBeNull();
+    expect(queryByText(settings, "Legacy Copy Editor")).not.toBeNull();
     expect(queryByRole(settings, "textbox", { name: "System prompt" })).toBeNull();
     expect(queryByRole(settings, "checkbox", { name: "Use a fallback model" })).toBeNull();
     expect(queryByRole(settings, "button", { name: /^Fallback model:/ })).toBeNull();
@@ -484,6 +484,13 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(getByRole(container, "img", { name: "Online" })).toBeTruthy());
   });
 
+  it("shows the role in the chat header when the agent also has a description", async () => {
+    fetchAgentMock.mockResolvedValue({ id: "agent-1", name: "Agent", role: "Graphics designer", description: "Creates accessible product graphics." });
+    const { container } = renderView();
+    await waitFor(() => expect(queryByText(container, "Graphics designer")).not.toBeNull());
+    expect(queryByText(container, "Creates accessible product graphics.")).toBeNull();
+  });
+
   it("finishes saving personal skills before refreshing the changed agent", async () => {
     let reply!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { reply = resolve; });
@@ -491,7 +498,7 @@ describe("ChatView abort handling", () => {
       if (path.endsWith("/user-skills")) return pending;
       if (path.endsWith("/settings") && init?.method === "PATCH") return Response.json({ ok: true });
       if (path.endsWith("/settings")) return Response.json({
-        name: "Agent", description: "Keeps draft notes.", instructions: "Keep drafts short.",
+        name: "Agent", role: "Copy editor", description: "Keeps draft notes.", instructions: "Keep drafts short.",
         canEditAgent: true, hasCustomAvatar: false,
         model: { provider: "openai", model: "gpt-5" },
         skills: { global: [], agent: [], user: [{ id: "writing", name: "Writing preferences", description: "", enabled: false }] },
@@ -505,17 +512,18 @@ describe("ChatView abort handling", () => {
     await waitFor(() => expect(queryByRole(container, "dialog", { name: "Agent settings" })).not.toBeNull());
     const settings = getByRole(container, "dialog", { name: "Agent settings" });
     await waitFor(() => expect(queryByRole(settings, "switch", { name: "Writing preferences" })).not.toBeNull());
-    expect(queryByRole(settings, "textbox", { name: "Role" })).toBeNull();
+    const role = getByRole<HTMLInputElement>(settings, "textbox", { name: "Role" });
+    expect(role.value).toBe("Copy editor");
     expect(queryByRole(settings, "textbox", { name: "Description" })).not.toBeNull();
     expect(queryByRole(settings, "textbox", { name: "System prompt" })).not.toBeNull();
-    fireEvent.input(getByRole(settings, "textbox", { name: "Name" }), { target: { value: "Draft Companion" } });
+    fireEvent.input(role, { target: { value: "Draft Companion" } });
     const detailReads = fetchAgentMock.mock.calls.length;
     fetchAgentMock.mockRejectedValueOnce(new Error("Detail temporarily offline"));
     getByRole(settings, "switch", { name: "Writing preferences" }).click();
     getByRole(settings, "button", { name: "Save" }).click();
     await waitFor(() => expect(fetchSettings.mock.calls.some(([path]) => path.endsWith("/user-skills"))).toBe(true));
     const [, patch] = fetchSettings.mock.calls.find(([path, init]) => path.endsWith("/settings") && init?.method === "PATCH") ?? [];
-    expect(patch?.body).toBe('{"name":"Draft Companion"}');
+    expect(patch?.body).toBe('{"role":"Draft Companion"}');
     expect(fetchAgentMock).toHaveBeenCalledTimes(detailReads);
     getByRole(settings, "button", { name: "Close agent settings" }).click();
     getByRole(container, "button", { name: "Start a new chat" }).click();

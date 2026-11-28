@@ -179,7 +179,9 @@ export function DurableAgentList(props: {
                 </Show>
                 <span class="durable-agent-copy">
                   <span class="durable-agent-name">{agent.name}</span>
-                  <Show when={agent.description}><span class="durable-agent-description">{agent.description}</span></Show>
+                  <Show when={agent.role?.trim() || agent.description}>
+                    {(subtitle) => <span class="durable-agent-description">{subtitle()}</span>}
+                  </Show>
                 </span>
                 <Show when={timestamp() > 0}>
                   <time class="durable-agent-time" dateTime={new Date(timestamp()).toISOString()}>{props.relativeTime(timestamp(), props.now)}</time>
