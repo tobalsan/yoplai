@@ -1,33 +1,11 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { getUserSessionsPath } from "@yoplai/extension-multi-user/isolation";
 import { Hono, type Context } from "hono";
-import { z } from "zod";
-import { writeJsonAtomic } from "../util/atomic-write.js";
-
-const orderSchema = z.object({ agentIds: z.array(z.string().min(1)) });
-
-class SidebarOrderStore {
-  private readonly file: string;
-
-  constructor(dataDir: string, userId?: string) {
-    if (userId !== undefined && !/^[a-zA-Z0-9_-]{1,100}$/.test(userId)) throw new Error("Invalid user id");
-    this.file = path.join(path.dirname(getUserSessionsPath(userId, dataDir)), "sidebar-order.json");
-  }
-
-  async get() {
-    try {
-      return orderSchema.parse(JSON.parse(await fs.readFile(this.file, "utf8"))).agentIds;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
-  }
-
-  set(agentIds: string[]) {
-    return writeJsonAtomic(this.file, { agentIds });
-  }
-}
+import { getAgent } from "../config/index.js";
+import { removeGatewaySuffix } from "../relay/agent-id.js";
+import { getLinkedGateways, isTrustedRequest } from "../relay/state.js";
+import { SidebarOrderStore, sidebarOrderSchema, type SidebarOrder } from "./sidebar-order-store.js";
+import { sidebarOrderSync } from "./sidebar-order-sync.js";
+import { applyVisibleOrder } from "./sidebar-ordering.js";
+import { durableModeTime } from "./store.js";
 
 export function createSidebarOrderRoutes(deps: {
   dataDir: string;
@@ -40,15 +18,34 @@ export function createSidebarOrderRoutes(deps: {
     const userId = await deps.getUserId(c);
     if (deps.isMultiUser() && (!userId || userId === "local")) return c.json({ error: "Unauthorized" }, 401);
     const store = new SidebarOrderStore(deps.dataDir, userId);
+    const localOnly = c.req.method === "GET" && c.req.query("local") === "1";
+    const trusted = isTrustedRequest(c.req.header("origin"), c.req.header("x-forwarded-for"));
+    if (c.req.method === "GET" && !localOnly && trusted) await sidebarOrderSync.reconcile(store);
     const visible = new Set(await deps.getVisibleAgentIds(c));
-    if (c.req.method === "GET") {
-      return c.json({ agentIds: (await store.get()).filter((id) => visible.has(id)) });
+    const gatewayNames = localOnly ? [] : getLinkedGateways().map(({ name }) => name);
+    const isVisible = (id: string) => visible.has(id) ||
+      (!getAgent(id) && removeGatewaySuffix(id, gatewayNames).gateway !== undefined);
+    const filterVisible = (order: SidebarOrder) => ({
+      ...order, agentIds: order.agentIds.filter(isVisible),
+    });
+    if (c.req.method === "GET") return c.json(filterVisible(await store.read()));
+    const body = sidebarOrderSchema.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) {
+      const error = body.error.issues[0]?.path[0] === "updatedAt"
+        ? "updatedAt must be a valid ISO timestamp"
+        : "agentIds must be an array of non-empty strings";
+      return c.json({ error }, 400);
     }
-    const body = orderSchema.safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return c.json({ error: "agentIds must be an array of non-empty strings" }, 400);
-    const agentIds = [...new Set(body.data.agentIds)].filter((id) => visible.has(id));
-    await store.set(agentIds);
-    return c.json({ agentIds });
+    const { agentIds, updatedAt } = filterVisible(body.data);
+    const saved = await store.update((current) => {
+      if (updatedAt !== undefined && durableModeTime(updatedAt) <= durableModeTime(current.updatedAt)) return current;
+      return {
+        agentIds: applyVisibleOrder(current.agentIds, [...new Set(agentIds)]),
+        updatedAt: updatedAt ?? new Date().toISOString(),
+      };
+    });
+    if (updatedAt === undefined && trusted) await sidebarOrderSync.pushToLinks(saved);
+    return c.json(filterVisible(saved));
   });
   return routes;
 }

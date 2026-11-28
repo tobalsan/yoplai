@@ -8,6 +8,7 @@ import { AgentAvatarFill } from "./AgentAvatarFill";
 import "./DurableAgentList.css";
 
 const orderUrl = API_BASE + "/me/sidebar-order";
+const orderLoadError = "Agent order could not be loaded.";
 
 async function readOrder(ids?: string[]): Promise<string[]> {
   const response = await apiFetch(orderUrl, {
@@ -46,19 +47,35 @@ export function DurableAgentList(props: {
   const [drop, setDrop] = createSignal<{ id: string; after: boolean }>();
   const controller = new AbortController();
   const [saving, setSaving] = createSignal(false);
-  void readOrder().then((ids) => {
-    savedOrder = ids;
-    setOrder(ids);
-    setReady(true);
-  }, () => setError("Agent order could not be loaded."));
-  const localIds = createMemo(() => {
-    const visible = new Set(agents().filter((agent) => !agent.gateway).map(({ id }) => id));
-    return [...order().filter((id) => visible.delete(id)), ...visible];
-  });
+  let orderRead = 0;
+  async function refreshOrder() {
+    if (saving()) return;
+    const request = ++orderRead;
+    try {
+      const ids = await readOrder();
+      if (request !== orderRead) return;
+      savedOrder = ids;
+      setOrder(ids);
+      setReady(true);
+      setError((previous) => previous === orderLoadError ? "" : previous);
+    } catch {
+      if (request === orderRead) setError(orderLoadError);
+    }
+  }
+  void refreshOrder();
+
   const displayed = createMemo(() => {
-    const byId = new Map(agents().map((agent) => [agent.id, agent]));
-    return [...localIds().map((id) => byId.get(id)!), ...agents().filter((agent) => agent.gateway)];
+    const remaining = new Map(agents().map((agent) => [agent.id, agent]));
+    const ordered = [];
+    for (const id of order()) {
+      const agent = remaining.get(id);
+      if (!agent) continue;
+      ordered.push(agent);
+      remaining.delete(id);
+    }
+    return [...ordered, ...remaining.values()];
   });
+  const displayedIds = createMemo(() => displayed().map(({ id }) => id));
 
   async function refreshActivity(onlyId?: string) {
     if (document.visibilityState !== "visible") return;
@@ -71,7 +88,8 @@ export function DurableAgentList(props: {
         } catch { /* Keep the last known activity on a transient read failure. */ }
       }));
   }
-  const onFocus = () => { void refetch(); };
+  const refreshAgents = () => { void refetch(); };
+  const onFocus = () => { refreshAgents(); void refreshOrder(); };
   const onVisibility = () => { void refreshActivity(); };
   const settled = (event: Event) => { void refreshActivity((event as CustomEvent<string>).detail); };
   createEffect(() => { void refreshActivity(); });
@@ -81,25 +99,27 @@ export function DurableAgentList(props: {
   });
   const poll = window.setInterval(onVisibility, 60_000);
   window.addEventListener("focus", onFocus);
-  window.addEventListener("chat-projects-changed", onFocus);
+  window.addEventListener("chat-projects-changed", refreshAgents);
   window.addEventListener("durable-history-updated", settled);
   document.addEventListener("visibilitychange", onVisibility);
   onCleanup(() => {
+    orderRead++;
     controller.abort();
     window.clearInterval(poll);
     window.removeEventListener("focus", onFocus);
-    window.removeEventListener("chat-projects-changed", onFocus);
+    window.removeEventListener("chat-projects-changed", refreshAgents);
     window.removeEventListener("durable-history-updated", settled);
     document.removeEventListener("visibilitychange", onVisibility);
   });
 
   async function move(id: string, index: number) {
-    const ids = localIds();
+    const ids = displayedIds();
     const from = ids.indexOf(id);
     if (!ready() || saving() || from === index || from < 0 || index < 0 || index >= ids.length) return;
     const next = [...ids];
     next.splice(from, 1);
     next.splice(index, 0, id);
+    orderRead++;
     setOrder(next);
     setSaving(true);
     setError("");
@@ -125,8 +145,8 @@ export function DurableAgentList(props: {
       <Show when={error()}><div role="alert" class="durable-agent-error">{error()}</div></Show>
       <div class="sessions-list">
         <For each={displayed()}>{(agent) => {
-          const index = () => localIds().indexOf(agent.id);
-          const canMove = () => !agent.gateway && ready() && !saving();
+          const index = () => displayedIds().indexOf(agent.id);
+          const canMove = () => ready() && !saving();
           const timestamp = () => !agent.gateway && agent.durable ? activity()[agent.id] ?? 0 : 0;
           const selected = () => props.selectedId === agent.id;
           return (
@@ -150,19 +170,17 @@ export function DurableAgentList(props: {
                 setDragged(undefined);
                 setDrop(undefined);
                 if (!canMove() || !id || id === agent.id) return;
-                void move(id, index() + Number(target.after) - Number(localIds().indexOf(id) < index()));
+                void move(id, index() + Number(target.after) - Number(displayedIds().indexOf(id) < index()));
               }}
             >
-              <Show when={!agent.gateway}>
-                <span role="button" class="durable-agent-grip" aria-label={`Drag ${agent.name} to reorder`} draggable={canMove()}
-                  onDragStart={(event) => {
-                    event.dataTransfer?.setData("text/plain", agent.id);
-                    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-                    setDragged(agent.id);
-                  }}
-                  onDragEnd={() => { setDragged(undefined); setDrop(undefined); }}
-                ><i class="fa-solid fa-grip-vertical" aria-hidden="true" /></span>
-              </Show>
+              <span role="button" class="durable-agent-grip" aria-label={`Drag ${agent.name} to reorder`} draggable={canMove()}
+                onDragStart={(event) => {
+                  event.dataTransfer?.setData("text/plain", agent.id);
+                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                  setDragged(agent.id);
+                }}
+                onDragEnd={() => { setDragged(undefined); setDrop(undefined); }}
+              ><i class="fa-solid fa-grip-vertical" aria-hidden="true" /></span>
               <A href={`/chat/${encodeURIComponent(agent.id)}`} class="session-row durable-agent-link" classList={{ active: selected() }}
                 aria-current={selected() ? "page" : undefined} title={agent.name}
                 onKeyDown={(event) => {
@@ -185,14 +203,12 @@ export function DurableAgentList(props: {
                   <time class="durable-agent-time" dateTime={new Date(timestamp()).toISOString()}>{props.relativeTime(timestamp(), props.now)}</time>
                 </Show>
               </A>
-              <Show when={!agent.gateway}>
-                <props.Menu label={`${agent.name} menu`}>
-                  <button class="session-action" type="button" disabled={!canMove() || index() === 0}
-                    onClick={() => void move(agent.id, index() - 1)}>Move up</button>
-                  <button class="session-action" type="button" disabled={!canMove() || index() === localIds().length - 1}
-                    onClick={() => void move(agent.id, index() + 1)}>Move down</button>
-                </props.Menu>
-              </Show>
+              <props.Menu label={`${agent.name} menu`}>
+                <button class="session-action" type="button" disabled={!canMove() || index() === 0}
+                  onClick={() => void move(agent.id, index() - 1)}>Move up</button>
+                <button class="session-action" type="button" disabled={!canMove() || index() === displayedIds().length - 1}
+                  onClick={() => void move(agent.id, index() + 1)}>Move down</button>
+              </props.Menu>
             </div>
           );
         }}</For>

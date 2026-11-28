@@ -192,6 +192,148 @@ describe("desktop relay: chat relay", () => {
     return response.json();
   }
 
+  async function sidebarOrder(base: string, order?: { agentIds: string[]; updatedAt?: string }, localOnly = false) {
+    const response = await fetch(base + "/api/me/sidebar-order" + (localOnly ? "?local=1" : ""), {
+      ...(order && { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(order) }),
+      signal: AbortSignal.timeout(7_000),
+    });
+    expect(response.status).toBe(200);
+    return response.json();
+  }
+
+  it("pushes only each linked gateway's raw IDs and keeps exact local IDs on the device", async () => {
+    const peer = await startFakeGateway();
+    saveGateway({ name: "loc", url: peer.url });
+    try {
+      const agentIds = ["twin@ams", "pom@loc", "pilot@loc", "local", "pom@ams", "orphan@unlinked"];
+      const saved = await sidebarOrder(localBase, { agentIds });
+      expect(saved).toEqual({
+        agentIds: ["twin@ams", "pom@loc", "pilot@loc", "local", "pom@ams"],
+        updatedAt: expect.any(String),
+      });
+      expect(await sidebarOrder(remoteBase, undefined, true))
+        .toEqual({ agentIds: ["twin", "pom"], updatedAt: saved.updatedAt });
+      expect(peer.requests.filter(({ method }) => method === "PUT").map(({ url, body }) => [url, JSON.parse(body)]))
+        .toEqual([["/api/me/sidebar-order", { agentIds: ["pilot"], updatedAt: saved.updatedAt }]]);
+      expect(await sidebarOrder(localBase, undefined, true))
+        .toEqual({ agentIds: ["pom@loc", "local"], updatedAt: saved.updatedAt });
+    } finally {
+      removeGateway("loc");
+      peer.close();
+    }
+  });
+
+  it.each([
+    { first: "north" as const, day: "2030-07-01" },
+    { first: "south" as const, day: "2030-07-02" },
+  ])("merges both remote orders when $first responds first", async ({ first, day }) => {
+    const updates = {
+      north: { agentIds: ["B", "A"], updatedAt: day + "T12:02:00.000Z" },
+      south: { agentIds: ["Y", "X"], updatedAt: day + "T12:01:00.000Z" },
+    };
+    const pending = new Map<string, http.ServerResponse>();
+    const peer = (name: keyof typeof updates) => startFakeGateway((request, response) => {
+      if (request.method === "GET") pending.set(name, response);
+      else response.writeHead(500).end();
+    });
+    const [north, south] = await Promise.all([peer("north"), peer("south")]);
+    saveGateway({ name: "north", url: north.url });
+    saveGateway({ name: "south", url: south.url });
+    const reply = (name: keyof typeof updates) => {
+      pending.get(name)?.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(updates[name]));
+    };
+    const readDevice = async () => {
+      const response = await fetch(localBase + "/api/me/sidebar-order", { headers: { Origin: "https://example.test" } });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    try {
+      const updatedAt = day + "T12:00:00.000Z";
+      const deviceOrder = ["A@north", "local", "X@south", "B@north", "twin", "Y@south"];
+      expect(await sidebarOrder(localBase, { agentIds: deviceOrder, updatedAt })).toMatchObject({ updatedAt });
+      const reconcile = sidebarOrder(localBase);
+      await vi.waitFor(() => expect([...pending.keys()].sort()).toEqual(["north", "south"]));
+      reply(first);
+      const intermediate = first === "north"
+        ? ["B@north", "local", "X@south", "A@north", "twin", "Y@south"]
+        : ["A@north", "local", "Y@south", "B@north", "twin", "X@south"];
+      await vi.waitFor(async () => expect((await readDevice()).agentIds.filter((id: string) => deviceOrder.includes(id))).toEqual(intermediate));
+      reply(first === "north" ? "south" : "north");
+      const result = await reconcile;
+      const merged = ["B@north", "local", "Y@south", "A@north", "twin", "X@south"];
+      expect(result.agentIds.filter((id: string) => merged.includes(id))).toEqual(merged);
+      expect(result.updatedAt).toBe(updatedAt);
+      await sidebarOrder(localBase);
+      for (const peer of [north, south]) {
+        expect(peer.requests.map(({ method, url }) => [method, url])).toEqual([["GET", "/api/me/sidebar-order?local=1"]]);
+      }
+    } finally {
+      removeGateway("north");
+      removeGateway("south");
+      north.close();
+      south.close();
+    }
+  }, 10_000);
+
+  it.each([
+    { replacementRead: true, day: "2030-07-03" },
+    { replacementRead: false, day: "2030-07-04" },
+  ])("ignores a retired link's late reply (replacement read started: $replacementRead)", async ({ replacementRead, day }) => {
+    let pending: http.ServerResponse | undefined;
+    const oldPeer = await startFakeGateway((_request, response) => { pending = response; });
+    const newPeer = await startFakeGateway((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+        agentIds: ["C", "B", "A"], updatedAt: day + "T12:02:00.000Z",
+      }));
+    });
+    saveGateway({ name: "studio", url: oldPeer.url });
+    try {
+      const original = await sidebarOrder(localBase, {
+        agentIds: ["A@studio", "local", "B@studio", "C@studio"], updatedAt: day + "T12:00:00.000Z",
+      });
+      const oldRead = sidebarOrder(localBase);
+      await vi.waitFor(() => expect(pending).toBeDefined());
+      saveGateway({ name: "studio", url: newPeer.url });
+      const latest = replacementRead ? await sidebarOrder(localBase) : original;
+      if (replacementRead) {
+        const mixedIds = latest.agentIds.filter((id: string) => id.endsWith("@studio") || id === "local");
+        expect(mixedIds).toEqual(["C@studio", "local", "B@studio", "A@studio"]);
+      }
+      pending?.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+        agentIds: ["B", "A", "C"], updatedAt: day + "T12:01:00.000Z",
+      }));
+      await oldRead;
+      const current = await fetch(localBase + "/api/me/sidebar-order", { headers: { Origin: "https://example.test" } });
+      expect(current.status).toBe(200);
+      expect(await current.json()).toEqual(latest);
+    } finally {
+      removeGateway("studio");
+      oldPeer.close();
+      newPeer.close();
+    }
+  });
+
+  it("keeps a saved sidebar order when a linked gateway stalls", async () => {
+    const stalled = await startFakeGateway((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write("{");
+    });
+    saveGateway({ name: "stalled", url: stalled.url });
+    try {
+      const start = performance.now();
+      const saved = await sidebarOrder(localBase, { agentIds: ["local", "pilot@stalled", "twin"] });
+      expect(performance.now() - start).toBeLessThan(5_000);
+      expect(stalled.requests.filter(({ url }) => url === "/api/me/sidebar-order").map(({ method }) => method)).toEqual(["PUT"]);
+      expect(saved.agentIds.filter((id: string) => ["local", "pilot@stalled", "twin"].includes(id)))
+        .toEqual(["local", "pilot@stalled", "twin"]);
+      expect(await sidebarOrder(localBase)).toEqual(saved);
+      expect(performance.now() - start).toBeLessThan(8_000);
+    } finally {
+      removeGateway("stalled");
+      stalled.close();
+    }
+  }, 12_000);
+
   it("keeps conflicting Durable settings when the timestamps are both missing or equal", async () => {
     await fs.writeFile(path.join(tmpDir, "local", ".yoplai", "durable-mode.json"), '{"enabled":true}');
     await fs.writeFile(path.join(tmpDir, "remote", ".yoplai", "durable-mode.json"), '{"enabled":false}');

@@ -23,7 +23,7 @@ Gateway exposes Hono HTTP API and `/ws` realtime broker. Enabled extensions add 
 | GET    | `/api/shared-chats/:token` | Read a shared chat's persisted transcript (authenticated, multi-user only) |
 | GET    | `/api/media/download/:id`  | Managed media download                 |
 | GET/PUT | `/api/me/durable-mode`  | Read or set the caller's Durable mode   |
-| GET/PUT | `/api/me/sidebar-order` | Read or set the caller's local agent order |
+| GET/PUT | `/api/me/sidebar-order` | Read or set the caller's local and linked agent order |
 | GET | `/api/agents/:id/memory` | Read the caller's Durable topics, plan, and gauge |
 | WS     | `/ws`                      | Send/subscribe streaming protocol      |
 
@@ -235,13 +235,29 @@ gateway names in `unsynced` until a successful sync. Link attempts have a
 three-second deadline. `GET /api/me/durable-mode?local=1` returns only the
 stored setting.
 
-`GET /api/me/sidebar-order` returns `{ agentIds: string[] }`, initially empty.
-It filters out agents the caller can no longer see without updating the file.
-`PUT` accepts the same shape, rejecting invalid arrays or empty strings with
-400. It keeps the first occurrence of each visible local agent ID, saves that
-order for the caller, and returns it. Clients append unlisted agents in the
-order returned by the agent list. Multi-user gateways return 401 without an
-authenticated account.
+The gateway stores the caller's full sidebar order, including agents from
+linked gateways and agents that are temporarily unavailable. `GET /api/me/sidebar-order`
+returns `{ agentIds: string[], updatedAt?: string }`, initially `{ agentIds: [] }`.
+Each read filters out unreadable local IDs and IDs for links that were removed.
+The sidebar shows only currently visible agents and appends unlisted agents
+in agent-list order.
+
+`PUT { agentIds }` saves the displayed order with the current ISO timestamp.
+It ignores duplicates and unknown IDs and keeps the slots of omitted agents.
+Invalid arrays, empty IDs, and invalid timestamps return 400. Multi-user
+gateways return 401 without an authenticated account.
+
+Trusted device saves push each linked gateway only its own raw IDs in their
+relative order. Trusted reads reconcile at most once per minute per link,
+and reconnects trigger reconciliation immediately. Each attempt has a
+three-second deadline. A newer peer order refills only its own slots and
+leaves the device timestamp unchanged. A missing timestamp is older than
+any valid timestamp.
+
+Peers use `GET /api/me/sidebar-order?local=1` to read just the caller's
+readable agents owned by that gateway and skip reconciliation. A peer
+`PUT { agentIds, updatedAt }` saves only when its timestamp is newer,
+preserves omitted slots, and does not push to other links.
 
 ### Chat
 
