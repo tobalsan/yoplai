@@ -160,6 +160,8 @@ Breaking changes are marked **⚠ BREAKING**.
 
 ### Changed
 
+- Choose Light, Dark, or System from the account menu at the bottom of the sidebar. Single-user mode shows a Local account row with a laptop icon.
+
 - Drag local and linked agents into one sidebar order in Durable mode. Hidden agents return to their saved slots, and each linked gateway shows its agents in the same relative order.
 
 - The desktop wait screen shows an animated loader, then the app fades in. The loader stops if you enable reduced motion.

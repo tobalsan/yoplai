@@ -22,6 +22,9 @@ const pinAgentSessionMock = vi.fn(async () => {});
 const archiveAgentSessionMock = vi.fn(async () => {});
 const fetchTopExtensionsMock = vi.fn(async () => ({ extensions: ["exa"], mcp: [] as string[] }));
 const showToastMock = vi.fn();
+const useSessionMock = vi.fn<() => () => {
+  data: { user: { name: string; email: string } | null };
+}>(() => () => ({ data: { user: null } }));
 let actualRouter = false;
 
 function setVisibility(state: DocumentVisibilityState) {
@@ -62,6 +65,8 @@ vi.mock("../api/top-extensions", () => ({
 vi.mock("../lib/toast", () => ({
   showToast: showToastMock,
 }));
+
+vi.mock("../auth/client", () => ({ useSession: useSessionMock, signOut: vi.fn() }));
 
 vi.mock("@solidjs/router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@solidjs/router")>();
@@ -174,22 +179,53 @@ describe("AgentSidebar", () => {
     }
   });
 
-  it("selects a theme by keyboard and cycles the theme when collapsed", () => {
-    const [collapsed, setCollapsed] = createSignal(false);
+  it("applies and saves themes from the keyboard-navigable account menu", () => {
+    setCapabilitiesForTests({ multiUser: false });
     const container = document.body.appendChild(document.createElement("div"));
-    const dispose = render(() => <AgentSidebar collapsed={collapsed} />, container);
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
     try {
-      const group = within(getByRole(container, "radiogroup", { name: "Theme" }));
-      group.getByRole("radio", { name: "Light" }).click();
-      const light = group.getByRole("radio", { name: "Light", checked: true });
-      light.focus();
-      fireEvent.keyDown(light, { key: "ArrowRight" });
-      expect(document.activeElement).toBe(group.getByRole("radio", { name: "Dark", checked: true }));
+      const toggle = getByRole(container, "button", { name: "Account menu" });
+      fireEvent.keyDown(toggle, { key: "ArrowDown" });
+      const menu = within(getByRole(container, "menu"));
+      const archive = menu.getByRole("menuitem", { name: "Archive" });
+      const settings = menu.getByRole("menuitem", { name: "Account settings" });
+      const themes = within(menu.getByRole("group", { name: "Theme" }));
+      expect(document.activeElement).toBe(archive);
+      fireEvent.keyDown(archive, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(settings);
+      fireEvent.keyDown(settings, { key: "ArrowDown" });
+
+      const light = themes.getByRole("menuitemradio", { name: "Light", checked: false });
+      expect(document.activeElement).toBe(light);
+      light.click();
+      expect(themes.getByRole("menuitemradio", { checked: true })).toBe(light);
+      expect(localStorage.getItem("yoplai-theme")).toBe("light");
+      expect(document.documentElement.dataset.theme).toBe("light");
+
+      const dark = themes.getByRole("menuitemradio", { name: "Dark", checked: false });
+      fireEvent.keyDown(light, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(dark);
+      dark.click();
+      expect(themes.getByRole("menuitemradio", { checked: true })).toBe(dark);
       expect(localStorage.getItem("yoplai-theme")).toBe("dark");
-      setCollapsed(true);
-      getByRole(container, "button", { name: "Theme: Dark. Switch to System." }).click();
-      expect(getByRole(container, "button", { name: "Theme: System. Switch to Light." })).toBeTruthy();
+      expect(document.documentElement.dataset.theme).toBe("dark");
+
+      fireEvent.keyDown(dark, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(light);
+      light.click();
+      fireEvent.keyDown(light, { key: "Home" });
+      expect(document.activeElement).toBe(archive);
+      const system = themes.getByRole("menuitemradio", { name: "System", checked: false });
+      fireEvent.keyDown(archive, { key: "End" });
+      expect(document.activeElement).toBe(system);
+      system.click();
+      expect(themes.getByRole("menuitemradio", { checked: true })).toBe(system);
       expect(localStorage.getItem("yoplai-theme")).toBe("system");
+      expect(document.documentElement.dataset.theme).toBe("dark");
+
+      fireEvent.keyDown(system, { key: "Escape" });
+      expect(queryByRole(container, "menu")).toBeNull();
+      expect(document.activeElement).toBe(toggle);
     } finally {
       dispose();
       container.remove();
@@ -208,6 +244,55 @@ describe("AgentSidebar", () => {
     } finally {
       dispose();
       setSidebarCollapsedPersistent(false);
+      container.remove();
+    }
+  });
+
+  it("shows the Local account row as the single-user settings entry", () => {
+    setCapabilitiesForTests({ multiUser: false });
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
+    try {
+      const toggle = getByRole(container, "button", { name: "Account menu" });
+      expect(within(toggle).getByText("Local")).toBeTruthy();
+      expect(within(toggle).getByText("Single-user mode")).toBeTruthy();
+      expect(queryByRole(container, "radiogroup", { name: "Theme" })).toBeNull();
+      toggle.click();
+      const menu = within(getByRole(container, "menu"));
+      expect(menu.getByRole("menuitem", { name: "Account settings" })).toBeTruthy();
+      expect(menu.queryByRole("menuitem", { name: "Logout" })).toBeNull();
+    } finally {
+      dispose();
+      container.remove();
+    }
+  });
+
+  it("shows multi-user themes and Logout below the tour links", async () => {
+    useSessionMock.mockReturnValueOnce(() => ({ data: { user: { name: "Test User", email: "test@example.com" } } }));
+    setCapabilitiesForTests({ multiUser: true, user: { id: "u1" } });
+    setPathname("/chat/scribe");
+    const container = document.body.appendChild(document.createElement("div"));
+    const dispose = render(() => <AgentSidebar collapsed={() => false} />, container);
+    try {
+      const sidebar = within(container);
+      const toggle = await sidebar.findByRole("button", { name: "Account menu" });
+      expect(within(toggle).getByText("Test User")).toBeTruthy();
+      expect(within(toggle).getByText("test@example.com")).toBeTruthy();
+      expect(sidebar.queryByRole("radiogroup", { name: "Theme" })).toBeNull();
+      const connect = await sidebar.findByRole("button", { name: "Connect tools" });
+      const buttons = sidebar.getAllByRole("button");
+      expect(buttons.indexOf(toggle)).toBeGreaterThan(buttons.indexOf(connect));
+      expect(buttons.indexOf(toggle)).toBeGreaterThan(buttons.indexOf(sidebar.getByRole("button", { name: "Restart tour" })));
+
+      fireEvent.keyDown(toggle, { key: "ArrowUp" });
+      const menu = within(sidebar.getByRole("menu"));
+      const themes = within(menu.getByRole("group", { name: "Theme" }));
+      expect(themes.getAllByRole("menuitemradio").map((item) => item.textContent?.trim())).toEqual(["Light", "Dark", "System"]);
+      expect(document.activeElement).toBe(menu.getByRole("menuitem", { name: "Logout" }));
+      fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(themes.getByRole("menuitemradio", { name: "System" }));
+    } finally {
+      dispose();
       container.remove();
     }
   });
