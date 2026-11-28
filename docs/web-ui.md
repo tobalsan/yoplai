@@ -14,6 +14,10 @@ Gateway starts Solid.js UI by default. UI discovers enabled features from `/api/
 
 Persistent left navigation adapts to capabilities and role. Branding comes from capability config when set.
 
+The account menu is at the bottom of the sidebar. In single-user mode, open
+**Local**. In either mode, choose **Light**, **Dark**, or **System** under
+**Theme**. The choice applies immediately and persists across reloads.
+
 Search is the first navigation item, including in the collapsed sidebar. Click it
 or press Cmd+K (Ctrl+K on Windows/Linux) on any page except login to search your
 chat titles and user/assistant message text across accessible agents and chat

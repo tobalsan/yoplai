@@ -1,12 +1,89 @@
 .sidebar-account-menu {
+  --sidebar-account-avatar-size: 34px;
+  --account-menu-gap: 4px;
   position: relative;
+}
+
+.sidebar-account-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar-account-toggle:hover {
+  opacity: 0.8;
+}
+
+.sidebar-account-toggle:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: -2px;
+}
+
+.sidebar-account-chevron {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sidebar-account-toggle[aria-expanded="true"] .sidebar-account-chevron {
+  transform: rotate(180deg);
+}
+
+.sidebar-account-avatar {
+  width: var(--sidebar-account-avatar-size);
+  height: var(--sidebar-account-avatar-size);
+  border-radius: 999px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-raised) 85%, var(--bg-surface));
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-account-name,
+.sidebar-account-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account-name {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sidebar-account-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.agent-sidebar.collapsed:not(:hover) .sidebar-account-toggle:not([aria-expanded="true"]) {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+}
+
+.agent-sidebar.collapsed:not(:hover) .sidebar-account-toggle:not([aria-expanded="true"]) :is(.sidebar-account-body, .sidebar-account-chevron) {
+  display: none;
 }
 
 .account-menu {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + var(--account-menu-gap));
   left: 0;
   right: 0;
+  max-height: calc(100cqh - var(--sidebar-footer-inset) - var(--sidebar-account-avatar-size) - 2 * var(--account-menu-gap));
+  overflow-y: auto;
   background: var(--bg-raised);
   border: 1px solid var(--border-default);
   border-radius: 8px;
@@ -46,10 +123,20 @@
   cursor: default;
 }
 
-.account-menu-item i {
+.account-menu-item > :is(i, svg) {
   width: 16px;
   text-align: center;
   color: var(--text-secondary);
+}
+
+.account-menu-heading {
+  padding: 4px 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.account-menu-check {
+  margin-left: auto;
 }
 
 .account-menu-separator {

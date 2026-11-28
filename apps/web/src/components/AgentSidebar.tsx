@@ -17,7 +17,6 @@ import { Portal } from "solid-js/web";
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { useDurableMode } from "../api/durable-mode";
 import { DurableAgentList } from "./DurableAgentList";
-import { SidebarTheme } from "./SidebarTheme";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { isDesktopWindow } from "../lib/desktop-window";
 import { capabilities, isExtensionEnabled } from "../lib/capabilities";
@@ -879,41 +878,6 @@ export function AgentSidebar(props: AgentSidebarProps) {
           </Modal>
         )}</Show>
         <div class="sidebar-footer">
-          <Show when={capabilities.multiUser}>
-            <Suspense>
-              <LazySidebarAccountPanel collapsed={props.collapsed} hideArchive={shell()} />
-            </Suspense>
-          </Show>
-          <Show when={!capabilities.multiUser}>
-            <SidebarAccountMenu
-              triggerClass="sidebar-account-cog"
-              trigger={<i class="fa-solid fa-gear" aria-hidden="true" />}
-            >
-              <Show when={relayGateways.latest[0]}>{(gateway) => (
-                <A href={`/account/connections?gateway=${encodeURIComponent(gateway())}`} class="account-menu-item" role="menuitem" title="Pairings of a linked gateway">
-                  <i class="fa-solid fa-user-group" aria-hidden="true" />
-                  Pairings
-                </A>
-              )}</Show>
-              <Show when={capabilities.relayLink?.available === true}>
-                <A href="/remote-gateways" class="account-menu-item" role="menuitem" title="Link a remote gateway">
-                  <i class="fa-solid fa-link" aria-hidden="true" />
-                  Link gateway
-                </A>
-              </Show>
-              <Show when={!shell()}>
-                <A href="/archive" class="account-menu-item" role="menuitem">
-                  <i class="fa-solid fa-box-archive" aria-hidden="true" />
-                  Archive
-                </A>
-              </Show>
-              <A href="/account/settings" class="account-menu-item" role="menuitem">
-                <i class="fa-solid fa-gear" aria-hidden="true" />
-                Account settings
-              </A>
-            </SidebarAccountMenu>
-          </Show>
-          <SidebarTheme collapsed={props.collapsed()} />
           <Show when={capabilities.multiUser && capabilities.user}>
             <div class="tour-links">
               <button
@@ -939,6 +903,41 @@ export function AgentSidebar(props: AgentSidebarProps) {
                 )}
               </Show>
             </div>
+          </Show>
+          <Show when={capabilities.multiUser}>
+            <Suspense>
+              <LazySidebarAccountPanel collapsed={props.collapsed} hideArchive={shell()} />
+            </Suspense>
+          </Show>
+          <Show when={!capabilities.multiUser}>
+            <SidebarAccountMenu
+              avatar={<span class="sidebar-account-avatar" aria-hidden="true"><i class="fa-solid fa-laptop" /></span>}
+              name="Local"
+              detail="Single-user mode"
+            >
+              <Show when={relayGateways.latest[0]}>{(gateway) => (
+                <A href={`/account/connections?gateway=${encodeURIComponent(gateway())}`} class="account-menu-item" role="menuitem" title="Pairings of a linked gateway">
+                  <i class="fa-solid fa-user-group" aria-hidden="true" />
+                  Pairings
+                </A>
+              )}</Show>
+              <Show when={capabilities.relayLink?.available === true}>
+                <A href="/remote-gateways" class="account-menu-item" role="menuitem" title="Link a remote gateway">
+                  <i class="fa-solid fa-link" aria-hidden="true" />
+                  Link gateway
+                </A>
+              </Show>
+              <Show when={!shell()}>
+                <A href="/archive" class="account-menu-item" role="menuitem">
+                  <i class="fa-solid fa-box-archive" aria-hidden="true" />
+                  Archive
+                </A>
+              </Show>
+              <A href="/account/settings" class="account-menu-item" role="menuitem">
+                <i class="fa-solid fa-gear" aria-hidden="true" />
+                Account settings
+              </A>
+            </SidebarAccountMenu>
           </Show>
         </div>
       </div>
@@ -1030,6 +1029,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
 
         .agent-sidebar-shell {
           position: relative;
+          container-type: size;
           width: 100%;
           height: 100%;
           background: var(--bg-surface);
@@ -1051,7 +1051,7 @@ export function AgentSidebar(props: AgentSidebarProps) {
           width: 50px;
         }
 
-        .agent-sidebar.collapsed:is(:hover, .menu-open, :has(.sidebar-account-cog[aria-expanded="true"])) .agent-sidebar-shell {
+        .agent-sidebar.collapsed:is(:hover, .menu-open, :has(.sidebar-account-toggle[aria-expanded="true"])) .agent-sidebar-shell {
           width: 280px;
           box-shadow: 12px 0 24px var(--shadow-md);
         }
@@ -1385,82 +1385,9 @@ export function AgentSidebar(props: AgentSidebarProps) {
         }
 
         .sidebar-footer {
-          padding: 8px 10px 10px;
+          --sidebar-footer-inset: 10px;
+          padding: 8px var(--sidebar-footer-inset) var(--sidebar-footer-inset);
           border-top: 1px solid var(--border-default);
-        }
-
-        .sidebar-account-cog {
-          display: grid;
-          place-items: center;
-          width: 36px;
-          max-width: 100%;
-          height: 36px;
-          margin-bottom: 4px;
-          border: 0;
-          border-radius: 8px;
-          background: transparent;
-          color: var(--text-secondary);
-          cursor: pointer;
-          font-size: 14px;
-        }
-
-        .sidebar-account-cog:hover,
-        .sidebar-account-cog[aria-expanded="true"] {
-          background: var(--bg-raised);
-          color: var(--text-primary);
-        }
-
-        .sidebar-account-cog:focus-visible {
-          outline: 2px solid var(--text-secondary);
-          outline-offset: -2px;
-        }
-
-        .sidebar-theme-segments {
-          display: flex;
-          width: max-content;
-          gap: 2px;
-          padding: 3px;
-          border-radius: 999px;
-          background: var(--bg-raised);
-        }
-
-        .sidebar-theme-segments button,
-        .sidebar-theme-cycle {
-          display: grid;
-          place-items: center;
-          width: 40px;
-          height: 32px;
-          padding: 0;
-          border: 0;
-          border-radius: 999px;
-          background: transparent;
-          color: var(--text-secondary);
-          cursor: pointer;
-        }
-
-        .sidebar-theme-cycle {
-          width: 100%;
-          border-radius: 8px;
-        }
-
-        .agent-sidebar.collapsed:is(:hover, .menu-open) .sidebar-theme-cycle { width: 36px; }
-
-        .sidebar-theme-segments button:hover,
-        .sidebar-theme-cycle:hover {
-          background: var(--bg-inset);
-          color: var(--text-primary);
-        }
-
-        .sidebar-theme-segments button[aria-checked="true"] {
-          background: var(--bg-base);
-          color: var(--text-primary);
-          box-shadow: 0 1px 3px var(--shadow-md);
-        }
-
-        .sidebar-theme-segments button:focus-visible,
-        .sidebar-theme-cycle:focus-visible {
-          outline: 2px solid var(--text-secondary);
-          outline-offset: -2px;
         }
 
         .tour-links {
